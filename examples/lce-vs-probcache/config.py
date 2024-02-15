@@ -40,7 +40,7 @@ default["cache_placement"]["name"] = "UNIFORM"
 default["content_placement"]["name"] = "UNIFORM"
 
 # Specify cache replacement policy
-default["cache_policy"]["name"] = "LRU"
+default["cache_policy"]["name"] = "ARC"
 
 # Specify topology
 default["topology"]["name"] = "ROCKET_FUEL"

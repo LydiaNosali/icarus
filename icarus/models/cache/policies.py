@@ -7,7 +7,7 @@ provided by Icarus.
 import abc
 import copy
 import random
-from collections import defaultdict, deque
+from collections import OrderedDict, defaultdict, deque
 
 from icarus.registry import register_cache_policy
 from icarus.util import apportionment, inheritdoc
@@ -16,6 +16,7 @@ import numpy as np
 
 
 __all__ = [
+    "Deque",
     "LinkedSet",
     "Cache",
     "NullCache",
@@ -27,11 +28,61 @@ __all__ = [
     "FifoCache",
     "ClimbCache",
     "RandEvictionCache",
+    "ARCCache",
     "insert_after_k_hits_cache",
     "rand_insert_cache",
     "keyval_cache",
     "ttl_cache",
 ]
+
+
+class Deque(object):
+    'Fast searchable queue'
+
+    def __init__(self):
+        self.od = OrderedDict()
+
+    def append_left(self, k):
+        if k in self.od:
+            del self.od[k]
+        self.od[k] = None
+
+    def append_by_index(self, index, k):
+        if k in self.od:
+            del self.od[k]
+        # convert the ordered dictionary to a list
+        items = list(self.od.items())
+        # insert a new element at index 1
+        items.insert(index, (k, None))
+        self.od = OrderedDict(items)
+    
+    def pop(self):    
+        return self.od.popitem(0)[0]
+
+    def remove(self, k):
+        del self.od[k]
+
+    def __len__(self):
+        return len(self.od)
+
+    def __index__(self, key):
+        keys = list(self.od.keys())
+        return keys.index(key)
+    
+    def __contains__(self, k):
+        return k in self.od
+
+    def __iter__(self):
+        return reversed(self.od)
+
+    def __repr__(self):
+        return 'Deque(%r)' % (list(self),)
+    
+    def __clear__(self):
+        self.od.clear()
+    
+    def get_without_pop(self):
+        return next(iter(self.od.items()))[0]
 
 
 class LinkedSet:
@@ -1537,6 +1588,153 @@ class RandEvictionCache(Cache):
     @inheritdoc(Cache)
     def clear(self):
         self._cache.clear()
+
+@register_cache_policy("ARC")
+class ARCCache():
+    @inheritdoc(Cache)
+    def __init__(self, maxlen, **kwargs):
+        self._cache= {}
+        self._maxlen = int(maxlen)
+        self.p = 0
+        self.t1 = Deque()
+        self.t2 = Deque()
+        self.b1 = Deque() 
+        self.b2 = Deque()
+        if self._maxlen <= 0:
+            raise ValueError("maxlen must be positive")
+    
+    @inheritdoc(Cache)
+    def __len__(self):
+        return len(self._cache)
+    
+    @property
+    @inheritdoc(Cache)
+    def maxlen(self):
+        return self._maxlen
+    
+    @inheritdoc(Cache)
+    def has(self, k, *args, **kwargs):
+        return k in self._cache
+    
+    def replace(self, args):
+        """
+        If (T1 is not empty) and ((T1 lenght exceeds the target p) or (x is in B2 and T1 lenght == p))
+            Delete the LRU page in T1 (also remove it from the cache), and move it to MRU position in B1.
+        else
+            Delete the LRU page in T2 (also remove it from the cache), and move it to MRU position in B2.
+        endif
+        """
+
+        if self.t1 and ((args in self.b2 and len(self.t1) == self.p) or (len(self.t1) > self.p)):
+            old = self.t1.pop()
+            self.b1.append_left(old)
+        else:
+            old = self.t2.pop()
+            self.b2.append_left(old)
+        
+        # self.lock.acquire()
+        del self._cache[old]
+        # self.lock.release()
+
+    @inheritdoc(Cache)
+    def get(self, k, *args, **kwargs):
+        # print("get"+k.__str__())
+        # Case I: x is in T1 or T2.
+        #  A cache hit has occurred in ARC(c) and DBL(2c)
+        #   Move x to MRU position in T2.
+        res = False
+        if k in self.t1:
+            self.t1.remove(k)
+            self.t2.append_left(k)
+            res = True
+
+        if k in self.t2:
+            self.t2.remove(k)
+            self.t2.append_left(k)
+            res = True
+
+        return res  # Return value not found in cache
+        
+    def put(self, k, *args, **kwargs):
+        # print("put"+k.__str__())
+        # Case II: x is in B1
+        #  A cache miss has occurred in ARC(c)
+        #   ADAPTATION
+        #   REPLACE(x)
+        #   Move x from B1 to the MRU position in T2 (also fetch x to the cache).
+        res = None
+        if k in self.b1:
+            self.p = min(self._maxlen, self.p + max(len(self.b2) / len(self.b1), 1))
+            self.replace(k)
+            self.b1.remove(k)
+            self.t2.append_left(k)
+            self._cache[k] = True
+            return res
+
+        # Case III: x is in B2
+        #  A cache miss has (also) occurred in ARC(c)
+        #   ADAPTATION
+        #   REPLACE(x, p)
+        #   Move x from B2 to the MRU position in T2 (also fetch x to the cache).
+
+        if k in self.b2:
+            self.p = max(0, self.p - max(len(self.b1) / len(self.b2), 1))
+            self.replace(k)
+            self.b2.remove(k)
+            self.t2.append_left(k)
+            self._cache[k] = True
+            return res
+        
+        # Case IV: x is not in (T1 u B1 u T2 u B2)
+        #  A cache miss has occurred in ARC(c) and DBL(2c)
+
+        if len(self.t1) + len(self.b1) == self._maxlen:
+            # Case A: L1 (T1 u B1) has exactly c pages.
+
+            if len(self.t1) < self._maxlen:
+                # Delete LRU page in B1. REPLACE(x, p)
+                self.b1.pop()
+                self.replace(k)
+
+            else:
+                # Here B1 is empty.
+                # Delete LRU page in T1 (also remove it from the cache)
+                res = self.t1.pop()
+                self._cache.pop(res, None)
+
+        else:
+            # Case B: L1 (T1 u B1) has less than c pages.
+
+            total = len(self.t1) + len(self.b1) + len(self.t2) + len(self.b2)
+            if total >= self._maxlen:
+                # Delete LRU page in B2, if |T1| + |T2| + |B1| + |B2| == 2c
+                if total == (2 * self._maxlen):
+                    self.b2.pop()
+
+                # REPLACE(x, p)
+                self.replace(k)
+
+        # Finally, fetch x to the cache and move it to MRU position in T1
+        self.t1.append_left(k)
+        self._cache[k] = True
+
+        return res
+    
+    @inheritdoc(Cache)
+    def remove(self, k, *args, **kwargs):
+        if k not in self._cache:
+            return False
+        self._cache.remove(k)
+        return True
+    
+    @inheritdoc(Cache)
+    def clear(self):
+        self._cache.clear()
+        self.t1.__clear__()
+        self.t2.__clear__()
+        self.b1.__clear__()
+        self.b2.__clear__()
+        self.p = 0
 
 
 def insert_after_k_hits_cache(cache, k=2, memory=None):
