@@ -22,6 +22,7 @@ __all__ = [
     "CacheHitRatioCollector",
     "LinkLoadCollector",
     "LatencyCollector",
+    "CostCollector",
     "PathStretchCollector",
     "DummyCollector",
 ]
@@ -365,6 +366,70 @@ class LatencyCollector(DataCollector):
             results["CDF"] = cdf(self.latency_data)
         return results
 
+@register_data_collector("COST")
+class CostCollector(DataCollector):
+    """Data collector measuring cost, i.e. the penalty from delivering a
+    content.
+    """
+
+    def __init__(self, view, cdf=False):
+        """Constructor
+
+        Parameters
+        ----------
+        view : NetworkView
+            The network view instance
+        cdf : bool, optional
+            If *True*, also collects a cdf of the cost
+        """
+        self.cdf = cdf
+        self.view = view
+        self.req_latency = 0.0
+        self.sess_count = 0
+        self.cost = 0.0
+        self.priority = ""
+        self._high_prio_penalty = 50
+        self._low_prio_penalty = 5
+
+        if cdf:
+            self.cost_data = collections.deque()
+
+    @inheritdoc(DataCollector)
+    def start_session(self, timestamp, receiver, content, priority):
+        self.priority = priority
+        self.sess_count += 1
+        self.sess_cost = 0.0
+
+    @inheritdoc(DataCollector)
+    def request_hop(self, u, v, main_path=True):
+        if main_path:
+            self.sess_cost += self.view.link_delay(u, v)
+
+    @inheritdoc(DataCollector)
+    def content_hop(self, u, v, main_path=True):
+        if main_path:
+            self.sess_cost += self.view.link_delay(u, v)
+
+    @inheritdoc(DataCollector)
+    def end_session(self, success=True):
+        if not success:
+            return
+        if self.cdf:
+            if self.priority == "low":
+                self.cost_data.append(self._low_prio_penalty)
+            else:
+                self.cost_data.append(self._high_prio_penalty)
+        if self.priority == "low":
+            self.cost += self._low_prio_penalty
+        else:
+            self.cost += self._high_prio_penalty
+
+    @inheritdoc(DataCollector)
+    def results(self):
+        results = Tree({"COST": self.cost})
+        if self.cdf:
+            results["CDF"] = cdf(self.cost_data)
+        return results
 
 @register_data_collector("CACHE_HIT_RATIO")
 class CacheHitRatioCollector(DataCollector):
