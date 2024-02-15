@@ -29,6 +29,7 @@ __all__ = [
     "ClimbCache",
     "RandEvictionCache",
     "ARCCache",
+    "MARCCache",
     "insert_after_k_hits_cache",
     "rand_insert_cache",
     "keyval_cache",
@@ -1736,6 +1737,302 @@ class ARCCache():
         self.b2.__clear__()
         self.p = 0
 
+@register_cache_policy("MARC")
+class MARCCache(Cache):
+    @inheritdoc(Cache)
+    def __init__(self, maxlen, **kwargs):
+        self._caches = kwargs["caches"]
+        self._n_caches = len(self._caches)
+        self._tier_m_caches = self.initialize_caches()
+        self._cache= {}
+        self._maxlen = int(maxlen)
+        self.p = 0
+        self.t1 = Deque()
+        self.t2 = Deque()
+        self.b1 = Deque() 
+        self.b2 = Deque()
+        self._beta = {}
+        for i in range(self._n_caches):
+            self._beta[i] = self._caches[i]["size"] / self._caches[0]["size"]
+        if self._maxlen <= 0:
+            raise ValueError("maxlen must be positive")
+
+    class TierMCache:
+        def __init__(self, maxlen):
+            self.p = 0
+            self.t1 = Deque()
+            self.t2 = Deque()
+            self._cache= {}
+            self._maxlen = maxlen
+
+        def put_t1(self, k):
+            a, b = (None, None)
+            if len(self.t1) + len(self.t2) >= self._maxlen:
+                # if len of T1 is higher than P move from T1 dram to T1 disk
+                if self.t1 and len(self.t1) >= self.p:
+                    old = self.t1.get_without_pop()
+                    self.t1.pop()
+                    del self._cache[old]
+                    a, b = (old, "t1")
+                # move from T2 dram to T2 disk
+                elif self.t2:
+                    old = self.t2.get_without_pop()
+                    self.t2.pop()
+                    del self._cache[old]
+                    a, b = (old, "t2")
+                else:
+                    old = self.t1.get_without_pop()
+                    self.t1.pop()
+                    del self._cache[old]
+                    a, b = (old, "t1")
+           
+            self.t1.append_left(k)
+            self._cache[k] = True
+            return (a, b)
+        
+        def put_t2(self, k):
+            a, b = (None, None)
+            if len(self.t1) + len(self.t2) >= self._maxlen:
+                # if len of T1 is higher than P move from T1 dram to T1 disk
+                if self.t1 and len(self.t1) >= self.p:
+                    old = self.t1.get_without_pop()
+                    self.t1.pop()
+                    del self._cache[old]
+                    a, b = (old, "t1")
+                # move from T2 dram to T2 disk
+                elif self.t2:
+                    old = self.t2.get_without_pop()
+                    self.t2.pop()
+                    del self._cache[old]
+                    a, b = (old, "t2")
+                else:
+                    old = self.t1.get_without_pop()
+                    self.t1.pop()
+                    del self._cache[old]
+                    a, b = (old, "t1")
+            
+            self.t2.append_left(k)
+            self._cache[k] = True
+            return (a, b)
+
+    def initialize_caches(self):
+        # Iterate through caches and initialize TierMCache with a reference to the next cache
+        tier_m_caches = {}
+        for i in range(self._n_caches):
+            tier_m_caches[i] = self.TierMCache(self._caches[i]["size"])
+        return tier_m_caches
+    
+    @inheritdoc(Cache)
+    def __len__(self):
+        return len(self._cache)
+    
+    @property
+    @inheritdoc(Cache)
+    def maxlen(self):
+        return self._maxlen
+    
+    @inheritdoc(Cache)
+    def has(self, k, *args, **kwargs):
+        return k in self._cache
+    
+    def replace(self, args):
+        """
+        If (T1 is not empty) and ((T1 lenght exceeds the target p) or (x is in B2 and T1 lenght == p))
+            Delete the LRU page in T1 (also remove it from the cache), and move it to MRU position in B1.
+        else
+            Delete the LRU page in T2 (also remove it from the cache), and move it to MRU position in B2.
+        endif
+        """
+
+        if self.t1 and ((args in self.b2 and len(self.t1) == self.p) or (len(self.t1) > self.p)):
+            old = self.t1.get_without_pop()
+            self.t1_pop(old)
+            self.b1.append_left(old)
+        else:
+            old = self.t2.get_without_pop()
+            self.t2_pop(old)
+            self.b2.append_left(old)
+            
+        del self._cache[old]
+
+    @inheritdoc(Cache)
+    def get(self, k, *args, **kwargs):
+        # print("get"+k.__str__())
+        # Case I: x is in T1 or T2.
+        #  A cache hit has occurred in ARC(c) and DBL(2c)
+        #   Move x to MRU position in T2.
+        res = False
+        if k in self.t1:
+            self.t1_remove(k)
+            self.t2_append_left(k)
+            res = True
+
+        if k in self.t2:
+            self.t2_remove(k)
+            self.t2_append_left(k)
+            res = True
+
+        return res  # Return value not found in cache
+        
+    def put(self, k, *args, **kwargs):
+        # print("put"+k.__str__())
+        # Case II: x is in B1
+        #  A cache miss has occurred in ARC(c)
+        #   ADAPTATION
+        #   REPLACE(x)
+        #   Move x from B1 to the MRU position in T2 (also fetch x to the cache).
+        res = None
+        if k in self.b1:
+            self.increment_p(len(self.b1), len(self.b2))
+            self.replace(k)
+            self.b1.remove(k)
+            self.t2_append_left(k)
+            self._cache[k] = True
+            return res
+
+        # Case III: x is in B2
+        #  A cache miss has (also) occurred in ARC(c)
+        #   ADAPTATION
+        #   REPLACE(x, p)
+        #   Move x from B2 to the MRU position in T2 (also fetch x to the cache).
+
+        if k in self.b2:
+            self.decrement_p(len(self.b1), len(self.b2))
+            self.replace(k)
+            self.b2.remove(k)
+            self.t2_append_left(k)
+            self._cache[k] = True
+            return res
+        
+        # Case IV: x is not in (T1 u B1 u T2 u B2)
+        #  A cache miss has occurred in ARC(c) and DBL(2c)
+        if len(self.t1) + len(self.b1) == self._maxlen:
+            # Case A: L1 (T1 u B1) has exactly c pages.
+            if len(self.t1) < self._maxlen:
+                # Delete LRU page in B1. REPLACE(x, p)
+                self.b1.pop()
+                self.replace(k)
+            else:
+                # Here B1 is empty.
+                # Delete LRU page in T1 (also remove it from the cache)
+                res = self.t1.get_without_pop()
+                self.t1_pop(res)
+                self._cache.pop(res, None)
+        else:
+            # Case B: L1 (T1 u B1) has less than c pages.
+            total = len(self.t1) + len(self.b1) + len(self.t2) + len(self.b2)
+            if total >= self._maxlen:
+                # Delete LRU page in B2, if |T1| + |T2| + |B1| + |B2| == 2c
+                if total == (2 * self._maxlen):
+                    self.b2.pop()
+
+                # REPLACE(x, p)
+                self.replace(k)
+
+        # Finally, fetch x to the cache and move it to MRU position in T1
+        self.t1_append_left(k)
+        self._cache[k] = True
+
+        return res
+    
+    @inheritdoc(Cache)
+    def remove(self, k, *args, **kwargs):
+        if k not in self._cache:
+            return False
+        self._cache.remove(k)
+        return True
+    
+    @inheritdoc(Cache)
+    def clear(self):
+        self._cache.clear()
+        self.t1.__clear__()
+        self.t2.__clear__()
+        self.b1.__clear__()
+        self.b2.__clear__()
+        self.p = 0
+
+    def t1_pop(self, k):
+        self.t1.pop()
+        for cache in reversed(self._tier_m_caches.values()):
+            try:
+                if cache.t1:
+                    cache.t1.remove(k)
+                    del cache._cache[k]
+                    break
+            except Exception as e:
+                pass  
+
+    def t2_pop(self, k):
+        self.t2.pop()
+        for cache in reversed(self._tier_m_caches.values()):
+            try:
+                if cache.t2:
+                    cache.t2.remove(k)
+                    del cache._cache[k]
+                    break
+            except Exception as e:
+                pass  
+
+    def t1_remove(self, k):
+        self.t1.remove(k)
+        for cache in self._tier_m_caches.values():
+            try:
+                if k in cache.t1:
+                    cache.t1.remove(k)
+                    del cache._cache[k]
+                    break
+            except Exception as e:
+                pass
+
+    def t2_remove(self, k):
+        self.t2.remove(k)
+        for cache in self._tier_m_caches.values():
+            try:
+                if k in cache.t2:
+                    cache.t2.remove(k)
+                    del cache._cache[k]
+                    break
+            except Exception as e:
+                pass
+
+    def t1_append_left(self, k):
+        self.t1.append_left(k)
+        for i in range(self._n_caches):
+            a, b = self._tier_m_caches[i].put_t1(k)
+            if (a,b) != (None, None):
+                try:
+                    if b =="t1":
+                        self._tier_m_caches[i + 1].put_t1(a)
+                    else:
+                        self._tier_m_caches[i + 1].put_t2(a)
+                except Exception as e:
+                    pass
+
+    def t2_append_left(self, k):
+        self.t2.append_left(k)
+        for i in range(self._n_caches):
+            a, b = self._tier_m_caches[i].put_t2(k)
+            if (a,b) != (None, None):
+                try:
+                    if b =="t1":
+                        self._tier_m_caches[i + 1].put_t1(a)
+                    else:
+                        self._tier_m_caches[i + 1].put_t2(a)
+                except Exception as e:
+                    pass
+
+    def increment_p(self, len_b1, len_b2):
+        self.p = min(self._maxlen, self.p + max((len_b2 / len_b1) * (sum(self._beta.values())),
+                                          sum(self._beta.values())))
+        for i in range(self._n_caches):
+            self._tier_m_caches[i].p = min(self._tier_m_caches[i]._maxlen, self._tier_m_caches[i].p + max((len_b2 / len_b1) * self._beta[i], self._beta[i]))
+
+    def decrement_p(self, len_b1, len_b2):
+        self.p = max(0, self.p - max((len_b1 / len_b2) * (sum(self._beta.values())),
+                                     sum(self._beta.values())))
+        for i in range(self._n_caches):
+            self._tier_m_caches[i].p = max(0, self._tier_m_caches[i].p - max((len_b1 / len_b2) * self._beta[i],  self._beta[i]))
+ 
 
 def insert_after_k_hits_cache(cache, k=2, memory=None):
     """Return a cache inserting items only after k requests.
