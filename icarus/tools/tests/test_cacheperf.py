@@ -36,6 +36,23 @@ class TestNumericCacheHitRatio:
         )
         assert np.abs(h - r) < 0.01
 
+class TestNumericCacheHitRatio2Layers:
+    @classmethod
+    def setup_class(cls):
+        cls.n1 = 250
+        cls.n2 = 250
+        cls.n = cls.n1 + cls.n2
+        cls.pdf = np.ones(cls.n) / cls.n
+
+    def test_lru_cache(self):
+        r = 0.1
+        H = cacheperf.numeric_cache_hit_ratio_2_layers(self.pdf, cache.LruCache(r * self.n1), cache.LruCache(r * self.n2))
+        print(f"Actual 'l1_hits' ratio: {H['l1_hits']}")
+        print(f"Actual 'l2_hits' ratio: {H['l2_hits']}")
+        print(f"Actual 'total_hits' ratio: {H['total_hits']}")
+        assert np.abs(H["l1_hits"] - r) < 0.051
+        assert np.abs(H["l2_hits"] - r * (self.n2 / self.n)) < 0.05
+        assert np.abs(H["total_hits"] - (self.n1 * r + self.n2 * r) / self.n) < 0.05
 
 class TestLaoutarisPerContentCacheHitRatio:
     def test_3rd_order_positive_disc(self):

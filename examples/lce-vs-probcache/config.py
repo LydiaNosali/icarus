@@ -16,6 +16,21 @@ DATA_COLLECTORS = ["CACHE_HIT_RATIO", "LATENCY", "LINK_LOAD"]
 
 # Queue of experiments
 EXPERIMENT_QUEUE = deque()
+NETWORK_CACHE = 0.01
+
+CACHES =  [
+    {"name":"DRAM",
+     "size": NETWORK_CACHE / 31
+     }, 
+    {"name":"SSD",
+     "size": NETWORK_CACHE * (5 / 31)
+    }, 
+    {"name":"HDD",
+     "size": NETWORK_CACHE * (25 / 31)
+    }
+    ]
+
+COST_ALPHA = 0.3
 
 # Create tree of experiment configuration
 default = Tree()
@@ -30,25 +45,35 @@ default["workload"] = {
     "n_warmup": 10 ** 5,
     "n_measured": 4 * 10 ** 5,
     "rate": 1.0,
+    "high_priority_rate" :0.2,
 }
 
 # Specify cache placement
-default["cache_placement"]["network_cache"] = 0.01
+default["cache_placement"]["network_cache"] = NETWORK_CACHE
 default["cache_placement"]["name"] = "UNIFORM"
 
 # Specify content placement
 default["content_placement"]["name"] = "UNIFORM"
 
 # Specify cache replacement policy
-default["cache_policy"]["name"] = "ARC"
+# default["cache_policy"]["name"] = "ARC"
+default["cache_policy"]["caches"] = CACHES
+default["cache_policy"]["alpha"] = COST_ALPHA
 
 # Specify topology
 default["topology"]["name"] = "ROCKET_FUEL"
 default["topology"]["asn"] = 1221
+default["strategy"]["name"] = "LCE"
 
 # Create experiments multiplexing all desired parameters
-for strategy in ["LCE", "PROB_CACHE"]:
+# for strategy in ["LCE", "PROB_CACHE"]:
+#     experiment = copy.deepcopy(default)
+#     experiment["strategy"]["name"] = strategy
+#     experiment["desc"] = "Strategy: %s" % strategy
+#     EXPERIMENT_QUEUE.append(experiment)
+for cache in ["MARC", "QMARC"]:
     experiment = copy.deepcopy(default)
-    experiment["strategy"]["name"] = strategy
-    experiment["desc"] = "Strategy: %s" % strategy
+    experiment["cache_policy"]["name"] = cache
+    experiment["desc"] = "Cache policy: %s" % cache
     EXPERIMENT_QUEUE.append(experiment)
+

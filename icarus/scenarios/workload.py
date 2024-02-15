@@ -74,6 +74,8 @@ class StationaryWorkload:
         not logged)
     n_measured : int, optional
         The number of logged requests after the warmup
+    high_priority_rate : float, optional
+        The rate of the high priority data in the workload
 
     Returns
     -------
@@ -92,6 +94,7 @@ class StationaryWorkload:
         rate=1.0,
         n_warmup=10 ** 5,
         n_measured=4 * 10 ** 5,
+        high_priority_rate=0.0,
         seed=None,
         **kwargs
     ):
@@ -109,6 +112,8 @@ class StationaryWorkload:
         self.rate = rate
         self.n_warmup = n_warmup
         self.n_measured = n_measured
+        self.high_priority_rate = high_priority_rate
+        self.priority_values = ["low", "high"]
         random.seed(seed)
         self.beta = beta
         if beta != 0:
@@ -131,7 +136,9 @@ class StationaryWorkload:
                 receiver = self.receivers[self.receiver_dist.rv() - 1]
             content = int(self.zipf.rv())
             log = req_counter >= self.n_warmup
-            event = {"receiver": receiver, "content": content, "log": log}
+            priority = random.choices(self.priority_values, weights=[1 - self.high_priority_rate, self.high_priority_rate])[0]
+
+            event = {"receiver": receiver, "content": content, "log": log, "priority": priority}
             yield (t_event, event)
             req_counter += 1
         return
