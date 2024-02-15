@@ -45,7 +45,7 @@ class DataCollector:
         """
         self.view = view
 
-    def start_session(self, timestamp, receiver, content):
+    def start_session(self, timestamp, receiver, content, priority):
         """Notifies the collector that a new network session started.
 
         A session refers to the retrieval of a content from a receiver, from
@@ -191,9 +191,9 @@ class CollectorProxy(DataCollector):
         }
 
     @inheritdoc(DataCollector)
-    def start_session(self, timestamp, receiver, content):
+    def start_session(self, timestamp, receiver, content, priority):
         for c in self.collectors["start_session"]:
-            c.start_session(timestamp, receiver, content)
+            c.start_session(timestamp, receiver, content, priority)
 
     @inheritdoc(DataCollector)
     def cache_hit(self, node):
@@ -257,7 +257,7 @@ class LinkLoadCollector(DataCollector):
         self.t_end = 1
 
     @inheritdoc(DataCollector)
-    def start_session(self, timestamp, receiver, content):
+    def start_session(self, timestamp, receiver, content, priority):
         if self.t_start < 0:
             self.t_start = timestamp
         self.t_end = timestamp
@@ -337,7 +337,7 @@ class LatencyCollector(DataCollector):
             self.latency_data = collections.deque()
 
     @inheritdoc(DataCollector)
-    def start_session(self, timestamp, receiver, content):
+    def start_session(self, timestamp, receiver, content, priority):
         self.sess_count += 1
         self.sess_latency = 0.0
 
@@ -469,7 +469,7 @@ class CacheHitRatioCollector(DataCollector):
             self.cont_serv_hits = collections.defaultdict(int)
 
     @inheritdoc(DataCollector)
-    def start_session(self, timestamp, receiver, content):
+    def start_session(self, timestamp, receiver, content, priority):
         self.sess_count += 1
         if self.off_path_hits:
             source = self.view.content_source(content)
