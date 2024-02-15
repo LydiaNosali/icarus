@@ -129,12 +129,12 @@ class LeaveCopyEverywhere(Strategy):
         super().__init__(view, controller)
 
     @inheritdoc(Strategy)
-    def process_event(self, time, receiver, content, log):
+    def process_event(self, time, receiver, content, log, priority):
         # get all required data
         source = self.view.content_source(content)
         path = self.view.shortest_path(receiver, source)
         # Route requests to original source and queries caches on the path
-        self.controller.start_session(time, receiver, content, log)
+        self.controller.start_session(time, receiver, content, log, priority)
         for u, v in path_links(path):
             self.controller.forward_request_hop(u, v)
             if self.view.has_cache(v):
