@@ -256,11 +256,11 @@ REQ_RATE = 1.0
 CACHE_POLICY = "LRU"
 
 # Zipf alpha parameter, remove parameters not needed
-ALPHA = [0.6, 0.8, 1.0]
+ALPHA = [1.0]
 
 # Total size of network cache as a fraction of content population
 # Remove sizes not needed
-NETWORK_CACHE = [0.004, 0.002]
+NETWORK_CACHE = [0.02]
 
 
 # List of topologies tested

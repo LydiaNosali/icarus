@@ -17,6 +17,7 @@ __all__ = [
     "CacheLessForMore",
     "RandomBernoulli",
     "RandomChoice",
+    "CostCache",
 ]
 
 
@@ -418,3 +419,138 @@ class RandomChoice(Strategy):
             if v == designated_cache:
                 self.controller.put_content(v)
         self.controller.end_session()
+
+
+@register_strategy("COST_CACHE")
+class CostCache(Strategy):
+    """CostCache strategy 
+
+    This strategy caches content objects based on a cost function.
+    If  storage gain (cost of retrieval from closest node) 
+        > 
+        storage loss (cost of storage + min (storage gain 
+        of data to be evicted from node)) --> cache data
+    else --> don't cache
+    The cost function includes:
+        storage cost: occupation + energy + QoS penalty
+        retrieval cost: throughput + energy + QoS penalty
+    
+    Since the nodes are multi-tier, the device with the worst metrics will be chosen 
+    QM-ARC will perhaps use the energy of each device to decide where to store the data.
+    
+    Storage cost at node:
+        occupation cost = (sum_of_content_size+size_content)/cache_size*amz_cost_j)
+        energy cost = size_content*un_en_cost
+        penalty cost = penalty(retieval_time_des) (perhaps use collector Latency)
+    Retrieval cost from des:
+        throughput cost = sum_on_nodes_j_src_to_des(size_content/throughput_j*amz_cost_j)
+        energy cost : links + nodes
+            links  = hop_count_src_des*size_content*un_en_cost_link
+            nodes = hop_count_src_des+1*size_content*un_en_cost_node
+        penalty cost = penalty(retieval_time_des) (perhaps use collector Latency)
+    
+
+    Storage gain == cost of retrieval from closest node des:
+    Storage loss == storage cost + min (storage gain of content to evict)
+         
+    """
+
+    @inheritdoc(Strategy)
+    def __init__(self, view, controller, **kwargs):
+        super().__init__(view, controller)
+        self.cache_size = view.cache_nodes(size=True)
+        self.content_size = 1500
+        self.node_energy_unitary_cost = 1.2
+        self.link_energy_unitary_cost = 0.2
+        self.storage_energy_unitary_cost = 1.2
+
+    @inheritdoc(Strategy)
+    def process_event(self, time, receiver, content, log, priority):
+        # get all required data
+        source = self.view.content_source(content)
+        path = self.view.shortest_path(receiver, source)
+        cached_data = self.view.cache_dump(receiver)
+        # Route requests to original source and queries caches on the path
+        self.controller.start_session(time, receiver, content, log, priority)
+        for u, v in path_links(path):
+            self.controller.forward_request_hop(u, v)
+            if self.view.has_cache(v):
+                if self.controller.get_content(v):
+                    serving_node = v
+                    break
+            # No cache hits, get content from source
+            self.controller.get_content(v)
+            serving_node = v
+        
+        # Return content
+        paths = {}
+        min_value = 0
+        if cached_data:
+            for content in cached_data:
+                serving_node = self.get_serving_node(receiver, content)
+                path = list(reversed(self.view.shortest_path(receiver, serving_node)))
+                paths[content] = self.calculate_storage_gain(path)
+            min_value = min(paths.values())
+        
+        path = list(reversed(self.view.shortest_path(receiver, serving_node)))
+
+        storage_gain = self.calculate_storage_gain(path)
+        storage_loss = self.calculate_storage_loss(receiver, min_value)
+
+        for u, v in path_links(path):
+            self.controller.forward_content_hop(u, v)
+            if self.view.has_cache(v):
+                if storage_gain > storage_loss:
+                    # insert content
+                    self.controller.put_content(v)
+        self.controller.end_session()
+    
+
+    def get_serving_node(self, receiver, content):
+        source = self.view.content_source(content)
+        path = self.view.shortest_path(receiver, source)
+        for hop in path_links(path):
+            if self.view.has_cache(hop):
+                if self.controller.get_content(hop):
+                    serving_node = hop
+                    break
+            serving_node = hop
+        return serving_node
+
+    def calculate_storage_gain(self, path):
+        return self.calculate_throughput_cost(path) + self.calculate_transmission_energy_cost(path)
+    
+    def calculate_storage_loss(self, receiver, min_value):
+        return self.calculate_occupation_cost(receiver) + self.calculate_storage_energy_cost() + min_value
+
+    def calculate_occupation_cost(self, receiver):
+        current_cache_size = 0
+        amz_cost = 1.2
+        if self.view.cache_dump(receiver):
+            current_cache_size = len(self.view.cache_dump(receiver))
+        if receiver in self.cache_size:
+            cache_maxlen = self.cache_size[receiver]
+            occupation_cost = (current_cache_size + 1) / cache_maxlen * amz_cost
+        else:
+            occupation_cost = 0
+        return occupation_cost
+    
+    def calculate_storage_energy_cost(self):
+        # TODO store the unitary cost and take the worst one 
+        storage_energy_cost = self.content_size  * self.storage_energy_unitary_cost
+        return storage_energy_cost
+
+    def calculate_throughput_cost(self, path):
+        # TODO store the throughput and take the worst one 
+        throughput_cost = 0
+        throughput = 1.0
+        amz_cost = 1.2
+        for hop in range(1, len(path)):
+            throughput_cost += (self.content_size / throughput) * amz_cost
+        return throughput_cost
+    
+    def calculate_transmission_energy_cost(self, path):
+        # TODO store the unitary cost and take the worst one
+        transmission_energy_cost = len(path)*self.content_size*self.link_energy_unitary_cost \
+                                    + (len(path) + 1)*self.content_size*self.node_energy_unitary_cost 
+        return transmission_energy_cost

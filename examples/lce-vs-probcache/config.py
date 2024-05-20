@@ -63,7 +63,7 @@ default["cache_policy"]["alpha"] = COST_ALPHA
 # Specify topology
 default["topology"]["name"] = "ROCKET_FUEL"
 default["topology"]["asn"] = 1221
-default["strategy"]["name"] = "LCE"
+default["strategy"]["name"] = "COST_CACHE"
 
 # Create experiments multiplexing all desired parameters
 # for strategy in ["LCE", "PROB_CACHE"]:

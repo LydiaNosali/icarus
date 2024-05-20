@@ -8,7 +8,7 @@ from icarus.util import Tree
 
 # Level of logging output
 # Available options: DEBUG, INFO, WARNING, ERROR, CRITICAL
-LOG_LEVEL = "INFO"
+LOG_LEVEL = "DEBUG"
 
 # If True, executes simulations in parallel using multiple processes
 # to take advantage of multicore CPUs
@@ -32,7 +32,7 @@ RESULTS_FORMAT = "PICKLE"
 
 # List of metrics to be measured in the experiments
 # The implementation of data collectors are located in ./icarus/execution/collectors.py
-DATA_COLLECTORS = ["CACHE_HIT_RATIO", "LATENCY"]
+DATA_COLLECTORS = ["CACHE_HIT_RATIO", "LATENCY", "LINK_LOAD"]
 
 # Queue of experiments
 EXPERIMENT_QUEUE = deque()
@@ -50,7 +50,7 @@ experiment["workload"] = {
     "name": "STATIONARY",
     "n_contents": 10 ** 5,
     "n_warmup": 10 ** 2,
-    "n_measured": 4 * 10 ** 2,
+    "n_measured": 10 * 10 ** 2,
     "alpha": 1.0,
     "rate": 1,
 }
