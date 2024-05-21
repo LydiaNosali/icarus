@@ -26,6 +26,7 @@ __all__ = [
     "apportionment",
 ]
 
+logger = logging.getLogger("main")
 
 class Tree(collections.defaultdict):
     """Tree data structure
@@ -354,6 +355,8 @@ class Settings:
         """
         if self.__frozen:
             raise ValueError("Settings are frozen and cannot be modified")
+        logger.info("///////////////////////")
+        logger.info("path:"+path)
         exec(open(path).read(), self.__conf)
         for k in list(self.__conf):
             if k != k.upper():

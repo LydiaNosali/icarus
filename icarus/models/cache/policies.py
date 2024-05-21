@@ -6,6 +6,7 @@ provided by Icarus.
 
 import abc
 import copy
+import logging
 import random
 from collections import OrderedDict, defaultdict, deque
 
@@ -37,6 +38,8 @@ __all__ = [
     "ttl_cache",
 ]
 
+logger = logging.getLogger("main")
+
 class Deque(object):
     'Fast searchable queue'
 
@@ -62,13 +65,12 @@ class Deque(object):
 
     def remove(self, k):
         del self.od[k]
-
+    
+    def get_without_pop(self):
+        return next(iter(self.od.items()))[0]
+    
     def __len__(self):
         return len(self.od)
-
-    def __index__(self, key):
-        keys = list(self.od.keys())
-        return keys.index(key)
     
     def __contains__(self, k):
         return k in self.od
@@ -82,8 +84,9 @@ class Deque(object):
     def __clear__(self):
         self.od.clear()
     
-    def get_without_pop(self):
-        return next(iter(self.od.items()))[0]
+    def __index__(self, key):
+        keys = list(self.od.keys())
+        return keys.index(key)
 
 
 class LinkedSet:
@@ -1596,7 +1599,7 @@ class ARCCache():
     def __init__(self, maxlen, **kwargs):
         self._cache= {}
         self._maxlen = int(maxlen)
-        self.p = 0
+        self.p = 0 
         self.t1 = Deque()
         self.t2 = Deque()
         self.b1 = Deque() 
@@ -1663,14 +1666,13 @@ class ARCCache():
         #   ADAPTATION
         #   REPLACE(x)
         #   Move x from B1 to the MRU position in T2 (also fetch x to the cache).
-        res = None
         if k in self.b1:
             self.p = min(self._maxlen, self.p + max(len(self.b2) / len(self.b1), 1))
             self.replace(k)
             self.b1.remove(k)
             self.t2.append_left(k)
             self._cache[k] = True
-            return res
+            return
 
         # Case III: x is in B2
         #  A cache miss has (also) occurred in ARC(c)
@@ -1684,7 +1686,7 @@ class ARCCache():
             self.b2.remove(k)
             self.t2.append_left(k)
             self._cache[k] = True
-            return res
+            return
         
         # Case IV: x is not in (T1 u B1 u T2 u B2)
         #  A cache miss has occurred in ARC(c) and DBL(2c)
@@ -1700,8 +1702,7 @@ class ARCCache():
             else:
                 # Here B1 is empty.
                 # Delete LRU page in T1 (also remove it from the cache)
-                res = self.t1.pop()
-                self._cache.pop(res, None)
+                self._cache.pop(self.t1.pop(), None)
 
         else:
             # Case B: L1 (T1 u B1) has less than c pages.
@@ -1718,14 +1719,12 @@ class ARCCache():
         # Finally, fetch x to the cache and move it to MRU position in T1
         self.t1.append_left(k)
         self._cache[k] = True
-
-        return res
     
     @inheritdoc(Cache)
     def remove(self, k, *args, **kwargs):
         if k not in self._cache:
             return False
-        self._cache.remove(k)
+        del self._cache[k]
         return True
     
     @inheritdoc(Cache)
@@ -1741,9 +1740,6 @@ class ARCCache():
 class MARCCache(Cache):
     @inheritdoc(Cache)
     def __init__(self, maxlen, **kwargs):
-        self._caches = kwargs["caches"]
-        self._n_caches = len(self._caches)
-        self._tier_m_caches = self.initialize_caches()
         self._cache= {}
         self._maxlen = int(maxlen)
         self.p = 0
@@ -1751,20 +1747,25 @@ class MARCCache(Cache):
         self.t2 = Deque()
         self.b1 = Deque() 
         self.b2 = Deque()
+
+        self._caches = kwargs["caches"]
+        self._n_caches = len(self._caches)
+        self._sizes = [int(cache["size_factor"] * self._maxlen) for cache in self._caches]
         self._beta = {}
+        self._tier_m_caches = self.initialize_caches()
+        
         for i in range(self._n_caches):
-            self._beta[i] = self._caches[i]["size"] / self._caches[0]["size"]
+            self._beta[i] = self._sizes[i] / self._sizes[0]
         if self._maxlen <= 0:
             raise ValueError("maxlen must be positive")
 
     class TierMCache:
         def __init__(self, maxlen):
+            self._maxlen = maxlen
             self.p = 0
             self.t1 = Deque()
             self.t2 = Deque()
-            self._cache= {}
-            self._maxlen = maxlen
-
+            
         def put_t1(self, k):
             a, b = (None, None)
             if len(self.t1) + len(self.t2) >= self._maxlen:
@@ -1772,22 +1773,18 @@ class MARCCache(Cache):
                 if self.t1 and len(self.t1) >= self.p:
                     old = self.t1.get_without_pop()
                     self.t1.pop()
-                    del self._cache[old]
                     a, b = (old, "t1")
                 # move from T2 dram to T2 disk
                 elif self.t2:
                     old = self.t2.get_without_pop()
                     self.t2.pop()
-                    del self._cache[old]
                     a, b = (old, "t2")
                 else:
                     old = self.t1.get_without_pop()
                     self.t1.pop()
-                    del self._cache[old]
                     a, b = (old, "t1")
            
             self.t1.append_left(k)
-            self._cache[k] = True
             return (a, b)
         
         def put_t2(self, k):
@@ -1797,29 +1794,25 @@ class MARCCache(Cache):
                 if self.t1 and len(self.t1) >= self.p:
                     old = self.t1.get_without_pop()
                     self.t1.pop()
-                    del self._cache[old]
                     a, b = (old, "t1")
                 # move from T2 dram to T2 disk
                 elif self.t2:
                     old = self.t2.get_without_pop()
                     self.t2.pop()
-                    del self._cache[old]
                     a, b = (old, "t2")
                 else:
                     old = self.t1.get_without_pop()
                     self.t1.pop()
-                    del self._cache[old]
                     a, b = (old, "t1")
             
             self.t2.append_left(k)
-            self._cache[k] = True
             return (a, b)
 
     def initialize_caches(self):
         # Iterate through caches and initialize TierMCache with a reference to the next cache
         tier_m_caches = {}
         for i in range(self._n_caches):
-            tier_m_caches[i] = self.TierMCache(self._caches[i]["size"])
+            tier_m_caches[i] = self.TierMCache(self._sizes[i])
         return tier_m_caches
     
     @inheritdoc(Cache)
@@ -1881,14 +1874,13 @@ class MARCCache(Cache):
         #   ADAPTATION
         #   REPLACE(x)
         #   Move x from B1 to the MRU position in T2 (also fetch x to the cache).
-        res = None
         if k in self.b1:
             self.increment_p(len(self.b1), len(self.b2))
             self.replace(k)
             self.b1.remove(k)
             self.t2_append_left(k)
             self._cache[k] = True
-            return res
+            return
 
         # Case III: x is in B2
         #  A cache miss has (also) occurred in ARC(c)
@@ -1902,7 +1894,7 @@ class MARCCache(Cache):
             self.b2.remove(k)
             self.t2_append_left(k)
             self._cache[k] = True
-            return res
+            return
         
         # Case IV: x is not in (T1 u B1 u T2 u B2)
         #  A cache miss has occurred in ARC(c) and DBL(2c)
@@ -1915,9 +1907,9 @@ class MARCCache(Cache):
             else:
                 # Here B1 is empty.
                 # Delete LRU page in T1 (also remove it from the cache)
-                res = self.t1.get_without_pop()
-                self.t1_pop(res)
-                self._cache.pop(res, None)
+                old = self.t1.get_without_pop()
+                self.t1_pop(old)
+                del self._cache[old]
         else:
             # Case B: L1 (T1 u B1) has less than c pages.
             total = len(self.t1) + len(self.b1) + len(self.t2) + len(self.b2)
@@ -1932,15 +1924,6 @@ class MARCCache(Cache):
         # Finally, fetch x to the cache and move it to MRU position in T1
         self.t1_append_left(k)
         self._cache[k] = True
-
-        return res
-    
-    @inheritdoc(Cache)
-    def remove(self, k, *args, **kwargs):
-        if k not in self._cache:
-            return False
-        self._cache.remove(k)
-        return True
     
     @inheritdoc(Cache)
     def clear(self):
@@ -1957,7 +1940,6 @@ class MARCCache(Cache):
             try:
                 if cache.t1:
                     cache.t1.remove(k)
-                    del cache._cache[k]
                     break
             except Exception as e:
                 pass  
@@ -1968,7 +1950,6 @@ class MARCCache(Cache):
             try:
                 if cache.t2:
                     cache.t2.remove(k)
-                    del cache._cache[k]
                     break
             except Exception as e:
                 pass  
@@ -1979,7 +1960,6 @@ class MARCCache(Cache):
             try:
                 if k in cache.t1:
                     cache.t1.remove(k)
-                    del cache._cache[k]
                     break
             except Exception as e:
                 pass
@@ -1990,7 +1970,6 @@ class MARCCache(Cache):
             try:
                 if k in cache.t2:
                     cache.t2.remove(k)
-                    del cache._cache[k]
                     break
             except Exception as e:
                 pass
@@ -2039,20 +2018,21 @@ class QMARCCache(Cache):
     def __init__(self, maxlen, **kwargs):
         self._caches = kwargs["caches"]
         self._n_caches = len(self._caches)
-        self._tier_m_caches = self.initialize_caches()
-        self._cache= {}
         self._maxlen = int(maxlen)
+        self._sizes = [cache["size_factor"] * self._maxlen for cache in self._caches]
+        self._tier_m_caches = self.initialize_caches()
+        
+        self._cache= {}
         self.p = 0
         self.t1 = Deque()
         self.t2 = Deque()
         self.b1 = Deque() 
         self.b2 = Deque()
-
         self._alpha = kwargs["alpha"]
         self._beta = {}
         
         for i in range(self._n_caches):
-            self._beta[i] = self._caches[i]["size"] / self._caches[0]["size"]
+            self._beta[i] = self._sizes[i] / self._sizes[0]
         if self._maxlen <= 0:
             raise ValueError("maxlen must be positive")
 
@@ -2061,7 +2041,6 @@ class QMARCCache(Cache):
             self.p = 0
             self.t1 = Deque()
             self.t2 = Deque()
-            self._cache= {}
             self._maxlen = maxlen
 
         def put_t1(self, k, *args):
@@ -2071,26 +2050,22 @@ class QMARCCache(Cache):
                 if self.t1 and len(self.t1) >= self.p:
                     old = self.t1.get_without_pop()
                     self.t1.pop()
-                    del self._cache[old]
                     a, b = (old, "t1")
                 # move from T2 dram to T2 disk
                 elif self.t2:
                     old = self.t2.get_without_pop()
                     self.t2.pop()
-                    del self._cache[old]
                     a, b = (old, "t2")
                 else:
                     old = self.t1.get_without_pop()
                     self.t1.pop()
-                    del self._cache[old]
                     a, b = (old, "t1")
                 
             if args:
                 self.t1.append_by_index(args[0], k)
             else:
                 self.t1.append_left(k)
-                
-            self._cache[k] = True
+            
             return (a,b)
         
         def put_t2(self, k, *args):
@@ -2100,33 +2075,29 @@ class QMARCCache(Cache):
                 if self.t1 and len(self.t1) >= self.p:
                     old = self.t1.get_without_pop()
                     self.t1.pop()
-                    del self._cache[old]
                     a, b = (old, "t1")
                 # move from T2 dram to T2 disk
                 elif self.t2:
                     old = self.t2.get_without_pop()
                     self.t2.pop()
-                    del self._cache[old]
                     a, b = (old, "t2")
                 else:
                     old = self.t1.get_without_pop()
                     self.t1.pop()
-                    del self._cache[old]
                     a, b = (old, "t1")
 
             if args:
                 self.t2.append_by_index(args[0], k)
             else:
                 self.t2.append_left(k)
-            
-            self._cache[k] = True    
+ 
             return (a, b)
 
     def initialize_caches(self):
         # Iterate through caches and initialize TierMCache with a reference to the next cache
         tier_m_caches = {}
         for i in range(self._n_caches):
-            tier_m_caches[i] = self.TierMCache(self._caches[i]["size"])
+            tier_m_caches[i] = self.TierMCache(self._sizes[i])
         return tier_m_caches
     
     @inheritdoc(Cache)
@@ -2159,7 +2130,7 @@ class QMARCCache(Cache):
             old = self.t2.get_without_pop()
             self.t2_pop(old)
             self.b2.append_left(old)
-            
+        
         del self._cache[old]
 
     @inheritdoc(Cache)
@@ -2272,13 +2243,6 @@ class QMARCCache(Cache):
         return res
     
     @inheritdoc(Cache)
-    def remove(self, k, *args, **kwargs):
-        if k not in self._cache:
-            return False
-        self._cache.remove(k)
-        return True
-    
-    @inheritdoc(Cache)
     def clear(self):
         self._cache.clear()
         self.t1.__clear__()
@@ -2293,7 +2257,6 @@ class QMARCCache(Cache):
             try:
                 if cache.t1:
                     cache.t1.remove(k)
-                    del cache._cache[k]
                     break
             except Exception as e:
                 pass  
@@ -2304,7 +2267,6 @@ class QMARCCache(Cache):
             try:
                 if cache.t2:
                     cache.t2.remove(k)
-                    del cache._cache[k]
                     break
             except Exception as e:
                 pass  
@@ -2315,7 +2277,6 @@ class QMARCCache(Cache):
             try:
                 if k in cache.t1:
                     cache.t1.remove(k)
-                    del cache._cache[k]
                     break
             except Exception as e:
                 pass
@@ -2326,7 +2287,6 @@ class QMARCCache(Cache):
             try:
                 if k in cache.t2:
                     cache.t2.remove(k)
-                    del cache._cache[k]
                     break
             except Exception as e:
                 pass

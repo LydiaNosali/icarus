@@ -318,7 +318,7 @@ class LatencyCollector(DataCollector):
     content.
     """
 
-    def __init__(self, view, cdf=True):
+    def __init__(self, view, cdf=False):
         """Constructor
 
         Parameters

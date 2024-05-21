@@ -3,6 +3,12 @@ from collections import deque
 import copy
 from icarus.util import Tree
 
+# GENERAL SETTINGS
+
+# Level of logging output
+# Available options: DEBUG, INFO, WARNING, ERROR, CRITICAL
+LOG_LEVEL = "INFO"
+
 # If True, executes simulations in parallel using multiple processes
 # to take advantage of multicore CPUs
 PARALLEL_EXECUTION = False
@@ -12,23 +18,22 @@ N_REPLICATIONS = 1
 
 # List of metrics to be measured in the experiments
 # The implementation of data collectors are located in ./icarus/execution/collectors.py
-DATA_COLLECTORS = ["CACHE_HIT_RATIO", "LATENCY", "LINK_LOAD"]
+DATA_COLLECTORS = ["CACHE_HIT_RATIO", "LATENCY"]
 
 # Queue of experiments
 EXPERIMENT_QUEUE = deque()
-NETWORK_CACHE = 0.01
+NETWORK_CACHE = 0.1
 
 CACHES =  [
     {"name":"DRAM",
-     "size": NETWORK_CACHE / 31
-     }, 
+    "size_factor": 1 / 31
+    }, 
     {"name":"SSD",
-     "size": NETWORK_CACHE * (5 / 31)
+    "size_factor": 5 / 31 
     }, 
     {"name":"HDD",
-     "size": NETWORK_CACHE * (25 / 31)
-    }
-    ]
+    "size_factor": 25 / 31
+    }]
 
 COST_ALPHA = 0.3
 
@@ -48,6 +53,22 @@ default["workload"] = {
     "high_priority_rate" :0.2,
 }
 
+STRATEGIES = [
+    "LCE",  # Leave Copy Everywhere
+    "NO_CACHE",  # No caching, shorest-path routing
+    # "HR_SYMM",  # Symmetric hash-routing
+    # "HR_ASYMM",  # Asymmetric hash-routing
+    # "HR_MULTICAST",  # Multicast hash-routing
+    # # "HR_HYBRID_AM",  # Hybrid Asymm-Multicast hash-routing
+    # # "HR_HYBRID_SM",  # Hybrid Symm-Multicast hash-routing
+    # # "CL4M",  # Cache less for more
+    # "PROB_CACHE",  # ProbCache
+    # "LCD",  # Leave Copy Down
+    # # "RAND_CHOICE",  # Random choice: cache in one random cache on path
+    # # "RAND_BERNOULLI",  # Random Bernoulli: cache randomly in caches on path
+    "COST_CACHE",
+]
+
 # Specify cache placement
 default["cache_placement"]["network_cache"] = NETWORK_CACHE
 default["cache_placement"]["name"] = "UNIFORM"
@@ -63,7 +84,8 @@ default["cache_policy"]["alpha"] = COST_ALPHA
 # Specify topology
 default["topology"]["name"] = "ROCKET_FUEL"
 default["topology"]["asn"] = 1221
-default["strategy"]["name"] = "COST_CACHE"
+# default["strategy"]["name"] = "COST_CACHE"
+
 
 # Create experiments multiplexing all desired parameters
 # for strategy in ["LCE", "PROB_CACHE"]:
@@ -71,9 +93,17 @@ default["strategy"]["name"] = "COST_CACHE"
 #     experiment["strategy"]["name"] = strategy
 #     experiment["desc"] = "Strategy: %s" % strategy
 #     EXPERIMENT_QUEUE.append(experiment)
-for cache in ["MARC", "QMARC"]:
-    experiment = copy.deepcopy(default)
-    experiment["cache_policy"]["name"] = cache
-    experiment["desc"] = "Cache policy: %s" % cache
-    EXPERIMENT_QUEUE.append(experiment)
+
+for strategy in STRATEGIES:
+    for cache in ["QMARC"]:
+        experiment = copy.deepcopy(default)
+        experiment["cache_policy"]["name"] = cache
+        experiment["strategy"]["name"] = strategy
+        experiment[
+                    "desc"
+                ] = "Cache Policy: {}, strategy: {}".format(
+                   cache,
+                    strategy,
+                )
+        EXPERIMENT_QUEUE.append(experiment)
 

@@ -459,11 +459,17 @@ class CostCache(Strategy):
     def __init__(self, view, controller, **kwargs):
         super().__init__(view, controller)
         self.cache_size = view.cache_nodes(size=True)
+        # in US: 0.165 $/kWh
+        # 0.020324 $/joule
+        # caching power density 10^-9 w/bit
+        # link energy density j/bit
+        # router energy density 2x10^-8 j/bit
+        # total_energy_consumption = (caching_power_density * duration_in_seconds + link_energy_density + router_energy_density) * amount_of_data
+        # cost_in_dollars = total_energy_consumption * cost_per_joule
         self.content_size = 1500
         self.node_energy_unitary_cost = 1.2
         self.link_energy_unitary_cost = 0.2
-        self.storage_energy_unitary_cost = 1.2
-
+        self.storage_energy_unitary_cost = 0.00000144 # $/bits
     @inheritdoc(Strategy)
     def process_event(self, time, receiver, content, log, priority):
         # get all required data
@@ -525,7 +531,7 @@ class CostCache(Strategy):
 
     def calculate_occupation_cost(self, receiver):
         current_cache_size = 0
-        amz_cost = 1.2
+        amz_cost = 0.00479119 # in $ cost model paper 2016
         if self.view.cache_dump(receiver):
             current_cache_size = len(self.view.cache_dump(receiver))
         if receiver in self.cache_size:
@@ -544,9 +550,8 @@ class CostCache(Strategy):
         # TODO store the throughput and take the worst one 
         throughput_cost = 0
         throughput = 1.0
-        amz_cost = 1.2
-        for hop in range(1, len(path)):
-            throughput_cost += (self.content_size / throughput) * amz_cost
+        amz_cost = 0.00479119 # in $ cost model paper 2016
+        throughput_cost = (self.content_size / throughput) * amz_cost * len(path)
         return throughput_cost
     
     def calculate_transmission_energy_cost(self, path):

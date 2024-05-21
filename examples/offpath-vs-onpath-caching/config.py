@@ -13,7 +13,7 @@ LOG_LEVEL = "INFO"
 
 # If True, executes simulations in parallel using multiple processes
 # to take advantage of multicore CPUs
-PARALLEL_EXECUTION = True
+PARALLEL_EXECUTION = False
 
 # Number of processes used to run simulations in parallel.
 # This option is ignored if PARALLEL_EXECUTION = False
@@ -30,11 +30,11 @@ RESULTS_FORMAT = "PICKLE"
 
 # Number of times each experiment is replicated
 # This is necessary for extracting confidence interval of selected metrics
-N_REPLICATIONS = 2
+N_REPLICATIONS = 1
 
 # List of metrics to be measured in the experiments
 # The implementation of data collectors are located in ./icarus/execution/collectors.py
-DATA_COLLECTORS = ["CACHE_HIT_RATIO", "LATENCY", "LINK_LOAD", "PATH_STRETCH"]
+DATA_COLLECTORS = ["CACHE_HIT_RATIO", "LATENCY"]
 
 # Range of alpha values of the Zipf distribution using to generate content requests
 # alpha values must be positive. The greater the value the more skewed is the
@@ -52,6 +52,24 @@ ALPHA = [0.6, 0.8, 1.0, 1.2]
 
 # Total size of network cache as a fraction of content population
 NETWORK_CACHE = [0.004, 0.002, 0.01, 0.05]
+
+
+CACHES =  [
+    {
+        "name":"DRAM",
+        "size_factor": 1 / 31
+    }, 
+    {
+        "name":"SSD",
+        "size_factor": 5 / 31 
+    }, 
+    {
+        "name":"HDD",
+        "size_factor": 25 / 31
+    }
+    ]
+
+COST_ALPHA = 0.3
 
 # Number of content objects
 N_CONTENTS = 3 * 10 ** 5
@@ -84,19 +102,20 @@ STRATEGIES = [
     "HR_SYMM",  # Symmetric hash-routing
     "HR_ASYMM",  # Asymmetric hash-routing
     "HR_MULTICAST",  # Multicast hash-routing
-    "HR_HYBRID_AM",  # Hybrid Asymm-Multicast hash-routing
-    "HR_HYBRID_SM",  # Hybrid Symm-Multicast hash-routing
-    "CL4M",  # Cache less for more
+    # "HR_HYBRID_AM",  # Hybrid Asymm-Multicast hash-routing
+    # "HR_HYBRID_SM",  # Hybrid Symm-Multicast hash-routing
+    # "CL4M",  # Cache less for more
     "PROB_CACHE",  # ProbCache
     "LCD",  # Leave Copy Down
-    "RAND_CHOICE",  # Random choice: cache in one random cache on path
-    "RAND_BERNOULLI",  # Random Bernoulli: cache randomly in caches on path
+    # "RAND_CHOICE",  # Random choice: cache in one random cache on path
+    # "RAND_BERNOULLI",  # Random Bernoulli: cache randomly in caches on path
+    "COST_CACHE",
 ]
 
 # Cache replacement policy used by the network caches.
 # Supported policies are: 'LRU', 'LFU', 'FIFO', 'RAND' and 'NULL'
 # Cache policy implmentations are located in ./icarus/models/cache.py
-CACHE_POLICY = "LRU"
+CACHE_POLICY = "QMARC"
 
 # Queue of experiments
 EXPERIMENT_QUEUE = deque()
@@ -107,10 +126,13 @@ default["workload"] = {
     "n_warmup": N_WARMUP_REQUESTS,
     "n_measured": N_MEASURED_REQUESTS,
     "rate": NETWORK_REQUEST_RATE,
+    "high_priority_rate" :0.2,
 }
 default["cache_placement"]["name"] = "UNIFORM"
 default["content_placement"]["name"] = "UNIFORM"
 default["cache_policy"]["name"] = CACHE_POLICY
+default["cache_policy"]["caches"] = CACHES
+default["cache_policy"]["alpha"] = COST_ALPHA
 
 # Create experiments multiplexing all desired parameters
 for alpha in ALPHA:

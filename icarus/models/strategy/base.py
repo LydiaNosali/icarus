@@ -71,7 +71,7 @@ class NoCache(Strategy):
         source = self.view.content_source(content)
         path = self.view.shortest_path(receiver, source)
         # Route requests to original source
-        self.controller.start_session(time, receiver, content, log)
+        self.controller.start_session(time, receiver, content, log, priority)
         self.controller.forward_request_path(receiver, source)
         self.controller.get_content(source)
         # Route content back to receiver
