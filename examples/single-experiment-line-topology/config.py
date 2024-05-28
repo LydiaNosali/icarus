@@ -12,7 +12,7 @@ LOG_LEVEL = "DEBUG"
 
 # If True, executes simulations in parallel using multiple processes
 # to take advantage of multicore CPUs
-PARALLEL_EXECUTION = True
+PARALLEL_EXECUTION = False
 
 # Number of processes used to run simulations in parallel.
 # This option is ignored if PARALLEL_EXECUTION = False
@@ -44,7 +44,16 @@ experiment = Tree()
 experiment["topology"]["name"] = "PATH"
 experiment["topology"]["n"] = 10
 experiment["topology"]["delay"] = 10
-
+CACHES =  [
+    {"name":"DRAM",
+    "size_factor": 1 / 31
+    }, 
+    {"name":"SSD",
+    "size_factor": 5 / 31 
+    }, 
+    {"name":"HDD",
+    "size_factor": 25 / 31
+    }]
 # Set workload
 experiment["workload"] = {
     "name": "STATIONARY",
@@ -63,10 +72,13 @@ experiment["cache_placement"]["network_cache"] = 0.01
 experiment["content_placement"]["name"] = "UNIFORM"
 
 # Set cache replacement policy
-experiment["cache_policy"]["name"] = "LRU"
+experiment["cache_policy"]["name"] = "QMARC"
 
 # Set caching meta-policy
-experiment["strategy"]["name"] = "LCE"
+experiment["strategy"]["name"] = "COST_CACHE"
+
+experiment["cache_policy"]["caches"] = CACHES
+experiment["cache_policy"]["alpha"] = 0.3
 
 # Description of the experiment
 experiment["desc"] = "Line topology with 10 nodes"

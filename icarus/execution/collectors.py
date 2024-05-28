@@ -311,7 +311,6 @@ class LinkLoadCollector(DataCollector):
             }
         )
 
-
 @register_data_collector("LATENCY")
 class LatencyCollector(DataCollector):
     """Data collector measuring latency, i.e. the delay taken to delivery a
@@ -384,12 +383,7 @@ class CostCollector(DataCollector):
         """
         self.cdf = cdf
         self.view = view
-        self.req_latency = 0.0
-        self.sess_count = 0
         self.cost = 0.0
-        self.priority = ""
-        self._high_prio_penalty = 50
-        self._low_prio_penalty = 5
 
         if cdf:
             self.cost_data = collections.deque()
@@ -397,33 +391,44 @@ class CostCollector(DataCollector):
     @inheritdoc(DataCollector)
     def start_session(self, timestamp, receiver, content, priority):
         self.priority = priority
-        self.sess_count += 1
-        self.sess_cost = 0.0
+        self.sess_latency = 0.0
 
     @inheritdoc(DataCollector)
     def request_hop(self, u, v, main_path=True):
         if main_path:
-            self.sess_cost += self.view.link_delay(u, v)
+            self.sess_latency += self.view.link_delay(u, v)
 
     @inheritdoc(DataCollector)
     def content_hop(self, u, v, main_path=True):
         if main_path:
-            self.sess_cost += self.view.link_delay(u, v)
+            self.sess_latency += self.view.link_delay(u, v)
 
     @inheritdoc(DataCollector)
     def end_session(self, success=True):
         if not success:
             return
         if self.cdf:
-            if self.priority == "low":
-                self.cost_data.append(self._low_prio_penalty)
-            else:
-                self.cost_data.append(self._high_prio_penalty)
-        if self.priority == "low":
-            self.cost += self._low_prio_penalty
+            self.cost_data.append(self.penalty_cost(self.sess_latency, self.priority))
+        self.cost += self.penalty_cost(self.sess_latency, self.priority)
+    
+    def penalty_cost(self, latency, priority) -> float:
+        if priority == "high":
+            if latency < 20.0:
+                return 0.0
+            if latency < 40.0:
+                return 5.0 * 10**-8
+            if latency < 60.0:
+                return 8.0 * 10**-8
+            return 10.0 * 10**-8
         else:
-            self.cost += self._high_prio_penalty
-
+            if latency < 20.0:
+                return 0.0
+            if latency < 40.0:
+                return 2.0 * 10**-8
+            if latency < 60.0:
+                return 5.0 * 10**-8
+            return 8.0 * 10**-8
+    
     @inheritdoc(DataCollector)
     def results(self):
         results = Tree({"COST": self.cost})
@@ -437,7 +442,7 @@ class CacheHitRatioCollector(DataCollector):
     requests served by a cache.
     """
 
-    def __init__(self, view, off_path_hits=False, per_node=True, content_hits=False):
+    def __init__(self, view, off_path_hits=True, per_node=False, content_hits=False):
         """Constructor
 
         Parameters
@@ -524,7 +529,6 @@ class CacheHitRatioCollector(DataCollector):
             results["PER_NODE_SERVER_HIT_RATIO"] = self.per_node_server_hits
         return results
 
-
 @register_data_collector("PATH_STRETCH")
 class PathStretchCollector(DataCollector):
     """Collector measuring the path stretch, i.e. the ratio between the actual
@@ -601,7 +605,6 @@ class PathStretchCollector(DataCollector):
             results["CDF_REQUEST"] = cdf(self.req_stretch_data)
             results["CDF_CONTENT"] = cdf(self.cont_stretch_data)
         return results
-
 
 @register_data_collector("DUMMY")
 class DummyCollector(DataCollector):

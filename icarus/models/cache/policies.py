@@ -1825,6 +1825,10 @@ class MARCCache(Cache):
         return self._maxlen
     
     @inheritdoc(Cache)
+    def dump(self):
+        return set(self._cache.keys())
+    
+    @inheritdoc(Cache)
     def has(self, k, *args, **kwargs):
         return k in self._cache
     
@@ -2108,6 +2112,10 @@ class QMARCCache(Cache):
     @inheritdoc(Cache)
     def maxlen(self):
         return self._maxlen
+    
+    @inheritdoc(Cache)
+    def dump(self):
+        return set(self._cache.keys())
     
     @inheritdoc(Cache)
     def has(self, k, *args, **kwargs):

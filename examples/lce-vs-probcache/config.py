@@ -18,11 +18,11 @@ N_REPLICATIONS = 1
 
 # List of metrics to be measured in the experiments
 # The implementation of data collectors are located in ./icarus/execution/collectors.py
-DATA_COLLECTORS = ["CACHE_HIT_RATIO", "LATENCY"]
+DATA_COLLECTORS = ["CACHE_HIT_RATIO", "LATENCY", "COST"]
 
 # Queue of experiments
 EXPERIMENT_QUEUE = deque()
-NETWORK_CACHE = 0.1
+NETWORK_CACHE = 0.05
 
 CACHES =  [
     {"name":"DRAM",
@@ -54,19 +54,20 @@ default["workload"] = {
 }
 
 STRATEGIES = [
-    "LCE",  # Leave Copy Everywhere
-    "NO_CACHE",  # No caching, shorest-path routing
+    "COST_CACHE",
+    # "LCE",  # Leave Copy Everywhere
+    # "NO_CACHE",  # No caching, shorest-path routing
     # "HR_SYMM",  # Symmetric hash-routing
     # "HR_ASYMM",  # Asymmetric hash-routing
     # "HR_MULTICAST",  # Multicast hash-routing
     # # "HR_HYBRID_AM",  # Hybrid Asymm-Multicast hash-routing
     # # "HR_HYBRID_SM",  # Hybrid Symm-Multicast hash-routing
     # # "CL4M",  # Cache less for more
-    # "PROB_CACHE",  # ProbCache
+    "PROB_CACHE",  # ProbCache
     # "LCD",  # Leave Copy Down
     # # "RAND_CHOICE",  # Random choice: cache in one random cache on path
     # # "RAND_BERNOULLI",  # Random Bernoulli: cache randomly in caches on path
-    "COST_CACHE",
+    
 ]
 
 # Specify cache placement

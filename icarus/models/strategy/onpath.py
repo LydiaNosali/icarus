@@ -1,4 +1,5 @@
 """Implementations of all on-path strategies"""
+import logging
 import random
 
 import networkx as nx
@@ -20,6 +21,7 @@ __all__ = [
     "CostCache",
 ]
 
+logger = logging.getLogger("main")
 
 @register_strategy("PARTITION")
 class Partition(Strategy):
@@ -235,12 +237,12 @@ class ProbCache(Strategy):
         self.cache_size = view.cache_nodes(size=True)
 
     @inheritdoc(Strategy)
-    def process_event(self, time, receiver, content, log):
+    def process_event(self, time, receiver, content, log, priority):
         # get all required data
         source = self.view.content_source(content)
         path = self.view.shortest_path(receiver, source)
         # Route requests to original source and queries caches on the path
-        self.controller.start_session(time, receiver, content, log)
+        self.controller.start_session(time, receiver, content, log, priority)
         for hop in range(1, len(path)):
             u = path[hop - 1]
             v = path[hop]
@@ -441,7 +443,6 @@ class CostCache(Strategy):
     Storage cost at node:
         occupation cost = (sum_of_content_size+size_content)/cache_size*amz_cost_j)
         energy cost = size_content*un_en_cost
-        penalty cost = penalty(retieval_time_des) (perhaps use collector Latency)
     Retrieval cost from des:
         throughput cost = sum_on_nodes_j_src_to_des(size_content/throughput_j*amz_cost_j)
         energy cost : links + nodes
@@ -459,25 +460,29 @@ class CostCache(Strategy):
     def __init__(self, view, controller, **kwargs):
         super().__init__(view, controller)
         self.cache_size = view.cache_nodes(size=True)
-        # in US: 0.165 $/kWh
-        # 0.020324 $/joule
+        # in US: 0.165 $/kWh & 0.020324 $/joule
         # caching power density 10^-9 w/bit
-        # link energy density j/bit
+        # link energy density 0.15X10^-8 j/bit
         # router energy density 2x10^-8 j/bit
         # total_energy_consumption = (caching_power_density * duration_in_seconds + link_energy_density + router_energy_density) * amount_of_data
         # cost_in_dollars = total_energy_consumption * cost_per_joule
-        self.content_size = 1500
-        self.node_energy_unitary_cost = 1.2
-        self.link_energy_unitary_cost = 0.2
-        self.storage_energy_unitary_cost = 0.00000144 # $/bits
+        self.content_size = 1500  # bytes
+        self.link_energy_density = 1.5 * 10**-9  # j/bit
+        self.caching_power_density = 10**-9  # w/bit
+        self.router_energy_density = 2 * 10**-8  # j/bit
+        self.cost_per_joule = 0.020324  # $/joule
+        # self.amz_cost = 4.79119 * 10**-3  # $
+        self.cost_per_byte = 4.66 * 10**-9 # $ cost per byte = cost of ram / capacity of ram
+        self.link_cost_per_byte = 1.1 * 10**-7 # $ cost per byte = cost of ram / capacity of ram
+        self.counter = 0
+        self.all_counter = 0
+
     @inheritdoc(Strategy)
     def process_event(self, time, receiver, content, log, priority):
-        # get all required data
         source = self.view.content_source(content)
         path = self.view.shortest_path(receiver, source)
-        cached_data = self.view.cache_dump(receiver)
-        # Route requests to original source and queries caches on the path
         self.controller.start_session(time, receiver, content, log, priority)
+    
         for u, v in path_links(path):
             self.controller.forward_request_hop(u, v)
             if self.view.has_cache(v):
@@ -487,75 +492,96 @@ class CostCache(Strategy):
             # No cache hits, get content from source
             self.controller.get_content(v)
             serving_node = v
-        
-        # Return content
-        paths = {}
-        min_value = 0
-        if cached_data:
-            for content in cached_data:
-                serving_node = self.get_serving_node(receiver, content)
-                path = list(reversed(self.view.shortest_path(receiver, serving_node)))
-                paths[content] = self.calculate_storage_gain(path)
-            min_value = min(paths.values())
-        
         path = list(reversed(self.view.shortest_path(receiver, serving_node)))
-
-        storage_gain = self.calculate_storage_gain(path)
-        storage_loss = self.calculate_storage_loss(receiver, min_value)
-
+        # logger.info("serving_node = "+ serving_node.__str__())
+        # logger.info("path="+path.__str__())
+        
         for u, v in path_links(path):
+            storage_gain = self.storage_gain(list(reversed(self.view.shortest_path(receiver, u))), priority) 
             self.controller.forward_content_hop(u, v)
             if self.view.has_cache(v):
-                if storage_gain > storage_loss:
+                cached_data = self.view.cache_dump(v)
+                # logger.info("cached data =" + cached_data.__str__())
+                if self.cache_size[v] == len(cached_data):
+                    self.all_counter += 1
+                    # storage loss
+                    paths = {content: self.storage_gain(list(reversed(self.view.shortest_path(v, self.get_serving_node(v, content)))), priority) for content in cached_data}
+                    min_loss = min(filter(lambda x: x != 0, paths.values()), default=0.0)
+                    storage_loss = self.storage_loss(v, min_loss)
+                    # logger.info("min_loss = " + min_loss.__str__())
+                    # logger.info("storage_gain = " + storage_gain.__str__())
+                    # logger.info("storage_loss = " + storage_loss.__str__())
+                    # logger.info("storage_gain > storage_loss = " + (storage_gain > storage_loss).__str__())
+                    if storage_gain > storage_loss:
+                        # insert content
+                        self.counter += 1
+                        self.controller.put_content(v)
+                else:
                     # insert content
                     self.controller.put_content(v)
+        # logger.info("counter = "+ self.counter.__str__())
+        # logger.info("all_counter = "+ self.all_counter.__str__())
+
         self.controller.end_session()
     
-
     def get_serving_node(self, receiver, content):
         source = self.view.content_source(content)
         path = self.view.shortest_path(receiver, source)
-        for hop in path_links(path):
-            if self.view.has_cache(hop):
-                if self.controller.get_content(hop):
-                    serving_node = hop
-                    break
-            serving_node = hop
-        return serving_node
-
-    def calculate_storage_gain(self, path):
-        return self.calculate_throughput_cost(path) + self.calculate_transmission_energy_cost(path)
+        for u, v in path_links(path):
+            if self.view.has_cache(v) and self.view.cache_lookup(v, content):
+                return v
+        return v
     
-    def calculate_storage_loss(self, receiver, min_value):
-        return self.calculate_occupation_cost(receiver) + self.calculate_storage_energy_cost() + min_value
+    def storage_gain(self, path, priority):
+        return self.throughput_cost(path) + self.transmission_energy_cost(path) + self.penalty_cost(path, priority)
+    
+    def storage_loss(self, receiver, min_value):
+        return self.occupation_cost(receiver) + self.storage_energy_cost() + min_value
 
-    def calculate_occupation_cost(self, receiver):
-        current_cache_size = 0
-        amz_cost = 0.00479119 # in $ cost model paper 2016
+    def occupation_cost(self, receiver):
+        current_cache_size = 1
         if self.view.cache_dump(receiver):
             current_cache_size = len(self.view.cache_dump(receiver))
         if receiver in self.cache_size:
             cache_maxlen = self.cache_size[receiver]
-            occupation_cost = (current_cache_size + 1) / cache_maxlen * amz_cost
+            occupation_cost = current_cache_size / cache_maxlen * self.cost_per_byte * self.content_size
         else:
-            occupation_cost = 0
+            occupation_cost = 0.0
         return occupation_cost
     
-    def calculate_storage_energy_cost(self):
-        # TODO store the unitary cost and take the worst one 
-        storage_energy_cost = self.content_size  * self.storage_energy_unitary_cost
-        return storage_energy_cost
+    def storage_energy_cost(self):
+        return self.content_size * self.caching_power_density * 1 * self.cost_per_joule
 
-    def calculate_throughput_cost(self, path):
-        # TODO store the throughput and take the worst one 
-        throughput_cost = 0
-        throughput = 1.0
-        amz_cost = 0.00479119 # in $ cost model paper 2016
-        throughput_cost = (self.content_size / throughput) * amz_cost * len(path)
+    def penalty_cost(self, path, priority) -> float:
+        latency = sum(self.view.link_delay(u, v) for u, v in path_links(path))
+        if priority == "high":
+            if latency < 20.0:
+                return 0.0
+            if latency < 40.0:
+                return 5.0 * 10**-8
+            if latency < 60.0:
+                return 8.0 * 10**-8
+            return 10.0 * 10**-8
+        else:
+            if latency < 20.0:
+                return 0.0
+            if latency < 40.0:
+                return 2.0 * 10**-8
+            if latency < 60.0:
+                return 5.0 * 10**-8
+            return 8.0 * 10**-8
+
+    def transmission_energy_cost(self, path) -> float:
+        nodes_energy_cost = (len(path) + 1)*self.content_size*self.router_energy_density * self.cost_per_joule
+        links_energy_cost = len(path)*self.content_size*self.link_energy_density * self.cost_per_joule
+        transmission_energy_cost = nodes_energy_cost + links_energy_cost
+        return transmission_energy_cost
+
+    def throughput_cost(self, path):
+        latency = sum(self.view.link_delay(u, v) for u, v in path_links(path))
+        if latency:
+            throughput_cost = (self.content_size / latency) * self.link_cost_per_byte
+        else :
+            throughput_cost = 0.0
         return throughput_cost
     
-    def calculate_transmission_energy_cost(self, path):
-        # TODO store the unitary cost and take the worst one
-        transmission_energy_cost = len(path)*self.content_size*self.link_energy_unitary_cost \
-                                    + (len(path) + 1)*self.content_size*self.node_energy_unitary_cost 
-        return transmission_energy_cost
