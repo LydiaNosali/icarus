@@ -499,7 +499,12 @@ def config_logging(log_level="INFO"):
     FORMAT = "[%(asctime)s|%(levelname)s|%(name)s] %(message)s"
     DATE_FMT = "%H:%M:%S %Y-%m-%d"
     log_level = eval("logging.%s" % log_level.upper())
-    logging.basicConfig(format=FORMAT, datefmt=DATE_FMT, level=log_level)
+    logging.basicConfig(format=FORMAT, datefmt=DATE_FMT, level=log_level,
+                    handlers=[
+                        logging.FileHandler("logfile.log"),
+                        logging.StreamHandler()
+                    ])
+    
 
 
 def inheritdoc(cls):

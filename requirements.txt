@@ -7,3 +7,6 @@ tox
 # Documentation
 numpydoc
 sphinx
+keras
+scikit-learn
+xgboost

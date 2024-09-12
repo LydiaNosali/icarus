@@ -67,7 +67,7 @@ class BaseHashrouting(Strategy):
             return self.clusters[cluster][h % self.cluster_size[cluster]]
         return self.cache_assignment[h % self.n_cache_nodes]
 
-    def process_event(self, time, receiver, content, log):
+    def  process_event(self, time, receiver, content, size, priority, log):
         raise NotImplementedError(
             "Cannot use BaseHashrouting class as is. "
             "This class is meant to be extended by other classes."
@@ -116,7 +116,7 @@ class Hashrouting(BaseHashrouting):
         self.routing = routing
 
     @inheritdoc(Strategy)
-    def process_event(self, time, receiver, content, log):
+    def  process_event(self, time, receiver, content, size, priority, log):
         # get all required data
         source = self.view.content_source(content)
         cache = self.authoritative_cache(content)
@@ -228,7 +228,7 @@ class HashroutingEdge(BaseHashrouting):
             raise ValueError("There are receivers connected to a proxy without cache")
 
     @inheritdoc(Strategy)
-    def process_event(self, time, receiver, content, log):
+    def  process_event(self, time, receiver, content, size, priority, log):
         # get all required data
         source = self.view.content_source(content)
         cache = self.authoritative_cache(content)
@@ -340,7 +340,7 @@ class HashroutingOnPath(BaseHashrouting):
         self.controller.reserve_local_cache(on_path_cache_ratio)
 
     @inheritdoc(Strategy)
-    def process_event(self, time, receiver, content, log):
+    def  process_event(self, time, receiver, content, size, priority, log):
         # get all required data
         source = self.view.content_source(content)
         cache = self.authoritative_cache(content)
@@ -469,7 +469,7 @@ class HashroutingClustered(BaseHashrouting):
         self.cluster_sp = dict(nx.all_pairs_shortest_path(self.cluster_topology))
 
     @inheritdoc(Strategy)
-    def process_event(self, time, receiver, content, log):
+    def  process_event(self, time, receiver, content, size, priority, log):
         # get all required data
         source = self.view.content_source(content)
         # handle (and log if required) actual request
@@ -709,7 +709,7 @@ class HashroutingHybridAM(BaseHashrouting):
         self.max_stretch = nx.diameter(view.topology()) * max_stretch
 
     @inheritdoc(Strategy)
-    def process_event(self, time, receiver, content, log):
+    def  process_event(self, time, receiver, content, size, priority, log):
         # get all required data
         source = self.view.content_source(content)
         cache = self.authoritative_cache(content)
@@ -781,7 +781,7 @@ class HashroutingHybridSM(BaseHashrouting):
         super().__init__(view, controller)
 
     @inheritdoc(Strategy)
-    def process_event(self, time, receiver, content, log):
+    def  process_event(self, time, receiver, content, size, priority, log):
         # get all required data
         source = self.view.content_source(content)
         cache = self.authoritative_cache(content)

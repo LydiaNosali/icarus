@@ -5,6 +5,8 @@ experiments needs to be run, instantiates all the required classes and executes
 the experiment by iterating through the event provided by an event generator
 and providing them to a strategy instance.
 """
+import csv
+import logging
 from icarus.execution import (
     NetworkModel,
     NetworkView,
@@ -16,6 +18,7 @@ from icarus.registry import DATA_COLLECTOR, STRATEGY
 
 __all__ = ["exec_experiment"]
 
+logger = logging.getLogger("main")
 
 def exec_experiment(topology, workload, netconf, strategy, cache_policy, collectors):
     """Execute the simulation of a specific scenario.
@@ -61,7 +64,21 @@ def exec_experiment(topology, workload, netconf, strategy, cache_policy, collect
     strategy_name = strategy["name"]
     strategy_args = {k: v for k, v in strategy.items() if k != "name"}
     strategy_inst = STRATEGY[strategy_name](view, controller, **strategy_args)
-
-    for time, event in workload:
-        strategy_inst.process_event(time, **event)
+    # Specify the headers
+    headers = ['timestamp', 'content', 'size', 'priority']
+    with open('events.csv', mode='w', newline='') as file:
+        writer = csv.DictWriter(file, fieldnames=headers)
+        writer.writeheader()
+    with open('events.csv', mode='a', newline='') as file:
+        writer = csv.DictWriter(file, fieldnames=headers)
+        
+        for time, event in workload:
+            strategy_inst.process_event(time, **event)
+            
+            writer.writerow({
+                'timestamp': time,
+                'content': event['content'],
+                'size': event['size'],
+                'priority': event['priority']
+            })
     return collector.results()

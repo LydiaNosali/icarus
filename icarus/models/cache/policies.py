@@ -9,6 +9,7 @@ import copy
 import logging
 import random
 from collections import OrderedDict, defaultdict, deque
+import time
 
 from icarus.registry import register_cache_policy
 from icarus.util import apportionment, inheritdoc
@@ -67,6 +68,8 @@ class Deque(object):
         del self.od[k]
     
     def get_without_pop(self):
+        if not self.od:
+            return None  # or some other default value  
         return next(iter(self.od.items()))[0]
     
     def __len__(self):
@@ -2020,12 +2023,14 @@ class MARCCache(Cache):
 class QMARCCache(Cache):
     @inheritdoc(Cache)
     def __init__(self, maxlen, **kwargs):
-        self._caches = kwargs["caches"]
+        # print(f"Initializing QMARCCache with maxlen: {maxlen} and kwargs: {kwargs}")
+        self._caches = kwargs["tiers"]
         self._n_caches = len(self._caches)
         self._maxlen = int(maxlen)
         self._sizes = [cache["size_factor"] * self._maxlen for cache in self._caches]
+        self._names = [cache["name"] for cache in self._caches]
         self._tier_m_caches = self.initialize_caches()
-        
+        # print(f"Cache initialized. Tiers: {self._tier_m_caches}")
         self._cache= {}
         self.p = 0
         self.t1 = Deque()
@@ -2041,11 +2046,13 @@ class QMARCCache(Cache):
             raise ValueError("maxlen must be positive")
 
     class TierMCache:
-        def __init__(self, maxlen):
+        def __init__(self, name, maxlen):
+            self.name = name
             self.p = 0
             self.t1 = Deque()
             self.t2 = Deque()
             self._maxlen = maxlen
+            self.last_access = 0.0
 
         def put_t1(self, k, *args):
             a, b = (None, None)
@@ -2069,7 +2076,7 @@ class QMARCCache(Cache):
                 self.t1.append_by_index(args[0], k)
             else:
                 self.t1.append_left(k)
-            
+            self.last_access = time.time()
             return (a,b)
         
         def put_t2(self, k, *args):
@@ -2094,14 +2101,14 @@ class QMARCCache(Cache):
                 self.t2.append_by_index(args[0], k)
             else:
                 self.t2.append_left(k)
- 
+            self.last_access = time.time()
             return (a, b)
 
     def initialize_caches(self):
         # Iterate through caches and initialize TierMCache with a reference to the next cache
         tier_m_caches = {}
         for i in range(self._n_caches):
-            tier_m_caches[i] = self.TierMCache(self._sizes[i])
+            tier_m_caches[i] = self.TierMCache(self._names[i], self._sizes[i])
         return tier_m_caches
     
     @inheritdoc(Cache)
@@ -2122,6 +2129,7 @@ class QMARCCache(Cache):
         return k in self._cache
     
     def replace(self, args):
+        # logger.info("replace"+args.__str__())
         """
         If (T1 is not empty) and ((T1 lenght exceeds the target p) or (x is in B2 and T1 lenght == p))
             Delete the LRU page in T1 (also remove it from the cache), and move it to MRU position in B1.
@@ -2132,10 +2140,12 @@ class QMARCCache(Cache):
 
         if self.t1 and ((args in self.b2 and len(self.t1) == self.p) or (len(self.t1) > self.p)):
             old = self.t1.get_without_pop()
+            # logger.info("remove %s from t1", old.__str__())
             self.t1_pop(old)
             self.b1.append_left(old)
         else:
             old = self.t2.get_without_pop()
+            # logger.info("remove %s from t2", old.__str__())
             self.t2_pop(old)
             self.b2.append_left(old)
         
@@ -2143,49 +2153,84 @@ class QMARCCache(Cache):
 
     @inheritdoc(Cache)
     def get(self, k, *args, **kwargs):
-        # print("get"+k.__str__())
+        # logger.info("get"+k.__str__())
         # Case I: x is in T1 or T2.
         #  A cache hit has occurred in ARC(c) and DBL(2c)
         #   Move x to MRU position in T2.
+        # print(f"Getting key: {k} from cache.")
+        # if k in self._cache:
+        #     print(f"Key {k} found in cache.")
+        #     # Logic to return the value and update positions
+        # else:
+        #     print(f"Key {k} not found in cache.")
+        #     # Logic for handling cache miss
+        # logger.info(f"Cache before: {self._cache}")
+        # logger.info(f"T1 before: {self.t1}")
+        # logger.info(f"T2 before: {self.t2}")
+        # logger.info(f"B1 before: {self.b1}")
+        # logger.info(f"B2 before: {self.b2}")
+        
         res = False
         if args[0] == 'high':
             if k in self.t1:
+                # logger.info("move %s from t1 to t2", k.__str__())
                 self.t1_remove(k)
                 self.t2_append_left(k)
                 res = True
-
-            if k in self.t2:
-                self.t2_remove(k)
-                self.t2_append_left(k)
-                res = True
+            else :
+                if k in self.t2:
+                    # logger.info("promote %s in t2", k.__str__())
+                    self.t2_remove(k)
+                    self.t2_append_left(k)
+                    res = True
+                
         else:
             if k in self.t1:
+                # logger.info("move %s from t1 to t2", k.__str__())
                 self.t1_remove(k)
                 global_pos = round(len(self.t2) * self._alpha)
                 self.t2_append_by_index(k, global_pos)
                 res = True
-
-            if k in self.t2:
-                current_pos = self.t2.__index__(k)
-                new_pos = int(min(self._maxlen - self.p, current_pos + round(len(self.t2) * self._alpha)))
-                self.t2_remove(k)
-                self.t2_append_by_index(k, new_pos)
-                res = True
-
+            else :
+                if k in self.t2:
+                    # logger.info("promote %s in t2", k.__str__())
+                    current_pos = self.t2.__index__(k)
+                    new_pos = int(min(self._maxlen - self.p, current_pos + round(len(self.t2) * self._alpha)))
+                    self.t2_remove(k)
+                    self.t2_append_by_index(k, new_pos)
+                    res = True
+        # logger.info(f"Cache after: {self._cache}")
+        # logger.info(f"T1 after: {self.t1}")
+        # logger.info(f"T2 after: {self.t2}")
+        # logger.info(f"B1 after: {self.b1}")
+        # logger.info(f"B2 after: {self.b2}")
         return res  # Return value not found in cache
-        
+    
+    @inheritdoc(Cache)
     def put(self, k, *args, **kwargs):
+        # logger.info("put"+k.__str__())
         # Case II: x is in B1
         #  A cache miss has occurred in ARC(c)
         #   ADAPTATION
         #   REPLACE(x)
         #   Move x from B1 to the MRU position in T2 (also fetch x to the cache).
-        res = None
+        # print(f"Putting key: {k}")
+        if k in self._cache:
+            # logger.info("%s already in cache, updating value and moving to MRU position." + k.__str__())
+            self.get(k, *args, **kwargs)
+            return
 
+        res = None
+        # logger.info(f"Cache before: {self._cache}")
+        # logger.info(f"T1 before: {self.t1}")
+        # logger.info(f"T2 before: {self.t2}")
+        # logger.info(f"B1 before: {self.b1}")
+        # logger.info(f"B2 before: {self.b2}")
         if k in self.b1:
             self.increment_p(len(self.b1), len(self.b2))
             self.replace(k)
             self.b1.remove(k)
+            # logger.info("put %s in t2", k.__str__())
             if args[0] == 'high':
                 self.t2_append_left(k)
                 self._cache[k] = True
@@ -2193,6 +2238,11 @@ class QMARCCache(Cache):
                 global_pos = round(len(self.t2) * self._alpha)
                 self.t2_append_by_index(k, global_pos)
                 self._cache[k] = True
+            # logger.info(f"Cache after: {self._cache}")
+            # logger.info(f"T1 after: {self.t1}")
+            # logger.info(f"T2 after: {self.t2}")
+            # logger.info(f"B1 after: {self.b1}")
+            # logger.info(f"B2 after: {self.b2}")
             return res
 
         # Case III: x is in B2
@@ -2205,6 +2255,7 @@ class QMARCCache(Cache):
             self.decrement_p(len(self.b1), len(self.b2))
             self.replace(k)
             self.b2.remove(k)
+            # logger.info("put %s in t2", k.__str__())
             if args[0] == 'high':
                 self.t2_append_left(k)
                 self._cache[k] = True
@@ -2212,6 +2263,11 @@ class QMARCCache(Cache):
                 global_pos = round(len(self.t2) * self._alpha)
                 self.t2_append_by_index(k, global_pos)
                 self._cache[k] = True
+            # logger.info(f"Cache after: {self._cache}")
+            # logger.info(f"T1 after: {self.t1}")
+            # logger.info(f"T2 after: {self.t2}")
+            # logger.info(f"B1 after: {self.b1}")
+            # logger.info(f"B2 after: {self.b2}")
             return res
         
         # Case IV: x is not in (T1 u B1 u T2 u B2)
@@ -2227,6 +2283,7 @@ class QMARCCache(Cache):
                 # Delete LRU page in T1 (also remove it from the cache)
                 res = self.t1.get_without_pop()
                 self.t1_pop(res)
+                # logger.info("remove %s from t1", res.__str__())
                 self._cache.pop(res, None)
         else:
             # Case B: L1 (T1 u B1) has less than c pages.
@@ -2238,7 +2295,8 @@ class QMARCCache(Cache):
 
                 # REPLACE(x, p)
                 self.replace(k)
-
+        
+        # logger.info("put %s in t1", k.__str__())
         # Finally, fetch x to the cache and move it to MRU position in T1
         if args[0] == 'high':
             self.t1_append_left(k)
@@ -2247,8 +2305,38 @@ class QMARCCache(Cache):
             global_pos = round(len(self.t1) * self._alpha)
             self.t1_append_by_index(k, global_pos)
             self._cache[k] = True
-
+        # logger.info(f"Cache after: {self._cache}")
+        # logger.info(f"T1 after: {self.t1}")
+        # logger.info(f"T2 after: {self.t2}")
+        # logger.info(f"B1 after: {self.b1}")
+        # logger.info(f"B2 after: {self.b2}")
         return res
+    
+    @inheritdoc(Cache)
+    def remove(self, k, *args, **kwargs):
+        # logger.info("remove"+k.__str__())
+        if k not in self._cache:
+            # logger.info("%s not in cache", k.__str__())
+            return False
+        # Remove from T1
+        if k in self.t1:
+            # logger.info("remove %s from t1", k.__str__())
+            self.t1_remove(k)
+        # Remove from T2
+        elif k in self.t2:
+            # logger.info("remove %s from t2", k.__str__())
+            self.t2_remove(k)
+        # Remove from B1
+        elif k in self.b1:
+            # logger.info("remove %s from b1", k.__str__())
+            self.b1.remove(k)
+        # Remove from B2
+        elif k in self.b2:
+            # logger.info("remove %s from b2", k.__str__())
+            self.b2.remove(k)
+        # Remove from the main cache
+        del self._cache[k]
+        return True
     
     @inheritdoc(Cache)
     def clear(self):
@@ -2280,7 +2368,8 @@ class QMARCCache(Cache):
                 pass  
 
     def t1_remove(self, k):
-        self.t1.remove(k)
+        if k in self.t1:
+            self.t1.remove(k)
         for cache in self._tier_m_caches.values():
             try:
                 if k in cache.t1:
@@ -2290,7 +2379,8 @@ class QMARCCache(Cache):
                 pass
 
     def t2_remove(self, k):
-        self.t2.remove(k)
+        if k in self.t2: 
+            self.t2.remove(k)
         for cache in self._tier_m_caches.values():
             try:
                 if k in cache.t2:
@@ -2397,8 +2487,77 @@ class QMARCCache(Cache):
                                      sum(self._beta.values())))
         for i in range(self._n_caches):
             self._tier_m_caches[i].p = max(0, self._tier_m_caches[i].p - max((len_b1 / len_b2) * self._beta[i],  self._beta[i]))
-  
 
+    def t1_get_index_tier(self, index):
+        t1_tier_length = []
+        c_max = []
+        tier_index = 0
+
+        for i in range (self._n_caches):
+            t1_tier_length.append(len(self._tier_m_caches[i].t1))
+            c_max.append(self._tier_m_caches[i]._maxlen)
+        
+        for i in range(len(t1_tier_length) - 1, -1, -1):
+            if index <= t1_tier_length[i] != 0:
+                tier_index = i
+                break
+        
+        if index == 0 or t1_tier_length[tier_index] < c_max[tier_index]:
+            new_index = index
+        else:
+            new_index = index - t1_tier_length[0]
+            for i in range(1, len(t1_tier_length)):
+                if new_index >= 0:
+                    break
+                else:
+                    new_index += t1_tier_length[i]
+        # print("write to %s at tier %s at index = %s" % (tier_index, self._tier_m_caches[tier_index].name, new_index))
+        return tier_index
+    
+    def t2_get_index_tier(self, index):
+        t2_tier_length = []
+        c_max = []
+        tier_index = 0
+
+        for i in range (self._n_caches):
+            t2_tier_length.append(len(self._tier_m_caches[i].t2))
+            c_max.append(self._tier_m_caches[i]._maxlen)
+        
+        for i in range(len(t2_tier_length) -1, -1, -1):
+            if index <= t2_tier_length[i] != 0:
+                tier_index = i
+                break
+
+        if index == 0 or t2_tier_length[tier_index] < c_max[tier_index]:
+            new_index = index
+        else:
+            new_index = index - t2_tier_length[0]
+            for i in range(1, len(t2_tier_length)):
+                if new_index >= 0:
+                    break
+                else:
+                    new_index += t2_tier_length[i]
+        return tier_index
+
+    def get_tier_index(self, k):
+        if k in self.t1 or k in self.b1 or k in self.b2:
+            global_pos = round(len(self.t2) * self._alpha)
+            return self.t2_get_index_tier(global_pos)
+        if k in self.t2:
+            current_pos = self.t2.__index__(k)
+            new_pos = int(min(self._maxlen - self.p, current_pos + round(len(self.t2) * self._alpha)))
+            return self.t2_get_index_tier(new_pos)
+        else:
+            global_pos = round(len(self.t1) * self._alpha)
+            return self.t1_get_index_tier(global_pos)
+
+    def get_tiers_last_access(self):
+        tiers_last_access = {}
+        for i in range(self._n_caches):
+            tiers_last_access[i] = self._tier_m_caches[i].last_access
+        return tiers_last_access
+           
+        
 def insert_after_k_hits_cache(cache, k=2, memory=None):
     """Return a cache inserting items only after k requests.
 

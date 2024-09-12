@@ -384,6 +384,24 @@ class CostCollector(DataCollector):
         self.cdf = cdf
         self.view = view
         self.cost = 0.0
+        self.latency_function = {
+            "high": {
+                "thresholds": {
+                "20.0": 0.0,
+                "40.0": 5.0e-8,
+                "60.0": 8.0e-8
+                },
+                "default": 1.0e-7
+            },
+            "low": {
+                "thresholds": {
+                "20.0": 0.0,
+                "40.0": 2.0e-8,
+                "60.0": 5.0e-8
+                },
+                "default": 8.0e-8
+            }
+        }
 
         if cdf:
             self.cost_data = collections.deque()
@@ -407,31 +425,29 @@ class CostCollector(DataCollector):
     def end_session(self, success=True):
         if not success:
             return
-        if self.cdf:
-            self.cost_data.append(self.penalty_cost(self.sess_latency, self.priority))
-        self.cost += self.penalty_cost(self.sess_latency, self.priority)
-    
-    def penalty_cost(self, latency, priority) -> float:
-        if priority == "high":
-            if latency < 20.0:
-                return 0.0
-            if latency < 40.0:
-                return 5.0 * 10**-8
-            if latency < 60.0:
-                return 8.0 * 10**-8
-            return 10.0 * 10**-8
+        
+        latency_config = self.latency_function.get(self.priority, {})
+        thresholds = latency_config.get("thresholds", {})
+        default_penalty = latency_config.get("default", None)
+        
+        # Determine the penalty based on latency
+        for threshold_str in sorted(thresholds.keys(), key=lambda x: float(x)):
+            threshold = float(threshold_str)
+            if self.sess_latency < threshold:
+                if self.cdf:
+                    self.cost_data.append(thresholds[threshold_str])
+                self.cost += thresholds[threshold_str]
+                return
+        
+        # If latency is out of range, return the default penalty or raise an error if not set
+        if default_penalty is not None:
+            return default_penalty
         else:
-            if latency < 20.0:
-                return 0.0
-            if latency < 40.0:
-                return 2.0 * 10**-8
-            if latency < 60.0:
-                return 5.0 * 10**-8
-            return 8.0 * 10**-8
-    
+            raise ValueError(f"Latency {self.sess_latency} is out of range for priority {self.priority}.")
+
     @inheritdoc(DataCollector)
     def results(self):
-        results = Tree({"COST": self.cost})
+        results = Tree({"MEAN": self.cost})
         if self.cdf:
             results["CDF"] = cdf(self.cost_data)
         return results

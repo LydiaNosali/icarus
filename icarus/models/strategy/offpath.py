@@ -57,7 +57,7 @@ class NearestReplicaRouting(Strategy):
         )
 
     @inheritdoc(Strategy)
-    def process_event(self, time, receiver, content, log):
+    def  process_event(self, time, receiver, content, size, priority, log):
         # get all required data
         locations = self.view.content_locations(content)
         nearest_replica = min(locations, key=lambda x: self.distance[receiver][x])

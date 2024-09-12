@@ -606,7 +606,15 @@ class NetworkController:
         else:
             return False
 
-    def remove_content(self, node):
+    def get_tier_index(self, node):
+        if node in self.model.cache:
+            return self.model.cache[node].get_tier_index(self.session["content"])
+    
+    def get_last_access(self, node):
+        if node in self.model.cache:
+            return self.model.cache[node].get_tiers_last_access()
+    
+    def remove_content(self, node, content):
         """Remove the content being handled from the cache
 
         Parameters
@@ -620,7 +628,7 @@ class NetworkController:
             *True* if the entry was in the cache, *False* if it was not.
         """
         if node in self.model.cache:
-            return self.model.cache[node].remove(self.session["content"])
+            return self.model.cache[node].remove(content)
 
     def end_session(self, success=True):
         """Close a session
