@@ -12,7 +12,7 @@ LOG_LEVEL = "INFO"
 
 # If True, executes simulations in parallel using multiple processes
 # to take advantage of multicore CPUs
-PARALLEL_EXECUTION = False
+PARALLEL_EXECUTION = True
 
 # Number of processes used to run simulations in parallel.
 # This option is ignored if PARALLEL_EXECUTION = False
@@ -84,7 +84,7 @@ default["workload"] = {
 
 # Specify cache placement
 # default["cache_placement"]["network_cache"] = [0.5, 1, 5, 10]
-NETWORK_CACHE = [10, 100]
+NETWORK_CACHE = [1, 10]
 default["cache_placement"]["name"] = "UNIFORM"
 
 # Specify content placement

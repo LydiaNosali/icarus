@@ -6,6 +6,9 @@ import time
 import pandas as pd
 import numpy as np
 from sklearn.calibration import LabelEncoder
+from sklearn.discriminant_analysis import StandardScaler
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.pipeline import make_pipeline
 from xgboost import XGBClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
@@ -149,8 +152,6 @@ class LeaveCopyEverywhere(Strategy):
         # Route requests to original source and queries caches on the path
         self.controller.start_session(time, receiver, content, log, priority)
         for u, v in path_links(path):
-            # logger.info("get")
-            # logger.info("cache : %s", v.__str__())
             self.controller.forward_request_hop(u, v)
             if self.view.has_cache(v):
                 if self.controller.get_content(v):
@@ -163,8 +164,6 @@ class LeaveCopyEverywhere(Strategy):
         # Return content
         path = list(reversed(self.view.shortest_path(receiver, serving_node)))
         for u, v in path_links(path):
-            # logger.info("put")
-            # logger.info("cache : %s", v.__str__())
             self.controller.forward_content_hop(u, v)
             if self.view.has_cache(v):
                 # insert content
@@ -469,16 +468,9 @@ class CostCache(Strategy):
         self.cost_per_bit = kwargs['cost_per_bit']
         self.router_energy_density = kwargs['router_energy_density']
         self.link_energy_density = kwargs['link_energy_density']
-        # XGBoost
-        self.label_encoder_content = LabelEncoder()
-        self.xgboost_model = self.modeltraining('traces')
-        # Extract feature names from the model once
-        self.feature_names = self.xgboost_model.get_booster().feature_names
-        # Precompute missing columns based on feature names
-        self.missing_cols = set(self.feature_names)
-        self.chunk_size = kwargs['chunk_size']
-        self.events = []
-        # End
+
+        self.clf, self.feature_names, self.label_encoder_content= self.modeltraining('traces')
+
         self.accuracy_history = []
         self.precision_history = []
         self.recall_history = []
@@ -527,6 +519,8 @@ class CostCache(Strategy):
                             # logger.info("popular")
                             self.controller.remove_content(v, min_content)
                             self.controller.put_content(v)
+                        # else:
+                        #     logger.info("other")
                         
                 else:
                     self.controller.put_content(v)
@@ -542,9 +536,10 @@ class CostCache(Strategy):
     
     
     def modeltraining(self, traces_directory):
-        # Initialize XGBoost model
-        xgboost_model = XGBClassifier(use_label_encoder=False, eval_metric='logloss')
+        # # Initialize XGBoost model
 
+        # xgboost_model = XGBClassifier(use_label_encoder=False, eval_metric='logloss')
+        clf = RandomForestClassifier(max_depth=5, n_estimators=10, max_features=1, random_state=42)
         # List all trace files in the directory
         trace_files = [f for f in os.listdir(traces_directory) if f.endswith('.csv')]
 
@@ -554,28 +549,10 @@ class CostCache(Strategy):
         recall_history = []
         f1_history = []
 
-        # Initialize the LabelEncoder for 'content'
-        self.label_encoder_content = LabelEncoder()
-
-        all_content = []
-
         for filename in trace_files:
             file_path = os.path.join(traces_directory, filename)
             df = pd.read_csv(file_path, names=['timestamp', 'content', 'size', 'priority'])
 
-            # Perform preprocessing steps on the individual trace
-            df = df.iloc[1:500000]  # Subset to the first 499,999 rows
-
-            # Collect all 'content' values for encoding
-            all_content.extend(df['content'].astype(str).tolist())
-
-        # Fit the LabelEncoder on the entire 'content' from all traces
-        self.label_encoder_content.fit(all_content)
-
-        for filename in trace_files:
-            file_path = os.path.join(traces_directory, filename)
-            df = pd.read_csv(file_path, names=['timestamp', 'content', 'size', 'priority'])
-           
             # Perform preprocessing steps on the individual trace
             df = df.iloc[1:500000]  # Subset to the first 499,999 rows
 
@@ -587,10 +564,12 @@ class CostCache(Strategy):
 
             # Convert 'content' column to string to ensure uniform encoding
             df['content'] = df['content'].astype(str)
+            # Encode 'content' with label encoding if needed
+            label_encoder_content = LabelEncoder()
             
-            # Encode 'content' and 'receiver' columns with label encoding
-            df['content'] = self.label_encoder_content.fit_transform(df['content'])
-            
+            df['content_encoded'] = label_encoder_content.fit_transform(df['content'])
+            # print("LabelEncoder classes:", label_encoder_content.classes_)
+        
             df['timestamp'] = df['timestamp'].astype(float)
             
             # Convert 'size' column to numeric (float or int)
@@ -606,21 +585,29 @@ class CostCache(Strategy):
             df['time_since_last_access'] = df.groupby('content')['timestamp'].diff().fillna(0) 
             
             # Select relevant features for modeling 
-            X = df.drop(['is_reaccessed', 'timestamp', 'prev_timestamp'], axis=1) 
-            # X = df.drop(['is_reaccessed', 'timestamp'], axis=1) 
+            X = df.drop(['is_reaccessed', 'timestamp', 'content', 'prev_timestamp'], axis=1) 
+           
             y = df['is_reaccessed'] 
             
             # Split the data into training and test sets
             test_size = 0.3
             train_size = 1 - test_size
             X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, train_size=train_size, random_state=20)
+            
+            # # Train the XGBoost model
+            # xgboost_model.fit(X_train, y_train)
 
-            # Train the XGBoost model
-            xgboost_model.fit(X_train, y_train)
+            # # Predict on the test set
+            # y_pred = xgboost_model.predict(X_test)
+            clf = make_pipeline(StandardScaler(), clf)
+            # print(X_train)
+            clf.fit(X_train, y_train)
+            
+            feature_names = X_train.columns.tolist()
 
             # Predict on the test set
-            y_pred = xgboost_model.predict(X_test)
-
+            y_pred = clf.predict(X_test)
+        
             trace_names.append(filename[:4])
 
             # Calculate metrics
@@ -640,40 +627,7 @@ class CostCache(Strategy):
         print("Precision history: ", precision_history)
         print("Recall history: ", recall_history)
         print("F1-score history: ", f1_history)
-        return xgboost_model
-        # # Optionally, you can also visualize the metrics
-        # plt.figure(figsize=(12, 8))
-
-        # plt.subplot(2, 2, 1)
-        # plt.plot(trace_names, accuracy_history, marker='o', linestyle='-', color='b')
-        # plt.xlabel('Traces')
-        # plt.ylabel('Accuracy')
-        # plt.title('Model Accuracy over Traces')
-        # plt.grid(True)
-
-        # plt.subplot(2, 2, 2)
-        # plt.plot(trace_names, precision_history, marker='o', linestyle='-', color='g')
-        # plt.xlabel('Traces')
-        # plt.ylabel('Precision')
-        # plt.title('Model Precision over Traces')
-        # plt.grid(True)
-
-        # plt.subplot(2, 2, 3)
-        # plt.plot(trace_names, recall_history, marker='o', linestyle='-', color='r')
-        # plt.xlabel('Traces')
-        # plt.ylabel('Recall')
-        # plt.title('Model Recall over Traces')
-        # plt.grid(True)
-
-        # plt.subplot(2, 2, 4)
-        # plt.plot(trace_names, f1_history, marker='o', linestyle='-', color='purple')
-        # plt.xlabel('Traces')
-        # plt.ylabel('F1-score')
-        # plt.title('Model F1-score over Traces')
-        # plt.grid(True)
-
-        # plt.tight_layout()
-        # plt.show()
+        return clf, feature_names, label_encoder_content
 
     def _predict_event(self, time, content, size, priority):
         # Create a DataFrame for the new event
@@ -685,28 +639,18 @@ class CostCache(Strategy):
             # Extend the classes in the label encoder to include new content
             new_classes = np.append(self.label_encoder_content.classes_, content)
             self.label_encoder_content.classes_ = new_classes
+        # print(self.label_encoder_content.classes_)
+        # print(self.feature_names)
         event_df['content'] = self.label_encoder_content.transform([content])[0]
         event_df['size'] = pd.to_numeric(event_df['size'], errors='coerce')
         event_df['inter_arrival_time'] = 0
         event_df['prev_access_count'] = 0
         event_df['time_since_last_access'] = 0
 
-        # # Encode 'content' column with label encoding
-        # label_encoder_content = LabelEncoder()
-        # event_df['content'] = label_encoder_content.fit_transform(event_df['content'])
-        
-       
-        
-        # # Ensure all features used during training are present
-        # feature_names = self.xgboost_model.get_booster().feature_names
-        # missing_cols = set(feature_names) - set(event_df.columns)
-        # for col in missing_cols:
-        #     event_df[col] = 0
-        # event_df = event_df[feature_names]
         event_df = event_df.reindex(columns=self.feature_names, fill_value=0)
 
         # Predict reaccess
-        is_reaccessed = self.xgboost_model.predict(event_df)[0]
+        is_reaccessed = self.clf.predict(event_df)[0]
         return is_reaccessed
     
     def _process_chunk(self):
