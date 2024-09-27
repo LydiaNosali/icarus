@@ -111,7 +111,7 @@ class Edge(Strategy):
             self.controller.forward_request_hop(u, v)
             if self.view.has_cache(v):
                 edge_cache = v
-                if self.controller.get_content(v):
+                if self.controller.get_content(v, size=size):
                     serving_node = v
                 else:
                     # Cache miss, get content from source
@@ -121,7 +121,7 @@ class Edge(Strategy):
                 break
         else:
             # No caches on the path at all, get it from source
-            self.controller.get_content(v)
+            self.controller.get_content(v, size=size)
             serving_node = v
 
         # Return content
@@ -154,12 +154,12 @@ class LeaveCopyEverywhere(Strategy):
         for u, v in path_links(path):
             self.controller.forward_request_hop(u, v)
             if self.view.has_cache(v):
-                if self.controller.get_content(v):
+                if self.controller.get_content(v, size=size):
                     serving_node = v
                     break
         else:
             # No cache hits, get content from source
-            self.controller.get_content(v)
+            self.controller.get_content(v, size=size)
             serving_node = v
         # Return content
         path = list(reversed(self.view.shortest_path(receiver, serving_node)))
@@ -200,12 +200,12 @@ class LeaveCopyDown(Strategy):
         for u, v in path_links(path):
             self.controller.forward_request_hop(u, v)
             if self.view.has_cache(v):
-                if self.controller.get_content(v):
+                if self.controller.get_content(v, size=size):
                     serving_node = v
                     break
         else:
             # No cache hits, get content from source
-            self.controller.get_content(v)
+            self.controller.get_content(v, size=size)
             serving_node = v
         # Return content
         path = list(reversed(self.view.shortest_path(receiver, serving_node)))
@@ -262,12 +262,12 @@ class ProbCache(Strategy):
             v = path[hop]
             self.controller.forward_request_hop(u, v)
             if self.view.has_cache(v):
-                if self.controller.get_content(v):
+                if self.controller.get_content(v, size=size):
                     serving_node = v
                     break
         else:
             # No cache hits, get content from source
-            self.controller.get_content(v)
+            self.controller.get_content(v, size=size)
             serving_node = v
         # Return content
         path = list(reversed(self.view.shortest_path(receiver, serving_node)))
@@ -326,16 +326,16 @@ class CacheLessForMore(Strategy):
         source = self.view.content_source(content)
         path = self.view.shortest_path(receiver, source)
         # Route requests to original source and queries caches on the path
-        self.controller.start_session(time, receiver, content, log)
+        self.controller.start_session(time, receiver, content, log, priority)
         for u, v in path_links(path):
             self.controller.forward_request_hop(u, v)
             if self.view.has_cache(v):
-                if self.controller.get_content(v):
+                if self.controller.get_content(v, size=size):
                     serving_node = v
                     break
         # No cache hits, get content from source
         else:
-            self.controller.get_content(v)
+            self.controller.get_content(v, size=size)
             serving_node = v
         # Return content
         path = list(reversed(self.view.shortest_path(receiver, serving_node)))
@@ -380,12 +380,12 @@ class RandomBernoulli(Strategy):
         for u, v in path_links(path):
             self.controller.forward_request_hop(u, v)
             if self.view.has_cache(v):
-                if self.controller.get_content(v):
+                if self.controller.get_content(v, size=size):
                     serving_node = v
                     break
         else:
             # No cache hits, get content from source
-            self.controller.get_content(v)
+            self.controller.get_content(v, size=size)
             serving_node = v
         # Return content
         path = list(reversed(self.view.shortest_path(receiver, serving_node)))
@@ -419,12 +419,12 @@ class RandomChoice(Strategy):
         for u, v in path_links(path):
             self.controller.forward_request_hop(u, v)
             if self.view.has_cache(v):
-                if self.controller.get_content(v):
+                if self.controller.get_content(v, size=size):
                     serving_node = v
                     break
         else:
             # No cache hits, get content from source
-            self.controller.get_content(v)
+            self.controller.get_content(v, size=size)
             serving_node = v
         # Return content
         path = list(reversed(self.view.shortest_path(receiver, serving_node)))
@@ -490,11 +490,12 @@ class CostCache(Strategy):
         for u, v in path_links(path):
             self.controller.forward_request_hop(u, v)
             if self.view.has_cache(v):
-                if self.controller.get_content(v):
+                tier_index = self.view.get_tier_index(receiver, content)
+                if self.controller.get_content(v, tier_index=tier_index, size=size):
                     serving_node = v
                     break
         else:
-            self.controller.get_content(v)
+            self.controller.get_content(v, size=size)
             serving_node = v
         path = list(reversed(self.view.shortest_path(receiver, serving_node)))
         for u, v in path_links(path):
@@ -505,7 +506,7 @@ class CostCache(Strategy):
                     paths = {content: self.storage_gain(list(reversed(self.view.shortest_path(v, self.get_serving_node(v, content)))), size, priority) for content in self.view.cache_dump(v)}
                     min_content, min_gain = min(paths.items(), key=lambda x: x[1])
                     # calculate storage loss
-                    storage_loss = self.storage_loss(v, size, min_gain)
+                    storage_loss = self.storage_loss(v, content, size, min_gain)
                     # calculate storage gain
                     storage_gain = self.storage_gain(list(reversed(self.view.shortest_path(receiver, u))), size, priority) 
                     if storage_gain > storage_loss:
@@ -641,7 +642,9 @@ class CostCache(Strategy):
             self.label_encoder_content.classes_ = new_classes
         # print(self.label_encoder_content.classes_)
         # print(self.feature_names)
-        event_df['content'] = self.label_encoder_content.transform([content])[0]
+        event_df['content'] = event_df['content'].astype(str)
+        event_df['content'] = self.label_encoder_content.fit_transform([content])[0]
+        # df['content_encoded'] = label_encoder_content.fit_transform(df['content'])
         event_df['size'] = pd.to_numeric(event_df['size'], errors='coerce')
         event_df['inter_arrival_time'] = 0
         event_df['prev_access_count'] = 0
@@ -700,8 +703,8 @@ class CostCache(Strategy):
     def storage_gain(self, path, content_size, priority) -> float:
         return self.bandwidth_cost(path, content_size) + self.transmission_energy_cost(path, content_size) + self.penalty_cost(path, priority)
     
-    def storage_loss(self, receiver, content_size, min_value) -> float:
-        tier_index = self.controller.get_tier_index(receiver)
+    def storage_loss(self, receiver, content, content_size, min_value) -> float:
+        tier_index = self.view.get_tier_index(receiver, content)
         return self.depreciation_cost(tier_index, receiver, content_size) + self.storage_energy_cost(tier_index, receiver, content_size) + min_value
 
     def depreciation_cost(self, tier_index, receiver, content_size) -> float: 
@@ -716,7 +719,7 @@ class CostCache(Strategy):
         return depreciation_cost
 
     def storage_energy_cost(self, tier_index, receiver, content_size) -> float:
-        tiers_last_access = self.controller.get_last_access(receiver)
+        tiers_last_access = self.view.get_last_access(receiver)
         
         tier = self.tiers[tier_index]
         tier_active_power_density  = tier['active_caching_power_density']

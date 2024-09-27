@@ -12,7 +12,7 @@ LOG_LEVEL = "INFO"
 
 # If True, executes simulations in parallel using multiple processes
 # to take advantage of multicore CPUs
-PARALLEL_EXECUTION = True
+PARALLEL_EXECUTION = False
 
 # Number of processes used to run simulations in parallel.
 # This option is ignored if PARALLEL_EXECUTION = False
@@ -32,7 +32,8 @@ N_REPLICATIONS = 1
 
 # List of metrics to be measured in the experiments
 # The implementation of data collectors are located in ./icarus/execution/collectors.py
-DATA_COLLECTORS = ["CACHE_HIT_RATIO", "LATENCY", "COST"]
+# DATA_COLLECTORS = ["CACHE_HIT_RATIO", "LATENCY", "COST"]
+
 
 TIERS = [
     {"name":"DRAM",
@@ -72,10 +73,10 @@ default = Tree()
 # Specify workload
 default["workload"] = {
     "name": "STATIONARY",
-    "alpha": 0.8,
-    "n_contents": 3 * 10 ** 5,
-    "n_warmup": 3 * 10 ** 5,
-    "n_measured": 6 * 10 ** 5,
+    "alpha": 1.2,
+    "n_contents": 3 * 10 ** 3,
+    "n_warmup": 3 * 10 ** 3,
+    "n_measured": 6 * 10 ** 3,
     "rate": 12,
     "high_priority_rate" :0.2,
     "priority_values": ["low", "high"],
@@ -94,11 +95,13 @@ default["content_placement"]["name"] = "UNIFORM"
 # Topology implementations are located in ./icarus/scenarios/topology.py
 TOPOLOGIES = [
     "GEANT",
-    "TISCALI",
+    "WIDE",
+    "GARR",
 ]
 
 # Specify cache replacement policy
 default["cache_policy"]["name"] = "QMARC"
+# default["cache_policy"]["name"] = "LRU"
 default["cache_policy"]["tiers"] = TIERS
 default["cache_policy"]["alpha"] = 0.3
 
@@ -122,10 +125,12 @@ LATENCY_FUNCTION = {
     }
 
 STRATEGIES = [
+   "COST_CACHE",
+    "PROB_CACHE",
+    "CL4M",
     
-    "PROB_CACHE",  # ProbCache
-    "LCE",  # Leave Copy Everywhere
-    "COST_CACHE",
+    "LCE",
+    
 ]
 
 # Specify strategy params
@@ -141,6 +146,14 @@ strategy_params = {
     },
 }
 
+DATA_COLLECTORS = {
+    "COST": {
+        "cost_params": strategy_params["COST_CACHE"],
+        "tiers": TIERS
+    },
+    "CACHE_HIT_RATIO":{},
+    "LATENCY": {},
+}
 
 # Create experiment configuration
 EXPERIMENT_QUEUE = deque()

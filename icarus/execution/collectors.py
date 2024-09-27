@@ -10,6 +10,7 @@ To create a new data collector, it is sufficient to create a new class
 inheriting from the `DataCollector` class and override all required methods.
 """
 import collections
+import time
 
 from icarus.registry import register_data_collector
 from icarus.tools import cdf
@@ -62,7 +63,7 @@ class DataCollector:
         """
         pass
 
-    def cache_hit(self, node):
+    def cache_hit(self, node, **kwargs):
         """Reports that the requested content has been served by the cache at
         node *node*.
 
@@ -196,9 +197,9 @@ class CollectorProxy(DataCollector):
             c.start_session(timestamp, receiver, content, priority)
 
     @inheritdoc(DataCollector)
-    def cache_hit(self, node):
+    def cache_hit(self, node, **kwargs):
         for c in self.collectors["cache_hit"]:
-            c.cache_hit(node)
+            c.cache_hit(node, **kwargs)
 
     @inheritdoc(DataCollector)
     def cache_miss(self, node):
@@ -311,6 +312,7 @@ class LinkLoadCollector(DataCollector):
             }
         )
 
+
 @register_data_collector("LATENCY")
 class LatencyCollector(DataCollector):
     """Data collector measuring latency, i.e. the delay taken to delivery a
@@ -365,46 +367,37 @@ class LatencyCollector(DataCollector):
             results["CDF"] = cdf(self.latency_data)
         return results
 
+
 @register_data_collector("COST")
 class CostCollector(DataCollector):
     """Data collector measuring cost, i.e. the penalty from delivering a
     content.
     """
 
-    def __init__(self, view, cdf=False):
+    def __init__(self, view, **params):
         """Constructor
 
         Parameters
         ----------
         view : NetworkView
-            The network view instance
+        The network view instance
         cdf : bool, optional
-            If *True*, also collects a cdf of the cost
+        If *True*, also collects a cdf of the cost
         """
-        self.cdf = cdf
+        # self.cdf = cdf
         self.view = view
         self.cost = 0.0
-        self.latency_function = {
-            "high": {
-                "thresholds": {
-                "20.0": 0.0,
-                "40.0": 5.0e-8,
-                "60.0": 8.0e-8
-                },
-                "default": 1.0e-7
-            },
-            "low": {
-                "thresholds": {
-                "20.0": 0.0,
-                "40.0": 2.0e-8,
-                "60.0": 5.0e-8
-                },
-                "default": 8.0e-8
-            }
-        }
 
-        if cdf:
-            self.cost_data = collections.deque()
+        self.cost_params = params['cost_params']
+        self.tiers = params['tiers']
+
+        self.latency_function = self.cost_params ['latency_function']
+        self.cost_per_joule = self.cost_params ['cost_per_joule']
+        self.cost_per_bit = self.cost_params ['cost_per_bit']
+        self.router_energy_density = self.cost_params ['router_energy_density']
+        self.link_energy_density = self.cost_params ['link_energy_density']
+        # if cdf:
+        #     self.cost_data = collections.deque()
 
     @inheritdoc(DataCollector)
     def start_session(self, timestamp, receiver, content, priority):
@@ -422,35 +415,50 @@ class CostCollector(DataCollector):
             self.sess_latency += self.view.link_delay(u, v)
 
     @inheritdoc(DataCollector)
+    def cache_hit(self, node, **kwargs):
+        tier_index = kwargs.get("tier_index") or 0
+        content_size = kwargs["size"]
+        tiers_last_access = self.view.get_last_access(node)
+        
+        tier = self.tiers[tier_index]
+        tier_active_power_density  = tier['active_caching_power_density']
+        tier_idle_power_density = tier['idle_power_density']
+       
+        idle_time = max(0.0, time.time() - tiers_last_access[tier_index])
+
+        read_time = tier['latency'] + content_size / tier['read_throughput']
+        self.cost += ((tier_idle_power_density * idle_time) + (tier_active_power_density * read_time * content_size)) * self.cost_per_joule
+        
+    @inheritdoc(DataCollector)
     def end_session(self, success=True):
         if not success:
             return
-        
         latency_config = self.latency_function.get(self.priority, {})
         thresholds = latency_config.get("thresholds", {})
         default_penalty = latency_config.get("default", None)
-        
         # Determine the penalty based on latency
         for threshold_str in sorted(thresholds.keys(), key=lambda x: float(x)):
             threshold = float(threshold_str)
             if self.sess_latency < threshold:
-                if self.cdf:
-                    self.cost_data.append(thresholds[threshold_str])
+                # if self.cdf:
+                #     self.cost_data.append(thresholds[threshold_str])
                 self.cost += thresholds[threshold_str]
-                return
-        
+            return
         # If latency is out of range, return the default penalty or raise an error if not set
         if default_penalty is not None:
-            return default_penalty
+            # if self.cdf:
+            #     self.cost_data.append(default_penalty)
+            self.cost += default_penalty
         else:
             raise ValueError(f"Latency {self.sess_latency} is out of range for priority {self.priority}.")
 
     @inheritdoc(DataCollector)
     def results(self):
         results = Tree({"MEAN": self.cost})
-        if self.cdf:
-            results["CDF"] = cdf(self.cost_data)
+        # if self.cdf:
+        #     results["CDF"] = cdf(self.cost_data)
         return results
+
 
 @register_data_collector("CACHE_HIT_RATIO")
 class CacheHitRatioCollector(DataCollector):
@@ -458,7 +466,7 @@ class CacheHitRatioCollector(DataCollector):
     requests served by a cache.
     """
 
-    def __init__(self, view, off_path_hits=True, per_node=False, content_hits=False):
+    def __init__(self, view, off_path_hits=False, per_node=False, content_hits=False):
         """Constructor
 
         Parameters
@@ -499,7 +507,7 @@ class CacheHitRatioCollector(DataCollector):
             self.curr_cont = content
 
     @inheritdoc(DataCollector)
-    def cache_hit(self, node):
+    def cache_hit(self, node, **kwargs):
         self.cache_hits += 1
         if self.off_path_hits and node not in self.curr_path:
             self.off_path_hit_count += 1
@@ -545,6 +553,7 @@ class CacheHitRatioCollector(DataCollector):
             results["PER_NODE_SERVER_HIT_RATIO"] = self.per_node_server_hits
         return results
 
+
 @register_data_collector("PATH_STRETCH")
 class PathStretchCollector(DataCollector):
     """Collector measuring the path stretch, i.e. the ratio between the actual
@@ -575,7 +584,7 @@ class PathStretchCollector(DataCollector):
             self.stretch_data = collections.deque()
 
     @inheritdoc(DataCollector)
-    def start_session(self, timestamp, receiver, content):
+    def start_session(self, timestamp, receiver, content, priority):
         self.receiver = receiver
         self.source = self.view.content_source(content)
         self.req_path_len = 0
@@ -622,6 +631,7 @@ class PathStretchCollector(DataCollector):
             results["CDF_CONTENT"] = cdf(self.cont_stretch_data)
         return results
 
+
 @register_data_collector("DUMMY")
 class DummyCollector(DataCollector):
     """Dummy collector to be used for test cases only."""
@@ -639,7 +649,7 @@ class DummyCollector(DataCollector):
         self.view = view
 
     @inheritdoc(DataCollector)
-    def start_session(self, timestamp, receiver, content):
+    def start_session(self, timestamp, receiver, content, priority):
         self.session = dict(
             timestamp=timestamp,
             receiver=receiver,
@@ -650,7 +660,7 @@ class DummyCollector(DataCollector):
         )
 
     @inheritdoc(DataCollector)
-    def cache_hit(self, node):
+    def cache_hit(self, node, **kwargs):
         self.session["serving_node"] = node
 
     @inheritdoc(DataCollector)

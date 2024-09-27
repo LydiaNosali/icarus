@@ -986,7 +986,6 @@ class LruCache(Cache):
     def clear(self):
         self._cache.clear()
 
-
 @register_cache_policy("SLRU")
 class SegmentedLruCache(Cache):
     """Segmented Least Recently Used (LRU) cache eviction policy.
@@ -1943,7 +1942,7 @@ class MARCCache(Cache):
 
     def t1_pop(self, k):
         self.t1.pop()
-        for cache in reversed(self._tier_m_caches.values()):
+        for cache in reversed(list(self._tier_m_caches.values())):
             try:
                 if cache.t1:
                     cache.t1.remove(k)
@@ -1953,7 +1952,7 @@ class MARCCache(Cache):
 
     def t2_pop(self, k):
         self.t2.pop()
-        for cache in reversed(self._tier_m_caches.values()):
+        for cache in reversed(list(self._tier_m_caches.values())):
             try:
                 if cache.t2:
                     cache.t2.remove(k)
@@ -2349,7 +2348,7 @@ class QMARCCache(Cache):
 
     def t1_pop(self, k):
         self.t1.pop()
-        for cache in reversed(self._tier_m_caches.values()):
+        for cache in reversed(list(self._tier_m_caches.values())):
             try:
                 if cache.t1:
                     cache.t1.remove(k)
@@ -2359,7 +2358,7 @@ class QMARCCache(Cache):
 
     def t2_pop(self, k):
         self.t2.pop()
-        for cache in reversed(self._tier_m_caches.values()):
+        for cache in reversed(list(self._tier_m_caches.values())):
             try:
                 if cache.t2:
                     cache.t2.remove(k)

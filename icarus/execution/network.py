@@ -318,6 +318,14 @@ class NetworkView:
         if node in self.model.cache:
             return self.model.cache[node].dump()
 
+    def get_tier_index(self, node, content):
+        if node in self.model.cache:
+            return self.model.cache[node].get_tier_index(content)
+    
+    def get_last_access(self, node):
+        if node in self.model.cache:
+            return self.model.cache[node].get_tiers_last_access()
+    
 
 class NetworkModel:
     """Models the internal state of the network.
@@ -576,7 +584,7 @@ class NetworkController:
         if node in self.model.cache:
             return self.model.cache[node].put(self.session["content"], self.session["priority"])
 
-    def get_content(self, node):
+    def get_content(self, node, **kwargs):
         """Get a content from a server or a cache.
 
         Parameters
@@ -593,7 +601,7 @@ class NetworkController:
             cache_hit = self.model.cache[node].get(self.session["content"], self.session["priority"])
             if cache_hit:
                 if self.session["log"]:
-                    self.collector.cache_hit(node)
+                    self.collector.cache_hit(node, **kwargs)
             else:
                 if self.session["log"]:
                     self.collector.cache_miss(node)
@@ -606,14 +614,6 @@ class NetworkController:
         else:
             return False
 
-    def get_tier_index(self, node):
-        if node in self.model.cache:
-            return self.model.cache[node].get_tier_index(self.session["content"])
-    
-    def get_last_access(self, node):
-        if node in self.model.cache:
-            return self.model.cache[node].get_tiers_last_access()
-    
     def remove_content(self, node, content):
         """Remove the content being handled from the cache
 
