@@ -63,6 +63,9 @@ class DataCollector:
         """
         pass
 
+    def write_content(self, node, **kwargs):
+        pass
+
     def cache_hit(self, node, **kwargs):
         """Reports that the requested content has been served by the cache at
         node *node*.
@@ -96,7 +99,7 @@ class DataCollector:
         """
         pass
 
-    def request_hop(self, u, v, main_path=True):
+    def request_hop(self, u, v, **kwargs):
         """Reports that a request has traversed the link *(u, v)*
 
         Parameters
@@ -112,7 +115,7 @@ class DataCollector:
         """
         pass
 
-    def content_hop(self, u, v, main_path=True):
+    def content_hop(self, u, v, **kwargs):
         """Reports that a content has traversed the link *(u, v)*
 
         Parameters
@@ -168,6 +171,7 @@ class CollectorProxy(DataCollector):
     EVENTS = (
         "start_session",
         "end_session",
+        "write_content",
         "cache_hit",
         "cache_miss",
         "server_hit",
@@ -197,6 +201,11 @@ class CollectorProxy(DataCollector):
             c.start_session(timestamp, receiver, content, priority)
 
     @inheritdoc(DataCollector)
+    def write_content(self, node, **kwargs):
+        for c in self.collectors["write_content"]:
+            c.write_content(node, **kwargs)
+
+    @inheritdoc(DataCollector)
     def cache_hit(self, node, **kwargs):
         for c in self.collectors["cache_hit"]:
             c.cache_hit(node, **kwargs)
@@ -212,14 +221,14 @@ class CollectorProxy(DataCollector):
             c.server_hit(node)
 
     @inheritdoc(DataCollector)
-    def request_hop(self, u, v, main_path=True):
+    def request_hop(self, u, v, **kwargs):
         for c in self.collectors["request_hop"]:
-            c.request_hop(u, v, main_path)
+            c.request_hop(u, v, **kwargs)
 
     @inheritdoc(DataCollector)
-    def content_hop(self, u, v, main_path=True):
+    def content_hop(self, u, v, **kwargs):
         for c in self.collectors["content_hop"]:
-            c.content_hop(u, v, main_path)
+            c.content_hop(u, v, **kwargs)
 
     @inheritdoc(DataCollector)
     def end_session(self, success=True):
@@ -264,11 +273,11 @@ class LinkLoadCollector(DataCollector):
         self.t_end = timestamp
 
     @inheritdoc(DataCollector)
-    def request_hop(self, u, v, main_path=True):
+    def request_hop(self, u, v, **kwargs):
         self.req_count[(u, v)] += 1
 
     @inheritdoc(DataCollector)
-    def content_hop(self, u, v, main_path=True):
+    def content_hop(self, u, v, **kwargs):
         self.cont_count[(u, v)] += 1
 
     @inheritdoc(DataCollector)
@@ -343,12 +352,14 @@ class LatencyCollector(DataCollector):
         self.sess_latency = 0.0
 
     @inheritdoc(DataCollector)
-    def request_hop(self, u, v, main_path=True):
+    def request_hop(self, u, v, **kwargs):
+        main_path = kwargs.get("main_path") or True
         if main_path:
             self.sess_latency += self.view.link_delay(u, v)
 
     @inheritdoc(DataCollector)
-    def content_hop(self, u, v, main_path=True):
+    def content_hop(self, u, v, **kwargs):
+        main_path = kwargs.get("main_path") or True
         if main_path:
             self.sess_latency += self.view.link_delay(u, v)
 
@@ -381,38 +392,41 @@ class CostCollector(DataCollector):
         ----------
         view : NetworkView
         The network view instance
-        cdf : bool, optional
-        If *True*, also collects a cdf of the cost
+        params : cost model and tiers info
         """
-        # self.cdf = cdf
-        self.view = view
         self.cost = 0.0
+        self.view = view
 
         self.cost_params = params['cost_params']
         self.tiers = params['tiers']
 
-        self.latency_function = self.cost_params ['latency_function']
+        self.penalty_table = self.cost_params ['penalty_table']
         self.cost_per_joule = self.cost_params ['cost_per_joule']
         self.cost_per_bit = self.cost_params ['cost_per_bit']
         self.router_energy_density = self.cost_params ['router_energy_density']
         self.link_energy_density = self.cost_params ['link_energy_density']
-        # if cdf:
-        #     self.cost_data = collections.deque()
-
+        
     @inheritdoc(DataCollector)
     def start_session(self, timestamp, receiver, content, priority):
         self.priority = priority
         self.sess_latency = 0.0
+        
 
     @inheritdoc(DataCollector)
-    def request_hop(self, u, v, main_path=True):
+    def request_hop(self, u, v, **kwargs):
+        main_path = kwargs.get("main_path") or True 
         if main_path:
             self.sess_latency += self.view.link_delay(u, v)
 
     @inheritdoc(DataCollector)
-    def content_hop(self, u, v, main_path=True):
+    def content_hop(self, u, v, **kwargs):
+        main_path = kwargs.get("main_path") or True 
         if main_path:
             self.sess_latency += self.view.link_delay(u, v)
+            content_size = kwargs["size"]
+            self.cost += content_size * self.router_energy_density * self.cost_per_joule
+            self.cost += content_size * self.link_energy_density * self.cost_per_joule
+            self.cost += content_size * self.cost_per_bit
 
     @inheritdoc(DataCollector)
     def cache_hit(self, node, **kwargs):
@@ -428,35 +442,62 @@ class CostCollector(DataCollector):
 
         read_time = tier['latency'] + content_size / tier['read_throughput']
         self.cost += ((tier_idle_power_density * idle_time) + (tier_active_power_density * read_time * content_size)) * self.cost_per_joule
+        for i, tier in enumerate(self.tiers[tier_index:], start=tier_index):
+            tier_active_power_density  = tier['active_caching_power_density']
+            tier_idle_power_density = tier['idle_power_density']
+            
+            idle_time = max(0.0, time.time() - tiers_last_access[i])
+            
+            write_time = tier['latency'] + content_size / tier['write_throughput']
+            self.cost += ((tier_idle_power_density * idle_time) + (tier_active_power_density * write_time * content_size)) * self.cost_per_joule
         
+    @inheritdoc(DataCollector)
+    def write_content(self, node, **kwargs):
+        tier_index = kwargs.get("tier_index") or 0
+        content_size = kwargs["size"]
+        tiers_last_access = self.view.get_last_access(node)
+        for i, tier in enumerate(self.tiers[tier_index:], start=tier_index):
+            tier_active_power_density  = tier['active_caching_power_density']
+            tier_idle_power_density = tier['idle_power_density']
+            
+            idle_time = max(0.0, time.time() - tiers_last_access[i])
+            
+            write_time = tier['latency'] + content_size / tier['write_throughput']
+            self.cost += ((tier_idle_power_density * idle_time) + (tier_active_power_density * write_time * content_size)) * self.cost_per_joule
+        
+
     @inheritdoc(DataCollector)
     def end_session(self, success=True):
         if not success:
             return
-        latency_config = self.latency_function.get(self.priority, {})
-        thresholds = latency_config.get("thresholds", {})
-        default_penalty = latency_config.get("default", None)
-        # Determine the penalty based on latency
-        for threshold_str in sorted(thresholds.keys(), key=lambda x: float(x)):
-            threshold = float(threshold_str)
-            if self.sess_latency < threshold:
-                # if self.cdf:
-                #     self.cost_data.append(thresholds[threshold_str])
-                self.cost += thresholds[threshold_str]
-            return
-        # If latency is out of range, return the default penalty or raise an error if not set
-        if default_penalty is not None:
-            # if self.cdf:
-            #     self.cost_data.append(default_penalty)
-            self.cost += default_penalty
-        else:
-            raise ValueError(f"Latency {self.sess_latency} is out of range for priority {self.priority}.")
+        for entry in self.penalty_table:
+            if self.sess_latency <= entry["delay"]:
+                if self.priority == "high":
+                    self.cost += entry["P0"] * 1e-8 
+                elif self.priority == "low":
+                    self.cost += entry["P1"] * 1e-8  
+                return
+
+        # If no penalty threshold matches, raise an error (this should not happen)
+        raise ValueError(f"Latency {self.sess_latency} is out of range for priority {self.priority}.")
+        
+        # thresholds = penalty_table.get("thresholds", {})
+        # default_penalty = penalty_table.get("default", None)
+        # # Determine the penalty based on latency
+        # for threshold_str in sorted(thresholds.keys(), key=lambda x: float(x)):
+        #     threshold = float(threshold_str)
+        #     if self.sess_latency < threshold:
+        #         self.cost += thresholds[threshold_str]
+        #     return
+        # # If latency is out of range, return the default penalty or raise an error if not set
+        # if default_penalty is not None:
+        #     self.cost += default_penalty
+        # else:
+        #     raise ValueError(f"Latency {self.sess_latency} is out of range for priority {self.priority}.")
 
     @inheritdoc(DataCollector)
     def results(self):
         results = Tree({"MEAN": self.cost})
-        # if self.cdf:
-        #     results["CDF"] = cdf(self.cost_data)
         return results
 
 
@@ -592,11 +633,11 @@ class PathStretchCollector(DataCollector):
         self.sess_count += 1
 
     @inheritdoc(DataCollector)
-    def request_hop(self, u, v, main_path=True):
+    def request_hop(self, u, v, **kwargs):
         self.req_path_len += 1
 
     @inheritdoc(DataCollector)
-    def content_hop(self, u, v, main_path=True):
+    def content_hop(self, u, v, **kwargs):
         self.cont_path_len += 1
 
     @inheritdoc(DataCollector)
@@ -672,11 +713,11 @@ class DummyCollector(DataCollector):
         self.session["serving_node"] = node
 
     @inheritdoc(DataCollector)
-    def request_hop(self, u, v, main_path=True):
+    def request_hop(self, u, v, **kwargs):
         self.session["request_hops"].append((u, v))
 
     @inheritdoc(DataCollector)
-    def content_hop(self, u, v, main_path=True):
+    def content_hop(self, u, v, **kwargs):
         self.session["content_hops"].append((u, v))
 
     @inheritdoc(DataCollector)

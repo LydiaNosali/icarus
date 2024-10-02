@@ -381,7 +381,7 @@ class HashroutingOnPath(BaseHashrouting):
             # Here I just need to return the content directly to the user
             path = list(reversed(self.view.shortest_path(receiver, serving_node)))
             for u, v in path_links(path):
-                self.controller.forward_content_hop(u, v)
+                self.controller.forward_content_hop(u, v, size=size)
                 if v != receiver:
                     self.controller.put_content_local_cache(v)
             self.controller.end_session()
@@ -392,7 +392,7 @@ class HashroutingOnPath(BaseHashrouting):
                 list(reversed(self.view.shortest_path(cache, serving_node)))
             ) + path_links(list(reversed(self.view.shortest_path(receiver, cache))))
             for u, v in links:
-                self.controller.forward_content_hop(u, v)
+                self.controller.forward_content_hop(u, v, size=size)
                 if v == cache:
                     self.controller.put_content(v)
                 else:
@@ -400,7 +400,7 @@ class HashroutingOnPath(BaseHashrouting):
         elif self.routing == "ASYMM":
             path = list(reversed(self.view.shortest_path(receiver, serving_node)))
             for u, v in path_links(path):
-                self.controller.forward_content_hop(u, v)
+                self.controller.forward_content_hop(u, v, size=size)
                 if v == cache:
                     self.controller.put_content(v)
                 else:

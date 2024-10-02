@@ -2152,23 +2152,9 @@ class QMARCCache(Cache):
 
     @inheritdoc(Cache)
     def get(self, k, *args, **kwargs):
-        # logger.info("get"+k.__str__())
         # Case I: x is in T1 or T2.
         #  A cache hit has occurred in ARC(c) and DBL(2c)
         #   Move x to MRU position in T2.
-        # print(f"Getting key: {k} from cache.")
-        # if k in self._cache:
-        #     print(f"Key {k} found in cache.")
-        #     # Logic to return the value and update positions
-        # else:
-        #     print(f"Key {k} not found in cache.")
-        #     # Logic for handling cache miss
-        # logger.info(f"Cache before: {self._cache}")
-        # logger.info(f"T1 before: {self.t1}")
-        # logger.info(f"T2 before: {self.t2}")
-        # logger.info(f"B1 before: {self.b1}")
-        # logger.info(f"B2 before: {self.b2}")
-        
         res = False
         if args[0] == 'high':
             if k in self.t1:
@@ -2198,11 +2184,7 @@ class QMARCCache(Cache):
                     self.t2_remove(k)
                     self.t2_append_by_index(k, new_pos)
                     res = True
-        # logger.info(f"Cache after: {self._cache}")
-        # logger.info(f"T1 after: {self.t1}")
-        # logger.info(f"T2 after: {self.t2}")
-        # logger.info(f"B1 after: {self.b1}")
-        # logger.info(f"B2 after: {self.b2}")
+
         return res  # Return value not found in cache
     
     @inheritdoc(Cache)

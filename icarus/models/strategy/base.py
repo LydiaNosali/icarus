@@ -76,5 +76,5 @@ class NoCache(Strategy):
         self.controller.get_content(source)
         # Route content back to receiver
         path = list(reversed(path))
-        self.controller.forward_content_path(source, receiver, path)
+        self.controller.forward_content_path(source, receiver, path=path)
         self.controller.end_session()

@@ -198,7 +198,7 @@ class GlobetraffWorkload:
         self.n_contents = 0
         with open(contents_file) as f:
             reader = csv.reader(f, delimiter="\t")
-            for content, popularity, size, app_type in reader:
+            for content, priority, size, app_type in reader:
                 self.n_contents = max(self.n_contents, content)
         self.n_contents += 1
         self.contents = range(self.n_contents)
@@ -228,53 +228,13 @@ class GlobetraffWorkload:
 
 @register_workload("TRACE_DRIVEN")
 class TraceDrivenWorkload:
-    """Parse requests from a generic request trace.
+    """Parse requests from a generic request trace with content size and popularity.
 
     This workload requires two text files:
      * a requests file, where each line corresponds to a string identifying
        the content requested
      * a contents file, which lists all unique content identifiers appearing
-       in the requests file.
-
-    Since the trace do not provide timestamps, requests are scheduled according
-    to a Poisson process of rate *rate*. All requests are mapped to receivers
-    uniformly unless a positive *beta* parameter is specified.
-
-    If a *beta* parameter is specified, then receivers issue requests at
-    different rates. The algorithm used to determine the requests rates for
-    each receiver is the following:
-     * All receiver are sorted in decreasing order of degree of the PoP they
-       are attached to. This assumes that all receivers have degree = 1 and are
-       attached to a node with degree > 1
-     * Rates are then assigned following a Zipf distribution of coefficient
-       beta where nodes with higher-degree PoPs have a higher request rate
-
-    Parameters
-    ----------
-    topology : fnss.Topology
-        The topology to which the workload refers
-    reqs_file : str
-        The path to the requests file
-    contents_file : str
-        The path to the contents file
-    n_contents : int
-        The number of content object (i.e. the number of lines of contents_file)
-    n_warmup : int
-        The number of warmup requests (i.e. requests executed to fill cache but
-        not logged)
-    n_measured : int
-        The number of logged requests after the warmup
-    rate : float, optional
-        The network-wide mean rate of requests per second
-    beta : float, optional
-        Spatial skewness of requests rates
-
-    Returns
-    -------
-    events : iterator
-        Iterator of events. Each event is a 2-tuple where the first element is
-        the timestamp at which the event occurs and the second element is a
-        dictionary of event attributes.
+       in the requests file, along with their size and popularity.
     """
 
     def __init__(
@@ -292,6 +252,7 @@ class TraceDrivenWorkload:
         """Constructor"""
         if beta < 0:
             raise ValueError("beta must be positive")
+
         # Set high buffering to avoid one-line reads
         self.buffering = 64 * 1024 * 1024
         self.n_contents = n_contents
@@ -302,16 +263,26 @@ class TraceDrivenWorkload:
         self.receivers = [
             v for v in topology.nodes() if topology.node[v]["stack"][0] == "receiver"
         ]
-        self.contents = []
+        
+        # Parse the contents file
+        self.contents = {}
         with open(contents_file, buffering=self.buffering) as f:
-            for content in f:
-                self.contents.append(content)
+            next(f)  # Skip the header line
+            for line in f:
+                line = line.strip()  # Remove any leading or trailing whitespace
+                if line:  # Check if the line is not empty
+                    # Each line should contain content_id, size, and priority
+                    content_id, size, priority = line.split(",")  # Use just split(",") if there are no spaces
+                    self.contents[content_id] = {
+                        "size": int(size),  # Convert size to integer
+                        "priority": priority.strip(),  # Clean up priority
+                    }
         self.beta = beta
         if beta != 0:
             degree = nx.degree(topology)
             self.receivers = sorted(
                 self.receivers,
-                key=lambda x: degree[iter(topology.adj[x]).next()],
+                key=lambda x: degree[iter(topology.adj[x]).__next__()],
                 reverse=True,
             )
             self.receiver_dist = TruncatedZipfDist(beta, len(self.receivers))
@@ -320,21 +291,36 @@ class TraceDrivenWorkload:
         req_counter = 0
         t_event = 0.0
         with open(self.reqs_file, buffering=self.buffering) as f:
-            for content in f:
+            next(f)
+            for request in f:
+
+                request = request.strip()
+                timestamp,content,size,priority = request.split(",") 
                 t_event += random.expovariate(self.rate)
+
                 if self.beta == 0:
                     receiver = random.choice(self.receivers)
                 else:
                     receiver = self.receivers[self.receiver_dist.rv() - 1]
+
                 log = req_counter >= self.n_warmup
-                event = {"receiver": receiver, "content": content, "log": log}
+
+
+                event = {
+                    "receiver": receiver,
+                    "content": content,
+                    "size": int(size),
+                    "priority": priority,
+                    "log": log
+                }
                 yield (t_event, event)
                 req_counter += 1
+
                 if req_counter >= self.n_warmup + self.n_measured:
                     return
+
             raise ValueError("Trace did not contain enough requests")
-
-
+        
 @register_workload("YCSB")
 class YCSBWorkload:
     """Yahoo! Cloud Serving Benchmark (YCSB)
@@ -360,7 +346,8 @@ class YCSBWorkload:
 
     def __init__(
         self,
-        workload,
+        topology,
+        workload_type,
         n_contents,
         n_warmup,
         n_measured,
@@ -372,7 +359,7 @@ class YCSBWorkload:
 
         Parameters
         ----------
-        workload : str
+        workload_type : str
             Workload identifier. Currently supported: "A", "B", "C"
         n_contents : int
             Number of content items
@@ -387,30 +374,46 @@ class YCSBWorkload:
             The seed for the random generator
         """
 
-        if workload not in ("A", "B", "C", "D", "E"):
+        if workload_type not in ("A", "B", "C", "D", "E"):
             raise ValueError("Incorrect workload ID [A-B-C-D-E]")
-        elif workload in ("D", "E"):
+        elif workload_type in ("D", "E"):
             raise NotImplementedError("Workloads D and E not yet implemented")
-        self.workload = workload
+        self.workload_type = workload_type
         if seed is not None:
             random.seed(seed)
         self.zipf = TruncatedZipfDist(alpha, n_contents)
+        self.n_contents = n_contents
         self.n_warmup = n_warmup
         self.n_measured = n_measured
+        self.priority_values = kwargs["priority_values"]
+        self.high_priority_rate = kwargs["high_priority_rate"]
+        self.data_size_range =kwargs["data_size_range"]
+
+        self.contents = {content_id: {
+                            "priority": random.choices(self.priority_values, weights=[1 - self.high_priority_rate, self.high_priority_rate])[0],
+                            "size": random.randint(self.data_size_range[0], self.data_size_range[1])
+                         } for content_id in range(1, n_contents + 1)}
+        
+        
 
     def __iter__(self):
         """Return an iterator over the workload"""
         req_counter = 0
+        t_event = 0.0
         while req_counter < self.n_warmup + self.n_measured:
             rand = random.random()
             op = {
                 "A": "READ" if rand < 0.5 else "UPDATE",
                 "B": "READ" if rand < 0.95 else "UPDATE",
                 "C": "READ",
-            }[self.workload]
+            }[self.workload_type]
             item = int(self.zipf.rv())
+            content_attributes = self.contents[item]
+            priority = content_attributes["priority"]
+            size = content_attributes["size"]
+
             log = req_counter >= self.n_warmup
-            event = {"op": op, "item": item, "log": log}
-            yield event
+            event = {"op": op, "content": item, "size": size, "priority": priority, "log": log}
+            yield (t_event, event)
             req_counter += 1
         return

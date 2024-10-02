@@ -318,10 +318,6 @@ class NetworkView:
         if node in self.model.cache:
             return self.model.cache[node].dump()
 
-    def get_tier_index(self, node, content):
-        if node in self.model.cache:
-            return self.model.cache[node].get_tier_index(content)
-    
     def get_last_access(self, node):
         if node in self.model.cache:
             return self.model.cache[node].get_tiers_last_access()
@@ -485,7 +481,7 @@ class NetworkController:
         if self.collector is not None and self.session["log"]:
             self.collector.start_session(timestamp, receiver, content, priority)
 
-    def forward_request_path(self, s, t, path=None, main_path=True):
+    def forward_request_path(self, s, t, **kwargs):
         """Forward a request from node *s* to node *t* over the provided path.
 
         Parameters
@@ -501,12 +497,13 @@ class NetworkController:
             lead to hit a content. It is normally used to calculate latency
             correctly in multicast cases. Default value is *True*
         """
+        path = kwargs["path"] or None
         if path is None:
             path = self.model.shortest_path[s][t]
         for u, v in path_links(path):
-            self.forward_request_hop(u, v, main_path)
+            self.forward_request_hop(u, v, **kwargs)
 
-    def forward_content_path(self, u, v, path=None, main_path=True):
+    def forward_content_path(self, u, v, **kwargs):
         """Forward a content from node *s* to node *t* over the provided path.
 
         Parameters
@@ -523,12 +520,13 @@ class NetworkController:
             calculate latency correctly in multicast cases. Default value is
             *True*
         """
+        path = kwargs["path"] or None
         if path is None:
             path = self.model.shortest_path[u][v]
         for u, v in path_links(path):
-            self.forward_content_hop(u, v, main_path)
+            self.forward_content_hop(u, v, **kwargs)
 
-    def forward_request_hop(self, u, v, main_path=True):
+    def forward_request_hop(self, u, v, **kwargs):
         """Forward a request over link  u -> v.
 
         Parameters
@@ -542,10 +540,11 @@ class NetworkController:
             lead to hit a content. It is normally used to calculate latency
             correctly in multicast cases. Default value is *True*
         """
+        main_path = kwargs.get("main_path") or True
         if self.collector is not None and self.session["log"]:
-            self.collector.request_hop(u, v, main_path)
+            self.collector.request_hop(u, v, main_path=main_path)
 
-    def forward_content_hop(self, u, v, main_path=True):
+    def forward_content_hop(self, u, v, **kwargs):
         """Forward a content over link  u -> v.
 
         Parameters
@@ -561,9 +560,9 @@ class NetworkController:
             *True*
         """
         if self.collector is not None and self.session["log"]:
-            self.collector.content_hop(u, v, main_path)
+            self.collector.content_hop(u, v, **kwargs)
 
-    def put_content(self, node):
+    def put_content(self, node, **kwargs):
         """Store content in the specified node.
 
         The node must have a cache stack and the actual insertion of the
@@ -582,6 +581,7 @@ class NetworkController:
             The evicted object or *None* if no contents were evicted.
         """
         if node in self.model.cache:
+            self.collector.write_content(node, **kwargs)
             return self.model.cache[node].put(self.session["content"], self.session["priority"])
 
     def get_content(self, node, **kwargs):
@@ -601,7 +601,8 @@ class NetworkController:
             cache_hit = self.model.cache[node].get(self.session["content"], self.session["priority"])
             if cache_hit:
                 if self.session["log"]:
-                    self.collector.cache_hit(node, **kwargs)
+                    tier_index = self.get_tier_index(node, self.session["content"])
+                    self.collector.cache_hit(node, tier_index = tier_index, **kwargs)
             else:
                 if self.session["log"]:
                     self.collector.cache_miss(node)
@@ -858,3 +859,8 @@ class NetworkController:
         """
         if node in self.model.local_cache:
             return self.model.local_cache[node].put(self.session["content"], self.session["priority"])
+
+    def get_tier_index(self, node, content):
+        if node in self.model.cache:
+            return self.model.cache[node].get_tier_index(content)
+    

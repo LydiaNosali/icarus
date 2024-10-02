@@ -250,6 +250,7 @@ def run_scenario(settings, params, curr_exp, n_exp):
                 "No workload implementation named %s was found." % workload_name
             )
             return None
+        
         workload = WORKLOAD[workload_name](topology, **workload_spec)
 
         # Assign caches to nodes
