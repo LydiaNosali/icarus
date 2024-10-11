@@ -264,6 +264,7 @@ def run_scenario(settings, params, curr_exp, n_exp):
             # Cache budget is the cumulative number of cache entries across
             # the whole network
             cachepl_spec["cache_budget"] = workload.n_contents * network_cache
+            logger.info("total cache_budget:%s"%cachepl_spec["cache_budget"])
             CACHE_PLACEMENT[cachepl_name](topology, **cachepl_spec)
 
         # Assign contents to sources

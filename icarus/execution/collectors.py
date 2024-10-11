@@ -10,11 +10,14 @@ To create a new data collector, it is sufficient to create a new class
 inheriting from the `DataCollector` class and override all required methods.
 """
 import collections
+import logging
 import time
 
 from icarus.registry import register_data_collector
 from icarus.tools import cdf
 from icarus.util import Tree, inheritdoc
+
+logger = logging.getLogger("main")
 
 
 __all__ = [
@@ -395,6 +398,15 @@ class CostCollector(DataCollector):
         params : cost model and tiers info
         """
         self.cost = 0.0
+
+        self.depreciation_cost = 0.0
+        self.get_storage_energy_cost = 0.0
+        self.put_storage_energy_cost = 0.0
+        self.bandwidth_cost = 0.0
+        self.routers_energy_cost = 0.0
+        self.links_energy_cost = 0.0
+        self.penalty_cost = 0.0
+
         self.view = view
 
         self.cost_params = params['cost_params']
@@ -408,6 +420,8 @@ class CostCollector(DataCollector):
         
     @inheritdoc(DataCollector)
     def start_session(self, timestamp, receiver, content, priority):
+        self.content = content
+        self.receiver = receiver
         self.priority = priority
         self.sess_latency = 0.0
         
@@ -424,24 +438,33 @@ class CostCollector(DataCollector):
         if main_path:
             self.sess_latency += self.view.link_delay(u, v)
             content_size = kwargs["size"]
-            self.cost += content_size * self.router_energy_density * self.cost_per_joule
-            self.cost += content_size * self.link_energy_density * self.cost_per_joule
-            self.cost += content_size * self.cost_per_bit
+            
+            self.routers_energy_cost += content_size * self.router_energy_density * self.cost_per_joule
+            self.links_energy_cost += content_size * self.link_energy_density * self.cost_per_joule
+            self.bandwidth_cost += self.routers_energy_cost + self.links_energy_cost 
 
     @inheritdoc(DataCollector)
     def cache_hit(self, node, **kwargs):
         tier_index = kwargs.get("tier_index") or 0
         content_size = kwargs["size"]
+        cache_size = kwargs.get("cache_size") or None
         tiers_last_access = self.view.get_last_access(node)
         
         tier = self.tiers[tier_index]
         tier_active_power_density  = tier['active_caching_power_density']
         tier_idle_power_density = tier['idle_power_density']
-       
+        
         idle_time = max(0.0, time.time() - tiers_last_access[tier_index])
 
         read_time = tier['latency'] + content_size / tier['read_throughput']
-        self.cost += ((tier_idle_power_density * idle_time) + (tier_active_power_density * read_time * content_size)) * self.cost_per_joule
+        if cache_size:
+            tier_max_capacity = tier['size_factor'] * cache_size
+            tier_purchase_cost = tier['purchase_cost']
+            tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
+            
+            self.depreciation_cost += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity)
+        self.get_storage_energy_cost += ((tier_idle_power_density * idle_time) + (tier_active_power_density * read_time * content_size)) * self.cost_per_joule
+        
         for i, tier in enumerate(self.tiers[tier_index:], start=tier_index):
             tier_active_power_density  = tier['active_caching_power_density']
             tier_idle_power_density = tier['idle_power_density']
@@ -449,12 +472,19 @@ class CostCollector(DataCollector):
             idle_time = max(0.0, time.time() - tiers_last_access[i])
             
             write_time = tier['latency'] + content_size / tier['write_throughput']
-            self.cost += ((tier_idle_power_density * idle_time) + (tier_active_power_density * write_time * content_size)) * self.cost_per_joule
-        
+            if cache_size:
+                tier_max_capacity = tier['size_factor'] * cache_size
+                tier_purchase_cost = tier['purchase_cost']
+                tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
+
+                self.depreciation_cost += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity)
+            self.get_storage_energy_cost += ((tier_idle_power_density * idle_time) + (tier_active_power_density * write_time * content_size)) * self.cost_per_joule
+            
     @inheritdoc(DataCollector)
     def write_content(self, node, **kwargs):
         tier_index = kwargs.get("tier_index") or 0
         content_size = kwargs["size"]
+        cache_size = kwargs.get("cache_size") or None
         tiers_last_access = self.view.get_last_access(node)
         for i, tier in enumerate(self.tiers[tier_index:], start=tier_index):
             tier_active_power_density  = tier['active_caching_power_density']
@@ -463,8 +493,14 @@ class CostCollector(DataCollector):
             idle_time = max(0.0, time.time() - tiers_last_access[i])
             
             write_time = tier['latency'] + content_size / tier['write_throughput']
-            self.cost += ((tier_idle_power_density * idle_time) + (tier_active_power_density * write_time * content_size)) * self.cost_per_joule
-        
+            if cache_size:
+                tier_max_capacity = tier['size_factor'] * cache_size
+                tier_purchase_cost = tier['purchase_cost']
+                tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
+
+                self.depreciation_cost += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity)
+            self.put_storage_energy_cost += ((tier_idle_power_density * idle_time) + (tier_active_power_density * write_time * content_size)) * self.cost_per_joule
+            
 
     @inheritdoc(DataCollector)
     def end_session(self, success=True):
@@ -473,28 +509,16 @@ class CostCollector(DataCollector):
         for entry in self.penalty_table:
             if self.sess_latency <= entry["delay"]:
                 if self.priority == "high":
-                    self.cost += entry["P0"] * 1e-8 
+                    self.penalty_cost += entry["P0"] * 1e-8 
                 elif self.priority == "low":
-                    self.cost += entry["P1"] * 1e-8  
+                    self.penalty_cost += entry["P1"] * 1e-8
+                self.cost += self.depreciation_cost + self.get_storage_energy_cost + self.put_storage_energy_cost + self.bandwidth_cost + self.routers_energy_cost + self.links_energy_cost + self.penalty_cost
+                logger.info("content:%s, receiver:%s, depreciation:%s, get storage:%s, put storage:%s, bandwidth:%s, routers:%s, links:%s, penalty:%s, total:%s"%(self.content, self.receiver, self.depreciation_cost, self.get_storage_energy_cost, self.put_storage_energy_cost, self.bandwidth_cost, self.routers_energy_cost, self.links_energy_cost,self.penalty_cost, self.cost))
                 return
 
         # If no penalty threshold matches, raise an error (this should not happen)
         raise ValueError(f"Latency {self.sess_latency} is out of range for priority {self.priority}.")
         
-        # thresholds = penalty_table.get("thresholds", {})
-        # default_penalty = penalty_table.get("default", None)
-        # # Determine the penalty based on latency
-        # for threshold_str in sorted(thresholds.keys(), key=lambda x: float(x)):
-        #     threshold = float(threshold_str)
-        #     if self.sess_latency < threshold:
-        #         self.cost += thresholds[threshold_str]
-        #     return
-        # # If latency is out of range, return the default penalty or raise an error if not set
-        # if default_penalty is not None:
-        #     self.cost += default_penalty
-        # else:
-        #     raise ValueError(f"Latency {self.sess_latency} is out of range for priority {self.priority}.")
-
     @inheritdoc(DataCollector)
     def results(self):
         results = Tree({"MEAN": self.cost})

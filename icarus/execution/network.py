@@ -380,32 +380,33 @@ class NetworkModel:
             for (u, v), delay in list(self.link_delay.items()):
                 self.link_delay[(v, u)] = delay
 
-        cache_size = {}
+        self.cache_size = {}
         for node in topology.nodes():
             stack_name, stack_props = fnss.get_stack(topology, node)
+            logger.info("stack_name:%s, stack_props:%s"%(stack_name, stack_props ))
             if stack_name == "router":
                 if "cache_size" in stack_props:
-                    cache_size[node] = stack_props["cache_size"]
+                    self.cache_size[node] = stack_props["cache_size"]
             elif stack_name == "source":
                 contents = stack_props["contents"]
                 self.source_node[node] = contents
                 for content in contents:
                     self.content_source[content] = node
-        if any(c < 1 for c in cache_size.values()):
+        if any(c < 1 for c in self.cache_size.values()):
             logger.warn(
                 "Some content caches have size equal to 0. "
                 "I am setting them to 1 and run the experiment anyway"
             )
-            for node in cache_size:
-                if cache_size[node] < 1:
-                    cache_size[node] = 1
+            for node in self.cache_size:
+                if self.cache_size[node] < 1:
+                    self.cache_size[node] = 1
 
         policy_name = cache_policy["name"]
         policy_args = {k: v for k, v in cache_policy.items() if k != "name"}
         # The actual cache objects storing the content
         self.cache = {
-            node: CACHE_POLICY[policy_name](cache_size[node], **policy_args)
-            for node in cache_size
+            node: CACHE_POLICY[policy_name](self.cache_size[node], **policy_args)
+            for node in self.cache_size
         }
 
         # This is for a local un-coordinated cache (currently used only by
@@ -581,8 +582,9 @@ class NetworkController:
             The evicted object or *None* if no contents were evicted.
         """
         if node in self.model.cache:
-            self.collector.write_content(node, **kwargs)
-            return self.model.cache[node].put(self.session["content"], self.session["priority"])
+            self.collector.write_content(node, cache_size=self.model.cache_size[node], **kwargs)
+            logger.info("put_content kwargs:%s"%kwargs)
+            return self.model.cache[node].put(self.session["content"], self.session["priority"], **kwargs)
 
     def get_content(self, node, **kwargs):
         """Get a content from a server or a cache.
@@ -602,7 +604,7 @@ class NetworkController:
             if cache_hit:
                 if self.session["log"]:
                     tier_index = self.get_tier_index(node, self.session["content"])
-                    self.collector.cache_hit(node, tier_index = tier_index, **kwargs)
+                    self.collector.cache_hit(node, cache_size=self.model.cache_size[node], tier_index = tier_index, **kwargs)
             else:
                 if self.session["log"]:
                     self.collector.cache_miss(node)
@@ -614,22 +616,6 @@ class NetworkController:
             return True
         else:
             return False
-
-    def remove_content(self, node, content):
-        """Remove the content being handled from the cache
-
-        Parameters
-        ----------
-        node : any hashable type
-            The node where the cached content is removed
-
-        Returns
-        -------
-        removed : bool
-            *True* if the entry was in the cache, *False* if it was not.
-        """
-        if node in self.model.cache:
-            return self.model.cache[node].remove(content)
 
     def end_session(self, success=True):
         """Close a session

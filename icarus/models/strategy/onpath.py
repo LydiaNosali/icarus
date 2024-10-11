@@ -153,6 +153,7 @@ class LeaveCopyEverywhere(Strategy):
     def  process_event(self, time, receiver, content, size, priority, log):
         # get all required data
         source = self.view.content_source(content)
+        logger.info("content:%s,receiver:%s, source:%s"%(content, receiver, source))
         path = self.view.shortest_path(receiver, source)
         # Route requests to original source and queries caches on the path
         self.controller.start_session(time, receiver, content, log, priority)
@@ -481,7 +482,7 @@ class CostCache(Strategy):
         self.other_count = 0
 
         # self.clf, self.feature_names, self.label_encoder_content = self.modeltraining('traces')
-        self.clf, self.feature_names, self.label_encoder_content = self.loadmodel("/home/lydia/icarus/examples/lce-vs-probcache/clf.pkl", "/home/lydia/icarus/examples/lce-vs-probcache/label_encoder.pkl", "/home/lydia/icarus/examples/lce-vs-probcache/modelparams.csv")
+        self.clf, self.feature_names, self.label_encoder_content = self.loadmodel("/home/lydia/icarus/examples/lce-vs-probcache/clf.pkl", "/home/lydia/icarus/examples/lce-vs-probcache/labelencoder.pkl", "/home/lydia/icarus/examples/lce-vs-probcache/modelparams.csv")
         self.predictions = defaultdict(list)
         
     @inheritdoc(Strategy)
@@ -508,51 +509,54 @@ class CostCache(Strategy):
         for u, v in path_links(path):
             self.controller.forward_content_hop(u, v, main_path=True, size=size)
             if self.view.has_cache(v):
-                paths = {}
                 cache_dump = self.view.cache_dump(v)
-                for c in cache_dump:
-                    src = self.view.content_source(c)
-                    path = self.view.shortest_path(receiver, src)
-                    for x, y in path_links(path):
-                        if self.view.has_cache(x):
-                            if self.controller.get_content(v, size=size):
-                                c_serving_node = x
-                                break
-                    else:
-                        c_serving_node = x
-                    
-                    shortest_path = self.view.shortest_path(v, c_serving_node)
-                    reversed_path = list(reversed(shortest_path))
-                    gain = self.storage_gain(reversed_path, size, priority)
-                    paths[c] = gain
-
-                if paths:  # Check if paths is not empty
-                    min_content, min_gain = min(paths.items(), key=lambda x: x[1])
-                    # calculate storage loss
-                    storage_loss = self.storage_loss(v, content, size, min_gain)
-                    # calculate storage gain
-                    storage_gain = self.storage_gain(list(reversed(self.view.shortest_path(receiver, u))), size, priority) 
-                    if storage_gain > storage_loss:
-                        self.put_count+=1
-                        # logger.info("true")
-                        self.controller.remove_content(v, min_content)
-                        tier_index = self.controller.get_tier_index(v, content)
-                        self.controller.put_content(v, tier_index=tier_index, size=size)
-                    else:
-                        # logger.info("false")
-                        is_reaccessed = self._predict_event(time, content, size, priority)
-                        if is_reaccessed:
-                            # logger.info("popular")
-                            self.popular_count+=1
-                            self.controller.remove_content(v, min_content)
-                            tier_index = self.controller.get_tier_index(v, content)
-                            self.controller.put_content(v, tier_index=tier_index, size=size)
+                if cache_dump.__len__() == self.cache_size[v]:
+                    paths = {}
+                    for c in cache_dump:
+                        src = self.view.content_source(c)
+                        path = self.view.shortest_path(receiver, src)
+                        for x, y in path_links(path):
+                            if self.view.has_cache(x):
+                                if self.controller.get_content(v, size=size):
+                                    c_serving_node = x
+                                    break
                         else:
-                            self.other_count +=1
-                            # logger.info("other")
+                            c_serving_node = x
+                        
+                        shortest_path = self.view.shortest_path(v, c_serving_node)
+                        reversed_path = list(reversed(shortest_path))
+                        gain = self.storage_gain(reversed_path, size, priority)
+                        paths[c] = gain
+
+                    if paths:  # Check if paths is not empty
+                        min_content, min_gain = min(paths.items(), key=lambda x: x[1])
+                        # calculate storage loss
+                        storage_loss = self.storage_loss(v, content, size, min_gain)
+                        # calculate storage gain
+                        storage_gain = self.storage_gain(list(reversed(self.view.shortest_path(receiver, u))), size, priority) 
+                        if storage_gain > storage_loss:
+                            self.put_count+=1
+                            logger.info("storage_gain:%s, storage_loss:%s"%(storage_gain , storage_loss))
+                            logger.info("storage_gain > storage_loss")
+                            tier_index = self.controller.get_tier_index(v, content)
+                            self.controller.put_content(v, min_content=min_content, tier_index=tier_index, size=size)
+                        else:
+                            logger.info("false")
+                            is_reaccessed = self._predict_event(time, content, size, priority)
+                            if is_reaccessed:
+                                logger.info("popular")
+                                self.popular_count+=1
+                                tier_index = self.controller.get_tier_index(v, content)
+                                self.controller.put_content(v, min_content=min_content, tier_index=tier_index, size=size)
+                            else:
+                                self.other_count +=1
+                                logger.info("other")
+                    else:
+                        self.no_path_count+=1
+                        self.controller.put_content(v, tier_index=0, size=size)
                 else:
-                    self.no_path_count+=1
-                    self.controller.put_content(v, tier_index=0, size=size)
+                    tier_index = self.controller.get_tier_index(v, content)
+                    self.controller.put_content(v, tier_index=tier_index, size=size)
         self.controller.end_session()
         # print("no_path_count %s"%self.no_path_count)
         # print("other_count %s"%self.other_count)
@@ -718,12 +722,20 @@ class CostCache(Strategy):
         return accuracy, precision, recall, f1
     
     def storage_gain(self, path, content_size, priority) -> float:
-        return self.bandwidth_cost(path, content_size) + self.transmission_energy_cost(path, content_size) + self.penalty_cost(path, priority)
+        storage_gain = self.bandwidth_cost(path, content_size) + self.transmission_energy_cost(path, content_size) + self.penalty_cost(path, priority)
+    
+        logger.info("bandwidth:%s, penalty:%s"%(self.bandwidth_cost(path, content_size), self.penalty_cost(path, priority)))
+                
+        return storage_gain
     
     def storage_loss(self, receiver, content, content_size, min_value) -> float:
         tier_index = self.controller.get_tier_index(receiver, content)
-        return self.depreciation_cost(tier_index, receiver, content_size) + self.storage_energy_cost(tier_index, receiver, content_size) + min_value
+        storage_loss = self.depreciation_cost(tier_index, receiver, content_size) + self.storage_energy_cost(tier_index, receiver, content_size) + min_value
 
+        logger.info("content:%s, receiver:%s, depreciation:%s, storage:%s"%(content, receiver, self.depreciation_cost(tier_index, receiver, content_size), self.storage_energy_cost(tier_index, receiver, content_size)))
+                
+        return storage_loss
+    
     def depreciation_cost(self, tier_index, receiver, content_size) -> float: 
         depreciation_cost = 0.0
         cache_maxlen = self.cache_size[receiver]
@@ -787,7 +799,8 @@ class CostCache(Strategy):
     def transmission_energy_cost(self, path, content_size) -> float:
         nodes_energy_cost = (len(path) + 1) * content_size * self.router_energy_density * self.cost_per_joule
         links_energy_cost = len(path) * content_size * self.link_energy_density * self.cost_per_joule
-        
+        logger.info("routers:%s, links:%s"%(nodes_energy_cost, links_energy_cost))
+                
         return nodes_energy_cost + links_energy_cost
 
     def bandwidth_cost(self, path, content_size) -> float:

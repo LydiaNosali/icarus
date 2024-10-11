@@ -8,7 +8,7 @@ from icarus.util import Tree
 
 # Level of logging output
 # Available options: DEBUG, INFO, WARNING, ERROR, CRITICAL
-LOG_LEVEL = "INFO"
+LOG_LEVEL = "DEBUG"
 
 # If True, executes simulations in parallel using multiple processes
 # to take advantage of multicore CPUs
@@ -71,21 +71,28 @@ TIERS = [
 default = Tree()
 
 # Specify workload
+# default["workload"] = {
+#     "name": "STATIONARY",
+#     "alpha": 0.8,
+#     "n_contents": 6,
+#     "n_warmup": 3,
+#     "n_measured": 21,
+#     "rate": 1,
+#     "high_priority_rate" :0.2,
+#     "priority_values": ["low", "high"],
+#     "data_size_range" : [1024, 4096]
+# }
 default["workload"] = {
-    "name": "STATIONARY",
-    "alpha": 1.2,
-    "n_contents": 3 * 10 ** 3,
-    "n_warmup": 3 * 10 ** 3,
-    "n_measured": 6 * 10 ** 3,
-    "rate": 12,
-    "high_priority_rate" :0.2,
-    "priority_values": ["low", "high"],
-    "data_size_range" : [1024, 4096]
+    "name": "TRACE_DRIVEN",
+    "reqs_file": "/home/lydia/icarus/examples/lce-vs-probcache/events.csv",
+    "contents_file" : "/home/lydia/icarus/examples/lce-vs-probcache/eu_0.2_contents.csv",
+    "n_contents": 10,
+    "n_warmup": 10,
+    "n_measured": 10,
 }
-
 # Specify cache placement
 # default["cache_placement"]["network_cache"] = [0.5, 1, 5, 10]
-NETWORK_CACHE = [1, 10]
+NETWORK_CACHE = [0.5, 0.8]
 default["cache_placement"]["name"] = "UNIFORM"
 
 # Specify content placement
@@ -93,11 +100,15 @@ default["content_placement"]["name"] = "UNIFORM"
 
 # List of all implemented topologies
 # Topology implementations are located in ./icarus/scenarios/topology.py
-TOPOLOGIES = [
-    "GEANT",
-    "WIDE",
-    "GARR",
-]
+default["topology"]["name"] = "PATH"
+default["topology"]["n"] = 3
+# TOPOLOGY = {
+#     "PATH":{
+#        "n":3,
+#     },
+#     # "WIDE",
+#     # "GARR",
+# }
 
 # Specify cache replacement policy
 default["cache_policy"]["name"] = "QMARC"
@@ -105,32 +116,16 @@ default["cache_policy"]["name"] = "QMARC"
 default["cache_policy"]["tiers"] = TIERS
 default["cache_policy"]["alpha"] = 0.3
 
-LATENCY_FUNCTION = {
-      "high": {
-        "thresholds": {
-          "20.0": 0.0,
-          "40.0": 5.0e-8,
-          "60.0": 8.0e-8
-        },
-        "default": 1.0e-7
-      },
-      "low": {
-        "thresholds": {
-          "20.0": 0.0,
-          "40.0": 2.0e-8,
-          "60.0": 5.0e-8
-        },
-        "default": 8.0e-8
-      }
-    }
-
+PENALTY_TABLE = [
+    {"delay": 20, "P0": 0.0, "P1": 0.0},        # Delay < 20 ms
+    {"delay": 60, "P0": 50, "P1": 10},     # Delay < 150 ms
+    {"delay": float('inf'), "P0": 75, "P1": 15}  # Delay >= 150 ms (use infinity for no upper limit)
+]
 STRATEGIES = [
-   "COST_CACHE",
-    "PROB_CACHE",
+   "LCE",
+    "COST_CACHE",
     "CL4M",
-    
-    "LCE",
-    
+   "PROB_CACHE",
 ]
 
 # Specify strategy params
@@ -140,7 +135,7 @@ strategy_params = {
         "cost_per_bit" : 1.2 * 10**-6,  # $/bit
         "router_energy_density" : 2 * 10**-8,  # j/bit
         "link_energy_density" : 1.5 * 10**-9,  # j/bit
-        "latency_function": LATENCY_FUNCTION,
+        "penalty_table": PENALTY_TABLE,
         "chunk_size" : 10 ** 5,
         "tiers" : TIERS,   
     },
@@ -158,19 +153,19 @@ DATA_COLLECTORS = {
 # Create experiment configuration
 EXPERIMENT_QUEUE = deque()
 for strategy in STRATEGIES:
-    for topology in TOPOLOGIES:
-      for network_cache in NETWORK_CACHE:
+    # for topology in TOPOLOGY:
+    for network_cache in NETWORK_CACHE:
         experiment = copy.deepcopy(default)
         experiment["strategy"]["name"] = strategy
-        experiment["topology"]["name"] = topology
+        # experiment["topology"]["name"] = topology
         experiment["cache_placement"]["network_cache"] = network_cache
         if strategy in strategy_params:
             experiment["strategy"].update(strategy_params[strategy])
         experiment[
             "desc"
-        ] = "Strategy: {}, topology: {}, network cache: {}".format(
+        ] = "Strategy: {},network cache: {}".format(
             strategy,
-            topology, 
+            # topology, 
             str(network_cache),
         )
         EXPERIMENT_QUEUE.append(experiment)
