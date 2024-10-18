@@ -1,8 +1,8 @@
 import csv
 
 # Input and output file paths
-request_file = "examples/lce-vs-probcache/traces/eu_0.2.csv"  # Your request trace file (CSV format)
-contents_file = "examples/lce-vs-probcache/traces/eu_0.2_contents.csv"  # The unique contents file to create (CSV format)
+request_file = "examples/lce-vs-probcache/traces/events.csv"  # Your request trace file (CSV format)
+contents_file = "examples/lce-vs-probcache/traces/events_contents.csv"  # The unique contents file to create (CSV format)
 
 # Dictionary to store unique content with size
 content_dict = {}

@@ -47,6 +47,7 @@ STRATEGY_STYLE = {
     # "HR_HYBRID_AM": "c-s",
     # "HR_HYBRID_SM": "r-v",
     "LCE": "b--p",
+     "Algo4": "m-^",
     # "LCD": "g-->",
     "CL4M": "g-->",
     "PROB_CACHE": "c--<",
@@ -60,6 +61,7 @@ STRATEGY_STYLE = {
 # This dict maps name of strategies to names to be displayed in the legend
 STRATEGY_LEGEND = {
     "LCE": "LCE",
+    "Algo4": "Algo4",
     # "LCD": "LCD",
     # "HR_SYMM": "HR Symm",
     # "HR_ASYMM": "HR Asymm",
@@ -78,6 +80,7 @@ STRATEGY_LEGEND = {
 # Color and hatch styles for bar charts of cache hit ratio and link load vs topology
 STRATEGY_BAR_COLOR = {
     "LCE": "k",
+    "Algo4" :"o.7",
     # "LCD": "0.4",
     # "NO_CACHE": "0.5",
     # "HR_ASYMM": "0.6",
@@ -89,6 +92,7 @@ STRATEGY_BAR_COLOR = {
 
 STRATEGY_BAR_HATCH = {
     "LCE": None,
+    "Algo4" : "//",
     # "LCD": "//",
     # "NO_CACHE": "x",
     # "HR_ASYMM": "+",

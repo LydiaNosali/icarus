@@ -521,7 +521,17 @@ class CostCollector(DataCollector):
         
     @inheritdoc(DataCollector)
     def results(self):
-        results = Tree({"MEAN": self.cost})
+        results = Tree(
+            {
+            "MEAN": self.cost,
+            "DEPRECIATION": self.depreciation_cost,
+            "BANDWIDTH": self.bandwidth_cost,
+            "READ_STORAGE": self.get_storage_energy_cost,
+            "WRITE_STORAGE": self.put_storage_energy_cost,
+            "ROUTERS":self.routers_energy_cost,
+            "LINKS": self.links_energy_cost,
+            "PENALTY": self.penalty_cost
+            })
         return results
 
 
