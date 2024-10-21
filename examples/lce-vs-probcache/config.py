@@ -176,7 +176,7 @@ PARALLEL_EXECUTION = False
 N_REPLICATIONS = 1
 CACHING_GRANULARITY = "OBJECT"
 RESULTS_FORMAT = "PICKLE"
-NETWORK_CACHE = [0.5, 1]
+
 TIERS = [
     {"name":"DRAM",
     "size_factor": 1,
@@ -225,16 +225,29 @@ DATA_COLLECTORS = {
     "LATENCY": {},
 }
 
+NETWORK_CACHE = [0.005, 0.1] # which is 0.5% and 10%
+
 default = Tree()
 default["workload"] = {
     "name": "TRACE_DRIVEN",
-    "reqs_file": "/home/lydia/icarus/examples/lce-vs-probcache/events.csv",
-    "contents_file" : "/home/lydia/icarus/examples/lce-vs-probcache/events_contents.csv",
-    "n_contents": 1153,  # Reduced to 5
-    "n_warmup": 1153,  # Minimal warmup
-    "n_measured": 7844,  # Minimal measurements
+    "reqs_file": "/home/lydia/icarus/examples/lce-vs-probcache/traces/events.csv",
+    "contents_file" : "/home/lydia/icarus/examples/lce-vs-probcache/traces/events_contents.csv",
+    "n_contents": 1000,
+    "n_warmup": 1000,
+    "n_measured": 2000,
 }
 
+# default["workload"] = {
+#     "name": "STATIONARY",
+#     "alpha": 0.8,
+#     "n_contents": 1000,
+#     "n_warmup": 1000,
+#     "n_measured": 2000,
+#     "rate": 1,
+#     "high_priority_rate" :0.2,
+#     "priority_values": ["low", "high"],
+#     "data_size_range" : [1024, 4096]
+# }
 default["content_placement"]["name"] = "UNIFORM"
 default["cache_placement"]["name"] = "UNIFORM"
 default["cache_policy"]["name"] = "QMARC" 

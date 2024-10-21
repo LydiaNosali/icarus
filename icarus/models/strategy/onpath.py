@@ -445,9 +445,9 @@ class RandomChoice(Strategy):
                 self.controller.put_content(v, size=size)
         self.controller.end_session()
 
-
-@register_strategy("COST_CACHE")
-class CostCache(Strategy):
+   
+@register_strategy("Algo4")
+class Algo4(Strategy):
     """CostCache strategy 
 
     This strategy caches content objects based on a cost function.
@@ -514,6 +514,7 @@ class CostCache(Strategy):
                 if cache_dump.__len__() == self.cache_size[v]:
                     is_reaccessed = self._predict_event(time, content, size, priority)
                     if is_reaccessed:
+                        logger.info("popular")
                         self.popular_count+=1
                         paths = {}
                         logger.info("cache_dump:%s"%cache_dump)
@@ -803,9 +804,9 @@ class CostCache(Strategy):
 
     def bandwidth_cost(self, path, content_size) -> float:
         return len(path) * content_size * self.cost_per_bit
-    
-@register_strategy("Algo4")
-class Algo4(Strategy):
+
+@register_strategy("COST_CACHE")
+class CostCache(Strategy):
     """CostCache strategy 
 
     This strategy caches content objects based on a cost function.

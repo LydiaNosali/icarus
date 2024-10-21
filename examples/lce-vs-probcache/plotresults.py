@@ -68,7 +68,7 @@ STRATEGY_LEGEND = {
     # "HR_MULTICAST": "HR Multicast",
     # "HR_HYBRID_AM": "HR Hybrid AM",
     # "HR_HYBRID_SM": "HR Hybrid SM",
-    "CL4M": "CL4M",
+    "CL4M": "CacheLessForMore",
     "PROB_CACHE": "ProbCache",
     # "RAND_CHOICE": "Random (choice)",
     # "RAND_BERNOULLI": "Random (Bernoulli)",

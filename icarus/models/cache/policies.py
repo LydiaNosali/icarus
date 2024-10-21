@@ -2138,26 +2138,40 @@ class QMARCCache(Cache):
             Delete the LRU page in T2 (also remove it from the cache), and move it to MRU position in B2.
         endif
         """
-
-        if self.t1 and ((k in self.b2 and len(self.t1) == self.p) or (len(self.t1) > self.p)):
-            old = min_content if min_content is not None else self.t1.get_without_pop()
-            logger.info("remove %s from t1", old.__str__())
-            self.t1_pop(old)
-            self.b1.append_left(old)
+        if min_content is not None:
+            if min_content in self.t1:
+                self.t1_pop(min_content)
+                self.b1.append_left(min_content)
+            else:
+                if min_content in self.t2:
+                    self.t2_pop(min_content)
+                    self.b2.append_left(min_content)
+            del self._cache[min_content]
         else:
-            old = min_content if min_content is not None else  self.t2.get_without_pop()
-            logger.info("remove %s from t2", old.__str__())
-            self.t2_pop(old)
-            self.b2.append_left(old)
-        
-        del self._cache[old]
+            if self.t1 and ((k in self.b2 and len(self.t1) == self.p) or (len(self.t1) > self.p)):
+                old = self.t1.get_without_pop()
+                logger.info("remove %s from t1", old.__str__())
+                self.t1_pop(old)
+                self.b1.append_left(old)
+            else:
+                old = self.t2.get_without_pop()
+                logger.info("remove %s from t2", old.__str__())
+                self.t2_pop(old)
+                self.b2.append_left(old)
+            del self._cache[old]
 
     @inheritdoc(Cache)
     def get(self, k, *args, **kwargs):
+        logger.info("get"+k.__str__())
         # Case I: x is in T1 or T2.
         #  A cache hit has occurred in ARC(c) and DBL(2c)
         #   Move x to MRU position in T2.
         res = False
+        logger.info(f"Cache before: {self._cache}")
+        logger.info(f"T1 before: {self.t1}")
+        logger.info(f"T2 before: {self.t2}")
+        logger.info(f"B1 before: {self.b1}")
+        logger.info(f"B2 before: {self.b2}")
         if args[0] == 'high':
             if k in self.t1:
                 logger.info("move %s from t1 to t2", k.__str__())
@@ -2186,7 +2200,11 @@ class QMARCCache(Cache):
                     self.t2_remove(k)
                     self.t2_append_by_index(k, new_pos)
                     res = True
-
+        logger.info(f"Cache after: {self._cache}")
+        logger.info(f"T1 after: {self.t1}")
+        logger.info(f"T2 after: {self.t2}")
+        logger.info(f"B1 after: {self.b1}")
+        logger.info(f"B2 after: {self.b2}")
         return res  # Return value not found in cache
     
     @inheritdoc(Cache)
@@ -2198,7 +2216,7 @@ class QMARCCache(Cache):
         #   ADAPTATION
         #   REPLACE(x)
         #   Move x from B1 to the MRU position in T2 (also fetch x to the cache).
-        logger.info(f"Putting key: {k}")
+        logger.info(f"Putting key: {k} and removing {min_content}")
         if k in self._cache:
             logger.info("%s already in cache, updating value and moving to MRU position." + k.__str__())
             self.get(k, *args, **kwargs)
@@ -2265,7 +2283,10 @@ class QMARCCache(Cache):
             else:
                 # Here B1 is empty.
                 # Delete LRU page in T1 (also remove it from the cache)
-                res = min_content if min_content is not None else self.t1.get_without_pop()
+                if (min_content is not None) and (min_content in self.t1):
+                    res = min_content
+                else:
+                    res = self.t1.get_without_pop()
                 self.t1_pop(res)
                 logger.info("remove %s from t1", res.__str__())
                 self._cache.pop(res, None)
@@ -2306,7 +2327,8 @@ class QMARCCache(Cache):
         self.p = 0
 
     def t1_pop(self, k):
-        self.t1.pop()
+        if k in self.t1:
+            self.t1.remove(k)
         for cache in reversed(list(self._tier_m_caches.values())):
             try:
                 if cache.t1:
@@ -2316,7 +2338,8 @@ class QMARCCache(Cache):
                 pass  
 
     def t2_pop(self, k):
-        self.t2.pop()
+        if k in self.t2: 
+            self.t2.remove(k)
         for cache in reversed(list(self._tier_m_caches.values())):
             try:
                 if cache.t2:
