@@ -510,7 +510,7 @@ class Algo4(Strategy):
         for u, v in path_links(path):
             self.controller.forward_content_hop(u, v, main_path=True, size=size)
             if self.view.has_cache(v):
-                cache_dump = self.view.cache_dump(v)
+                cache_dump = reversed(self.view.cache_dump(v))
                 if cache_dump.__len__() == self.cache_size[v]:
                     is_reaccessed = self._predict_event(time, content, size, priority)
                     if is_reaccessed:

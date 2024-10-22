@@ -6,6 +6,7 @@ import argparse
 import logging
 
 import matplotlib.pyplot as plt
+import numpy as np
 
 from icarus.util import Settings, config_logging
 from icarus.results import plot_lines, plot_bar_chart
@@ -225,6 +226,83 @@ def plot_cache_hits_vs_topology(
         plotdir,
     )
 
+def plot_cost_components_vs_cache_size(
+    resultset, topology, cache_size_range, strategies, plotdir
+):
+    """
+    Plot cost components for each strategy as a stacked bar plot with strategy names under each bar.
+    """
+    
+    # Cost component names in the result set
+    cost_components = ["DEPRECIATION", "BANDWIDTH", "READ_STORAGE", "WRITE_STORAGE", "ROUTERS", "LINKS", "PENALTY"]
+    num_components = len(cost_components)
+    
+    # Prepare for plotting
+    fig, ax = plt.subplots(figsize=(10, 6))  # Increase figure size
+    bar_width = 0.15  # Width of each strategy's bar
+    bar_spacing = 0.05  # Extra space between groups of bars
+    total_bars_per_group = len(strategies) * (bar_width + bar_spacing)
+    
+    # Generate positions for each bar, spacing them based on both cache sizes and strategies
+    x_positions = []
+    for i, cache_size in enumerate(cache_size_range):
+        for j, strategy in enumerate(strategies):
+            x_positions.append(i * (total_bars_per_group + 0.2) + j * (bar_width + bar_spacing))
+    x_positions = np.array(x_positions)
+    
+    # Define color and hatch styles for each cost component
+    cost_colors = ['#FF7F0E', '#1F77B4', '#2CA02C', '#D62728', '#9467BD', '#8C564B', '#E377C2']
+    cost_hatches = ['/', '\\', '|', '-', '+', 'x', 'o']
+    
+    # Plot bars for each strategy and component
+    for i, strategy in enumerate(strategies):
+        bottom = np.zeros(len(cache_size_range))  # Initialize for stacking bars
+
+        for j, component in enumerate(cost_components):
+            data = []
+            for cache_size in cache_size_range:
+                filtered = resultset.filter({
+                    "topology": {"name": topology},
+                    "cache_placement": {"network_cache": cache_size},
+                    "strategy": {"name": strategy}
+                })
+                
+                cost = filtered[0][1]['COST'].get(component, 0) if len(filtered) > 0 else 0
+                data.append(cost)
+            
+            ax.bar(
+                x_positions[i::len(strategies)], data, bar_width,
+                bottom=bottom,
+                color=cost_colors[j],
+                hatch=cost_hatches[j]
+            )
+            bottom += np.array(data)
+
+    # Set labels, title, ticks, and legends
+    ax.set_xlabel('Cache Proportion and Strategy', fontsize=14)
+    ax.set_ylabel('Cost', fontsize=14)
+    ax.set_title('Cost Components per Cache Size and Strategy', fontsize=16)
+    
+    # Add cache size and strategy labels as x-axis labels
+    xtick_labels = []
+    for cache_size in cache_size_range:
+        for strategy in strategies:
+            xtick_labels.append(f'{strategy}\n(Cache {cache_size})')
+    
+    ax.set_xticks(x_positions)
+    ax.set_xticklabels(xtick_labels, fontsize=10, rotation=45, ha="right")
+    
+    # Add gridlines
+    ax.grid(True, linestyle='--', linewidth=0.5, alpha=0.7)
+
+    # Add a legend for the cost components only
+    handles = [plt.Rectangle((0,0),1,1, color=cost_colors[i], hatch=cost_hatches[i]) for i in range(num_components)]
+    ax.legend(handles, cost_components, loc='upper right', fontsize=10, title="Cost Components")
+
+    # Save the plot
+    plt.tight_layout()
+    plt.savefig(os.path.join(plotdir, f"COST_COMPONENTS_T={topology}_with_cache_and_strategy_labels_fixed.jpg"), bbox_inches='tight')
+    # plt.show()
 
 def run(config, results, plotdir):
     """Run the plot script
@@ -273,6 +351,15 @@ def run(config, results, plotdir):
     plot_cost_vs_cache_size(
         resultset, topology, cache_sizes, strategies, plotdir
     )
+
+    logger.info(
+        "Plotting cost componenets %s vs cache size"
+        % (topology)
+    )
+    plot_cost_components_vs_cache_size(
+    resultset, topology, cache_sizes, strategies, plotdir
+    )
+
     # for cache_size in cache_sizes:
     #         logger.info(
     #             "Plotting cache hit ratio for cache size %s vs topologies"
