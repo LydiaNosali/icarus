@@ -179,14 +179,34 @@ RESULTS_FORMAT = "PICKLE"
 
 TIERS = [
     {"name":"DRAM",
-    "size_factor": 1,
+    "size_factor": 1/31,
     "purchase_cost" : 150, # in $
     "lifespan" : 5, # in years
     "read_throughput" : 4e+10,  # 40GBPS
     "write_throughput" : 2e+10, # 20GBPS
     "latency"  : 1e-7,  #100ns
     "active_caching_power_density" : 10**-9,  # w/bit
-    "idle_power_density" : 10**-9,  # w/bit
+    "idle_power_density" : 10**-12,  # w/bit
+    },
+    {"name":"SSD",
+    "size_factor": 5/31,
+    "purchase_cost" : 100, # in $
+    "lifespan" : 3, # in years (SSD generally has a shorter lifespan compared to DRAM)
+    "read_throughput" : 5e+9,  # 5GBPS (typically slower than DRAM)
+    "write_throughput" : 2.5e+9, # 2.5GBPS (writing to SSD is slower than reading)
+    "latency"  : 1e-5,  # 10 microseconds (latency is higher than DRAM)
+    "active_caching_power_density" : 5e-7,  # 0.5 microwatts/bit (active power)
+    "idle_power_density" : 5e-9,  # 5 nanowatts/bit (idle power)
+    },
+    {"name":"HDD",
+    "size_factor": 15/31,
+    "purchase_cost" : 50,  # in $ (cheaper than SSD and DRAM)
+    "lifespan" : 3,  # in years (HDDs can vary, but a 3-year lifespan is a reasonable assumption)
+    "read_throughput" : 1e+8,  # 100MB/s (0.1 GBPS, slower than SSD and DRAM)
+    "write_throughput" : 5e+7,  # 50MB/s (slower than reads)
+    "latency"  : 5e-3,  # 5 milliseconds (higher latency due to mechanical operations)
+    "active_caching_power_density" : 8e-7,  # 0.8 μW/bit (active power)
+    "idle_power_density" : 1e-8,  # 10 nanowatts/bit (idle power)
     }
 ]
 
@@ -225,7 +245,7 @@ DATA_COLLECTORS = {
     "LATENCY": {},
 }
 
-NETWORK_CACHE = [0.005, 0.1] # which is 0.5% and 10%
+NETWORK_CACHE = [0.1, 0.05] # which is 5% and 10%
 
 default = Tree()
 default["workload"] = {

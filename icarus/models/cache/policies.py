@@ -92,6 +92,7 @@ class Deque(object):
         return keys.index(key)
 
 
+
 class LinkedSet:
     """A doubly-linked set, i.e., a set whose entries are ordered and stored
     as a doubly-linked list.
@@ -2121,7 +2122,7 @@ class QMARCCache(Cache):
     
     @inheritdoc(Cache)
     def dump(self):
-        return set(self._cache.keys())
+        return list(self.t2)[::-1] + list(self.t1.__iter__())[::-1] 
     
     @inheritdoc(Cache)
     def has(self, k, *args, **kwargs):
@@ -2167,11 +2168,11 @@ class QMARCCache(Cache):
         #  A cache hit has occurred in ARC(c) and DBL(2c)
         #   Move x to MRU position in T2.
         res = False
-        logger.info(f"Cache before: {self._cache}")
-        logger.info(f"T1 before: {self.t1}")
-        logger.info(f"T2 before: {self.t2}")
-        logger.info(f"B1 before: {self.b1}")
-        logger.info(f"B2 before: {self.b2}")
+        # logger.info(f"Cache before: {self._cache}")
+        # logger.info(f"T1 before: {self.t1}")
+        # logger.info(f"T2 before: {self.t2}")
+        # logger.info(f"B1 before: {self.b1}")
+        # logger.info(f"B2 before: {self.b2}")
         if args[0] == 'high':
             if k in self.t1:
                 logger.info("move %s from t1 to t2", k.__str__())
@@ -2203,8 +2204,8 @@ class QMARCCache(Cache):
         logger.info(f"Cache after: {self._cache}")
         logger.info(f"T1 after: {self.t1}")
         logger.info(f"T2 after: {self.t2}")
-        logger.info(f"B1 after: {self.b1}")
-        logger.info(f"B2 after: {self.b2}")
+        # logger.info(f"B1 after: {self.b1}")
+        # logger.info(f"B2 after: {self.b2}")
         return res  # Return value not found in cache
     
     @inheritdoc(Cache)
@@ -2223,11 +2224,11 @@ class QMARCCache(Cache):
             return
 
         res = None
-        logger.info(f"Cache before: {self._cache}")
-        logger.info(f"T1 before: {self.t1}")
-        logger.info(f"T2 before: {self.t2}")
-        logger.info(f"B1 before: {self.b1}")
-        logger.info(f"B2 before: {self.b2}")
+        # logger.info(f"Cache before: {self._cache}")
+        # logger.info(f"T1 before: {self.t1}")
+        # logger.info(f"T2 before: {self.t2}")
+        # logger.info(f"B1 before: {self.b1}")
+        # logger.info(f"B2 before: {self.b2}")
         if k in self.b1:
             self.increment_p(len(self.b1), len(self.b2))
             self.replace(k=k, min_content=min_content)
@@ -2243,8 +2244,8 @@ class QMARCCache(Cache):
             logger.info(f"Cache after: {self._cache}")
             logger.info(f"T1 after: {self.t1}")
             logger.info(f"T2 after: {self.t2}")
-            logger.info(f"B1 after: {self.b1}")
-            logger.info(f"B2 after: {self.b2}")
+            # logger.info(f"B1 after: {self.b1}")
+            # logger.info(f"B2 after: {self.b2}")
             return res
 
         # Case III: x is in B2
@@ -2268,8 +2269,8 @@ class QMARCCache(Cache):
             logger.info(f"Cache after: {self._cache}")
             logger.info(f"T1 after: {self.t1}")
             logger.info(f"T2 after: {self.t2}")
-            logger.info(f"B1 after: {self.b1}")
-            logger.info(f"B2 after: {self.b2}")
+            # logger.info(f"B1 after: {self.b1}")
+            # logger.info(f"B2 after: {self.b2}")
             return res
         
         # Case IV: x is not in (T1 u B1 u T2 u B2)
@@ -2313,8 +2314,8 @@ class QMARCCache(Cache):
         logger.info(f"Cache after: {self._cache}")
         logger.info(f"T1 after: {self.t1}")
         logger.info(f"T2 after: {self.t2}")
-        logger.info(f"B1 after: {self.b1}")
-        logger.info(f"B2 after: {self.b2}")
+        # logger.info(f"B1 after: {self.b1}")
+        # logger.info(f"B2 after: {self.b2}")
         return res
     
     @inheritdoc(Cache)

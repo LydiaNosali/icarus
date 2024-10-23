@@ -510,15 +510,16 @@ class Algo4(Strategy):
         for u, v in path_links(path):
             self.controller.forward_content_hop(u, v, main_path=True, size=size)
             if self.view.has_cache(v):
-                cache_dump = reversed(self.view.cache_dump(v))
+                cache_dump = self.view.cache_dump(v)
+                # logger.info("cache dump:%s"%cache_dump)
                 if cache_dump.__len__() == self.cache_size[v]:
                     is_reaccessed = self._predict_event(time, content, size, priority)
                     if is_reaccessed:
                         logger.info("popular")
                         self.popular_count+=1
                         paths = {}
-                        logger.info("cache_dump:%s"%cache_dump)
-                        for c in cache_dump:
+                        # logger.info("cache_dump10 %s"%cache_dump[:int(0.1 * len(cache_dump))])
+                        for c in cache_dump[:int(0.1 * len(cache_dump))]:
                             src = self.view.content_source(c)
                             path = self.view.shortest_path(receiver, src)
                             for x, y in path_links(path):

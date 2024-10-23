@@ -441,7 +441,7 @@ class CostCollector(DataCollector):
             
             self.routers_energy_cost += content_size * self.router_energy_density * self.cost_per_joule
             self.links_energy_cost += content_size * self.link_energy_density * self.cost_per_joule
-            self.bandwidth_cost += self.routers_energy_cost + self.links_energy_cost 
+            self.bandwidth_cost += content_size * self.cost_per_bit
 
     @inheritdoc(DataCollector)
     def cache_hit(self, node, **kwargs):
