@@ -583,7 +583,6 @@ class NetworkController:
         """
         if node in self.model.cache:
             self.collector.write_content(node, cache_size=self.model.cache_size[node], **kwargs)
-            logger.info("put_content kwargs:%s"%kwargs)
             return self.model.cache[node].put(self.session["content"], self.session["priority"], **kwargs)
 
     def get_content(self, node, **kwargs):

@@ -2023,14 +2023,14 @@ class MARCCache(Cache):
 class QMARCCache(Cache):
     @inheritdoc(Cache)
     def __init__(self, maxlen, **kwargs):
-        logger.info(f"Initializing QMARCCache with maxlen: {maxlen} and kwargs: {kwargs}")
+        # logger.info(f"Initializing QMARCCache with maxlen: {maxlen} and kwargs: {kwargs}")
         self._caches = kwargs["tiers"]
         self._n_caches = len(self._caches)
         self._maxlen = int(maxlen)
         self._sizes = [cache["size_factor"] * self._maxlen for cache in self._caches]
         self._names = [cache["name"] for cache in self._caches]
         self._tier_m_caches = self.initialize_caches()
-        logger.info(f"Cache initialized. Tiers: {self._tier_m_caches}")
+        # logger.info(f"Cache initialized. Tiers: {self._tier_m_caches}")
         self._cache= {}
         self.p = 0
         self.t1 = Deque()
@@ -2122,7 +2122,7 @@ class QMARCCache(Cache):
     
     @inheritdoc(Cache)
     def dump(self):
-        return list(self.t2)[::-1] + list(self.t1.__iter__())[::-1] 
+        return list(self.t2)[::-1] + list(self.t1)[::-1] 
     
     @inheritdoc(Cache)
     def has(self, k, *args, **kwargs):
@@ -2163,7 +2163,7 @@ class QMARCCache(Cache):
 
     @inheritdoc(Cache)
     def get(self, k, *args, **kwargs):
-        logger.info("get"+k.__str__())
+        logger.info("get: "+k.__str__())
         # Case I: x is in T1 or T2.
         #  A cache hit has occurred in ARC(c) and DBL(2c)
         #   Move x to MRU position in T2.
@@ -2201,25 +2201,25 @@ class QMARCCache(Cache):
                     self.t2_remove(k)
                     self.t2_append_by_index(k, new_pos)
                     res = True
-        logger.info(f"Cache after: {self._cache}")
-        logger.info(f"T1 after: {self.t1}")
-        logger.info(f"T2 after: {self.t2}")
+        # logger.info(f"Cache after: {self._cache}")
+        # logger.info(f"T1 after: {self.t1}")
+        # logger.info(f"T2 after: {self.t2}")
         # logger.info(f"B1 after: {self.b1}")
         # logger.info(f"B2 after: {self.b2}")
         return res  # Return value not found in cache
     
     @inheritdoc(Cache)
     def put(self, k, *args, **kwargs):
-        logger.info("put"+k.__str__())
+        logger.info("put: "+k.__str__())
         min_content = kwargs.get("min_content") or None
         # Case II: x is in B1
         #  A cache miss has occurred in ARC(c)
         #   ADAPTATION
         #   REPLACE(x)
         #   Move x from B1 to the MRU position in T2 (also fetch x to the cache).
-        logger.info(f"Putting key: {k} and removing {min_content}")
+        # logger.info(f"Putting key: {k} and removing {min_content}")
         if k in self._cache:
-            logger.info("%s already in cache, updating value and moving to MRU position." + k.__str__())
+            # logger.info("%s already in cache, updating value and moving to MRU position." + k.__str__())
             self.get(k, *args, **kwargs)
             return
 
@@ -2241,9 +2241,9 @@ class QMARCCache(Cache):
                 global_pos = round(len(self.t2) * self._alpha)
                 self.t2_append_by_index(k, global_pos)
                 self._cache[k] = True
-            logger.info(f"Cache after: {self._cache}")
-            logger.info(f"T1 after: {self.t1}")
-            logger.info(f"T2 after: {self.t2}")
+            # logger.info(f"Cache after: {self._cache}")
+            # logger.info(f"T1 after: {self.t1}")
+            # logger.info(f"T2 after: {self.t2}")
             # logger.info(f"B1 after: {self.b1}")
             # logger.info(f"B2 after: {self.b2}")
             return res
@@ -2266,9 +2266,9 @@ class QMARCCache(Cache):
                 global_pos = round(len(self.t2) * self._alpha)
                 self.t2_append_by_index(k, global_pos)
                 self._cache[k] = True
-            logger.info(f"Cache after: {self._cache}")
-            logger.info(f"T1 after: {self.t1}")
-            logger.info(f"T2 after: {self.t2}")
+            # logger.info(f"Cache after: {self._cache}")
+            # logger.info(f"T1 after: {self.t1}")
+            # logger.info(f"T2 after: {self.t2}")
             # logger.info(f"B1 after: {self.b1}")
             # logger.info(f"B2 after: {self.b2}")
             return res
@@ -2311,9 +2311,9 @@ class QMARCCache(Cache):
             global_pos = round(len(self.t1) * self._alpha)
             self.t1_append_by_index(k, global_pos)
             self._cache[k] = True
-        logger.info(f"Cache after: {self._cache}")
-        logger.info(f"T1 after: {self.t1}")
-        logger.info(f"T2 after: {self.t2}")
+        # logger.info(f"Cache after: {self._cache}")
+        # logger.info(f"T1 after: {self.t1}")
+        # logger.info(f"T2 after: {self.t2}")
         # logger.info(f"B1 after: {self.b1}")
         # logger.info(f"B2 after: {self.b2}")
         return res
@@ -2399,7 +2399,6 @@ class QMARCCache(Cache):
 
     def t1_append_by_index(self, k, index):
         self.t1.append_by_index(index, k)
-        logger.info("new global pos is = %s" % index)
         t1_tier_length = []
         c_max = []
         tier_nb = 0
@@ -2407,8 +2406,6 @@ class QMARCCache(Cache):
         for i in range (self._n_caches):
             t1_tier_length.append(len(self._tier_m_caches[i].t1))
             c_max.append(self._tier_m_caches[i]._maxlen)
-        logger.info("t1_tier_length= %s" % t1_tier_length)
-        logger.info("c_max: %s"%c_max)
         
         for i in range(len(t1_tier_length) - 1, -1, -1):
             if index <= t1_tier_length[i] != 0:
@@ -2430,7 +2427,6 @@ class QMARCCache(Cache):
 
     def t2_append_by_index(self, k, index):
         self.t2.append_by_index(index, k)
-        logger.info("new global pos is = %s" % index)
         t2_tier_length = []
         c_max = []
         tier_nb = 0
@@ -2438,8 +2434,6 @@ class QMARCCache(Cache):
         for i in range (self._n_caches):
             t2_tier_length.append(len(self._tier_m_caches[i].t2))
             c_max.append(self._tier_m_caches[i]._maxlen)
-        logger.info("t2_tier_length:%s"%t2_tier_length)
-        logger.info("c_max:%s"%c_max)
         for i in range(len(t2_tier_length) -1, -1, -1):
             if index <= t2_tier_length[i] != 0:
                 tier_nb = i
