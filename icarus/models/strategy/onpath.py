@@ -35,8 +35,8 @@ __all__ = [
     "CacheLessForMore",
     "RandomBernoulli",
     "RandomChoice",
-    "CostCache",
-    "Algo4",
+    # "CostCache",
+    "Cost",
 ]
 
 logger = logging.getLogger("main")
@@ -154,7 +154,7 @@ class LeaveCopyEverywhere(Strategy):
     def  process_event(self, time, receiver, content, size, priority, log):
         # get all required data
         source = self.view.content_source(content)
-        logger.info("content:%s,receiver:%s, source:%s"%(content, receiver, source))
+        # logger.info("content:%s,receiver:%s, source:%s"%(content, receiver, source))
         path = self.view.shortest_path(receiver, source)
         # Route requests to original source and queries caches on the path
         self.controller.start_session(time, receiver, content, log, priority)
@@ -165,9 +165,10 @@ class LeaveCopyEverywhere(Strategy):
                     serving_node = v
                     break
         
-        # No cache hits, get content from source
-        self.controller.get_content(v, size=size)
-        serving_node = v
+        else:
+            # No cache hits, get content from source
+            self.controller.get_content(v, size=size)
+            serving_node = v
         # Return content
         path = list(reversed(self.view.shortest_path(receiver, serving_node)))
         for u, v in path_links(path):
@@ -446,9 +447,9 @@ class RandomChoice(Strategy):
         self.controller.end_session()
 
    
-@register_strategy("Algo4")
-class Algo4(Strategy):
-    """CostCache strategy 
+@register_strategy("COST")
+class Cost(Strategy):
+    """Cost strategy 
 
     This strategy caches content objects based on a cost function.
     The cost function includes:
@@ -503,14 +504,19 @@ class Algo4(Strategy):
             self.controller.forward_content_hop(u, v, main_path=True, size=size)
             # we are at node v
             if self.view.has_cache(v):
-                cache_dump = self.view.cache_dump(v)
+                cache_dump_dict = self.view.cache_dump(v)
+                logger.info("cache_dump:%s"%cache_dump_dict)
+                if cache_dump_dict is None:
+                    cache_dump = []
+                else:
+                    cache_dump = list(cache_dump_dict.keys())
                 if cache_dump.__len__() == self.cache_size[v]:
                     is_reaccessed = self._predict_event(time, content, size, priority)
                     if is_reaccessed:
                         logger.info("popular")
                         self.popular_count+=1
                         paths = {}
-                        for c in cache_dump[:int(0.1 * len(cache_dump))]:
+                        for c in cache_dump[:int(max(1,0.1 * len(cache_dump)))]:
                             # look for source of data c in node v
                             src = self.view.content_source(c)
                             # look for path from node v to the src of data c
@@ -522,8 +528,9 @@ class Algo4(Strategy):
                                         break
                             else:
                                 c_serving_node = y
-                            
-                            gain = self.storage_gain(list(reversed(self.view.shortest_path(v, c_serving_node))), size, priority)
+                            c_size = cache_dump_dict[c][1]
+                            c_priority = cache_dump_dict[c][2]
+                            gain = self.storage_gain(list(reversed(self.view.shortest_path(v, c_serving_node))), c_size, c_priority)
                             paths[c] = gain
 
                         if paths: 
@@ -532,25 +539,26 @@ class Algo4(Strategy):
                             # calculate storage loss
                             storage_loss = self.storage_loss(v, content, size, min_gain)
                             # calculate storage gain
-                            storage_gain = self.storage_gain(list(reversed(self.view.shortest_path(receiver, v))), size, priority) 
-                            self.print_costs(list(reversed(self.view.shortest_path(receiver, v))), priority, v, content,size, min_gain)
-                            logger.info("storage gain:%s, storage loss:%s"%(storage_gain, storage_loss))
-                            if storage_gain > storage_loss:
+                            storage_gain = self.storage_gain(list(reversed(self.view.shortest_path(v, serving_node))), size, priority) 
+                            self.print_costs(list(reversed(self.view.shortest_path(v, serving_node))), priority, v, content,size, min_gain)
+                            if storage_gain < storage_loss:
                                 self.put_count+=1
                                 logger.info("storage_gain > storage_loss")
                                 tier_index = self.controller.get_tier_index(v, content)
-                                self.controller.put_content(v, min_content=min_content, tier_index=tier_index, size=size)
+                                self.controller.put_content(v, min_content=min_content, tier_index=tier_index, size=size, priority=priority)
                             else:
                                 logger.info("cost is not for it")
-                        
                         else:
+                            logger.info("no paths")
                             self.no_path_count+=1
-                            self.controller.put_content(v, tier_index=0, size=size)
+                            self.controller.put_content(v, tier_index=0, size=size, priority=priority)
                     else:
+                        logger.info("other")
                         self.other_count +=1
                 else:
+                    # logger.info("cache:%s not full"%v)
                     tier_index = self.controller.get_tier_index(v, content)
-                    self.controller.put_content(v, tier_index=tier_index, size=size)
+                    self.controller.put_content(v, tier_index=tier_index, size=size, priority=priority)
         self.controller.end_session()
     
     def loadmodel(self, model_filename):
@@ -765,7 +773,7 @@ class Algo4(Strategy):
                     penalty = entry["P1"] * 1e-8 
         total = depreciation_cost + energy_cost + bandwidth_cost + nodes_energy_cost + links_energy_cost + penalty
         logger.info(" storage_loss = depreciation_cost %s + storage_energy_cost %s + min_value %s = %s"%(depreciation_cost, energy_cost, min_value, depreciation_cost+ energy_cost+ min_value))
-        logger.info(" storage_gain = bandwidth_cost %s + ransmission_energy_cost %s + self.penalty_cost %s = %s"%(bandwidth_cost,nodes_energy_cost+links_energy_cost,penalty, bandwidth_cost + nodes_energy_cost+links_energy_cost+penalty))    
+        logger.info(" storage_gain = bandwidth_cost %s + transmission_energy_cost %s + penalty_cost %s = %s"%(bandwidth_cost,nodes_energy_cost+links_energy_cost,penalty, bandwidth_cost + nodes_energy_cost+links_energy_cost+penalty))    
         logger.info("ESTIMATED: content:%s, receiver:%s, depreciation:%s, storage:%s, bandwidth:%s, routers:%s, links:%s, penalty:%s, min_loss:%s, total:%s "%
                     (content, receiver, depreciation_cost, energy_cost, bandwidth_cost, nodes_energy_cost, links_energy_cost, penalty, min_value, total))           
         
@@ -886,18 +894,16 @@ class CostCache(Strategy):
                     paths = {}
                     for c in cache_dump:
                         src = self.view.content_source(c)
-                        path = self.view.shortest_path(receiver, src)
+                        path = self.view.shortest_path(v, src)
                         for x, y in path_links(path):
-                            if self.view.has_cache(x):
-                                if self.controller.get_content(x, size=size):
-                                    c_serving_node = x
+                            if self.view.has_cache(y):
+                                if self.controller.get_content(y, size=size):
+                                    c_serving_node = y
                                     break
                         else:
-                            c_serving_node = x
+                            c_serving_node = y
                         
-                        shortest_path = self.view.shortest_path(v, c_serving_node)
-                        reversed_path = list(reversed(shortest_path))
-                        gain = self.storage_gain(reversed_path, size, priority)
+                        gain = self.storage_gain(list(reversed(self.view.shortest_path(v, c_serving_node))), size, priority)
                         paths[c] = gain
 
                     if paths:
@@ -905,7 +911,7 @@ class CostCache(Strategy):
                         # calculate storage loss
                         storage_loss = self.storage_loss(v, content, size, min_gain)
                         # calculate storage gain
-                        storage_gain = self.storage_gain(list(reversed(self.view.shortest_path(receiver, u))), size, priority) 
+                        storage_gain = self.storage_gain(list(reversed(self.view.shortest_path(v, serving_node))), size, priority) 
                         if storage_gain > storage_loss:
                             self.put_count+=1
                             logger.info("storage_gain > storage_loss")

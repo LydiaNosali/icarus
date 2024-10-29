@@ -48,7 +48,7 @@ STRATEGY_STYLE = {
     # "HR_HYBRID_AM": "c-s",
     # "HR_HYBRID_SM": "r-v",
     "LCE": "b--p",
-     "Algo4": "m-^",
+    # "COST_CACHE": "m-^",
     # "LCD": "g-->",
     "CL4M": "g-->",
     "PROB_CACHE": "c--<",
@@ -56,13 +56,13 @@ STRATEGY_STYLE = {
     # "RAND_BERNOULLI": "g--*",
     # "NO_CACHE": "k:o",
     # "OPTIMAL": "k-o",
-    "COST_CACHE": "r-v",
+    "COST": "r-v",
 }
 
 # This dict maps name of strategies to names to be displayed in the legend
 STRATEGY_LEGEND = {
     "LCE": "LCE",
-    "Algo4": "Algo4",
+    # "COST_CACHE": "COST_CACHE",
     # "LCD": "LCD",
     # "HR_SYMM": "HR Symm",
     # "HR_ASYMM": "HR Asymm",
@@ -75,32 +75,32 @@ STRATEGY_LEGEND = {
     # "RAND_BERNOULLI": "Random (Bernoulli)",
     # "NO_CACHE": "No caching",
     # "OPTIMAL": "Optimal",
-    "COST_CACHE": "CostCache",
+    "COST": "Cost",
 }
 
 # Color and hatch styles for bar charts of cache hit ratio and link load vs topology
 STRATEGY_BAR_COLOR = {
     "LCE": "k",
-    "Algo4" :"o.7",
+    # "COST_CACHE" :"o.7",
     # "LCD": "0.4",
     # "NO_CACHE": "0.5",
     # "HR_ASYMM": "0.6",
     # "HR_SYMM": "0.7",
     "CL4M": "0.6",
     "PROB_CACHE": "0.5",
-    "COST_CACHE": "0.4",
+    "COST": "0.4",
 }
 
 STRATEGY_BAR_HATCH = {
     "LCE": None,
-    "Algo4" : "//",
+    # "COST_CACHE" : "//",
     # "LCD": "//",
     # "NO_CACHE": "x",
     # "HR_ASYMM": "+",
     # "HR_SYMM": "\\",
     "CL4M": "x",
     "PROB_CACHE": "\\",
-    "COST_CACHE": "+",
+    "COST": "+",
 }
 
 

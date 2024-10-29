@@ -2122,7 +2122,10 @@ class QMARCCache(Cache):
     
     @inheritdoc(Cache)
     def dump(self):
-        return list(self.t2)[::-1] + list(self.t1)[::-1] 
+        ordered_Cache_t1 = {key: self._cache[key] for key in list(self.t1)[::-1] if key in self._cache}
+        ordered_Cache_t2 = {key: self._cache[key] for key in list(self.t2)[::-1] if key in self._cache}
+        ordered_Cache_t1.update(ordered_Cache_t2)
+        return ordered_Cache_t1
     
     @inheritdoc(Cache)
     def has(self, k, *args, **kwargs):
@@ -2168,11 +2171,11 @@ class QMARCCache(Cache):
         #  A cache hit has occurred in ARC(c) and DBL(2c)
         #   Move x to MRU position in T2.
         res = False
-        # logger.info(f"Cache before: {self._cache}")
-        # logger.info(f"T1 before: {self.t1}")
-        # logger.info(f"T2 before: {self.t2}")
-        # logger.info(f"B1 before: {self.b1}")
-        # logger.info(f"B2 before: {self.b2}")
+        logger.info(f"Cache before: {self._cache}")
+        logger.info(f"T1 before: {self.t1}")
+        logger.info(f"T2 before: {self.t2}")
+        logger.info(f"B1 before: {self.b1}")
+        logger.info(f"B2 before: {self.b2}")
         if args[0] == 'high':
             if k in self.t1:
                 logger.info("move %s from t1 to t2", k.__str__())
@@ -2201,17 +2204,19 @@ class QMARCCache(Cache):
                     self.t2_remove(k)
                     self.t2_append_by_index(k, new_pos)
                     res = True
-        # logger.info(f"Cache after: {self._cache}")
-        # logger.info(f"T1 after: {self.t1}")
-        # logger.info(f"T2 after: {self.t2}")
-        # logger.info(f"B1 after: {self.b1}")
-        # logger.info(f"B2 after: {self.b2}")
+        logger.info(f"Cache after: {self._cache}")
+        logger.info(f"T1 after: {self.t1}")
+        logger.info(f"T2 after: {self.t2}")
+        logger.info(f"B1 after: {self.b1}")
+        logger.info(f"B2 after: {self.b2}")
         return res  # Return value not found in cache
     
     @inheritdoc(Cache)
     def put(self, k, *args, **kwargs):
         logger.info("put: "+k.__str__())
         min_content = kwargs.get("min_content") or None
+        size = kwargs.get("size") or None
+        priority = kwargs.get("priority") or None
         # Case II: x is in B1
         #  A cache miss has occurred in ARC(c)
         #   ADAPTATION
@@ -2224,11 +2229,11 @@ class QMARCCache(Cache):
             return
 
         res = None
-        # logger.info(f"Cache before: {self._cache}")
-        # logger.info(f"T1 before: {self.t1}")
-        # logger.info(f"T2 before: {self.t2}")
-        # logger.info(f"B1 before: {self.b1}")
-        # logger.info(f"B2 before: {self.b2}")
+        logger.info(f"Cache before: {self._cache}")
+        logger.info(f"T1 before: {self.t1}")
+        logger.info(f"T2 before: {self.t2}")
+        logger.info(f"B1 before: {self.b1}")
+        logger.info(f"B2 before: {self.b2}")
         if k in self.b1:
             self.increment_p(len(self.b1), len(self.b2))
             self.replace(k=k, min_content=min_content)
@@ -2236,16 +2241,16 @@ class QMARCCache(Cache):
             logger.info("put %s in t2", k.__str__())
             if args[0] == 'high':
                 self.t2_append_left(k)
-                self._cache[k] = True
+                self._cache[k] = [True, size, priority]
             else:
                 global_pos = round(len(self.t2) * self._alpha)
                 self.t2_append_by_index(k, global_pos)
-                self._cache[k] = True
-            # logger.info(f"Cache after: {self._cache}")
-            # logger.info(f"T1 after: {self.t1}")
-            # logger.info(f"T2 after: {self.t2}")
-            # logger.info(f"B1 after: {self.b1}")
-            # logger.info(f"B2 after: {self.b2}")
+                self._cache[k] = [True, size, priority]
+            logger.info(f"Cache after: {self._cache}")
+            logger.info(f"T1 after: {self.t1}")
+            logger.info(f"T2 after: {self.t2}")
+            logger.info(f"B1 after: {self.b1}")
+            logger.info(f"B2 after: {self.b2}")
             return res
 
         # Case III: x is in B2
@@ -2261,16 +2266,16 @@ class QMARCCache(Cache):
             logger.info("put %s in t2", k.__str__())
             if args[0] == 'high':
                 self.t2_append_left(k)
-                self._cache[k] = True
+                self._cache[k] = [True, size, priority]
             else:
                 global_pos = round(len(self.t2) * self._alpha)
                 self.t2_append_by_index(k, global_pos)
-                self._cache[k] = True
-            # logger.info(f"Cache after: {self._cache}")
-            # logger.info(f"T1 after: {self.t1}")
-            # logger.info(f"T2 after: {self.t2}")
-            # logger.info(f"B1 after: {self.b1}")
-            # logger.info(f"B2 after: {self.b2}")
+                self._cache[k] = [True, size, priority]
+            logger.info(f"Cache after: {self._cache}")
+            logger.info(f"T1 after: {self.t1}")
+            logger.info(f"T2 after: {self.t2}")
+            logger.info(f"B1 after: {self.b1}")
+            logger.info(f"B2 after: {self.b2}")
             return res
         
         # Case IV: x is not in (T1 u B1 u T2 u B2)
@@ -2306,16 +2311,16 @@ class QMARCCache(Cache):
         # Finally, fetch x to the cache and move it to MRU position in T1
         if args[0] == 'high':
             self.t1_append_left(k)
-            self._cache[k] = True
+            self._cache[k] = [True, size, priority]
         else:
             global_pos = round(len(self.t1) * self._alpha)
             self.t1_append_by_index(k, global_pos)
-            self._cache[k] = True
-        # logger.info(f"Cache after: {self._cache}")
-        # logger.info(f"T1 after: {self.t1}")
-        # logger.info(f"T2 after: {self.t2}")
-        # logger.info(f"B1 after: {self.b1}")
-        # logger.info(f"B2 after: {self.b2}")
+            self._cache[k] = [True, size, priority]
+        logger.info(f"Cache after: {self._cache}")
+        logger.info(f"T1 after: {self.t1}")
+        logger.info(f"T2 after: {self.t2}")
+        logger.info(f"B1 after: {self.b1}")
+        logger.info(f"B2 after: {self.b2}")
         return res
     
     @inheritdoc(Cache)
