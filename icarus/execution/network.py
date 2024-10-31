@@ -603,7 +603,7 @@ class NetworkController:
             if cache_hit:
                 if self.session["log"]:
                     tier_index = self.get_tier_index(node, self.session["content"])
-                    self.collector.cache_hit(node, cache_size=self.model.cache_size[node], tier_index = tier_index, **kwargs)
+                    self.collector.cache_hit(node, cache_size=self.model.cache_size[node], tier_index=tier_index, **kwargs)
             else:
                 if self.session["log"]:
                     self.collector.cache_miss(node)
@@ -611,7 +611,7 @@ class NetworkController:
         name, props = fnss.get_stack(self.model.topology, node)
         if name == "source" and self.session["content"] in props["contents"]:
             if self.collector is not None and self.session["log"]:
-                self.collector.server_hit(node)
+                self.collector.server_hit(node, server_size=len(self.model.source_node[node]), **kwargs)
             return True
         else:
             return False

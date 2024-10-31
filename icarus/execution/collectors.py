@@ -91,7 +91,7 @@ class DataCollector:
         """
         pass
 
-    def server_hit(self, node):
+    def server_hit(self, node, **kwargs):
         """Reports that the requested content has been served by the server at
         node *node*.
 
@@ -219,9 +219,9 @@ class CollectorProxy(DataCollector):
             c.cache_miss(node)
 
     @inheritdoc(DataCollector)
-    def server_hit(self, node):
+    def server_hit(self, node, **kwargs):
         for c in self.collectors["server_hit"]:
-            c.server_hit(node)
+            c.server_hit(node, **kwargs)
 
     @inheritdoc(DataCollector)
     def request_hop(self, u, v, **kwargs):
@@ -462,8 +462,9 @@ class CostCollector(DataCollector):
     @inheritdoc(DataCollector)
     def cache_hit(self, node, **kwargs):
         tier_index = kwargs.get("tier_index") or 0
-        content_size = kwargs["size"]
         cache_size = kwargs.get("cache_size") or None
+        content_size = kwargs["size"]
+        logger.info(f"in cache_hit. tier index:{tier_index}, content_size:{content_size}, cache_size:{cache_size}")
         tiers_last_access = self.view.get_last_access(node)
         
         tier = self.tiers[tier_index]
@@ -495,12 +496,35 @@ class CostCollector(DataCollector):
 
                 self.sess_depreciation_cost += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity)
             self.sess_get_storage_energy_cost += ((tier_idle_power_density * idle_time) + (tier_active_power_density * write_time * content_size)) * self.cost_per_joule
-            
+
+    @inheritdoc(DataCollector)
+    def server_hit(self, node, **kwargs):
+        server_size = kwargs.get("server_size") or None
+        content_size = kwargs["size"]
+        
+        server_latency = 1e-7
+        server_read_throughput = 4e+10
+        server_active_power_density = 10**-9
+        server_idle_power_density =10**-12
+        server_purchase_cost = 200
+        server_lifespan = 5 * 365 * 24 * 60 * 60
+        logger.info(f"in server_hit.  content_size:{content_size}, server_size:{server_size}")
+        
+        # servers_last_access = self.view.get_last_access(node)
+        # idle_time = max(0.0, time.time() - servers_last_access[node])
+        idle_time = 0.0
+        read_time = server_latency + content_size / server_read_throughput
+
+        self.sess_depreciation_cost += (content_size * server_purchase_cost) / (server_lifespan * server_size)
+        self.sess_get_storage_energy_cost += ((server_idle_power_density * idle_time) + (server_active_power_density * read_time * content_size)) * self.cost_per_joule
+        
     @inheritdoc(DataCollector)
     def write_content(self, node, **kwargs):
+        cache_size = kwargs.get("cache_size") or None
         tier_index = kwargs.get("tier_index") or 0
         content_size = kwargs["size"]
-        cache_size = kwargs.get("cache_size") or None
+        logger.info(f"in write_content. tier index:{tier_index}, content_size:{content_size}, cache_size:{cache_size}")
+        
         tiers_last_access = self.view.get_last_access(node)
         for i, tier in enumerate(self.tiers[tier_index:], start=tier_index):
             tier_active_power_density  = tier['active_caching_power_density']
@@ -619,7 +643,7 @@ class CacheHitRatioCollector(DataCollector):
             self.per_node_cache_hits[node] += 1
 
     @inheritdoc(DataCollector)
-    def server_hit(self, node):
+    def server_hit(self, node, **kwargs):
         self.serv_hits += 1
         if self.cont_hits:
             self.cont_serv_hits[self.curr_cont] += 1
@@ -770,7 +794,7 @@ class DummyCollector(DataCollector):
         self.session["cache_misses"].append(node)
 
     @inheritdoc(DataCollector)
-    def server_hit(self, node):
+    def server_hit(self, node, **kwargs):
         self.session["serving_node"] = node
 
     @inheritdoc(DataCollector)
