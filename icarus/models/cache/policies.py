@@ -2122,10 +2122,9 @@ class QMARCCache(Cache):
     
     @inheritdoc(Cache)
     def dump(self):
-        ordered_Cache_t1 = {key: self._cache[key] for key in list(self.t1)[::-1] if key in self._cache}
-        ordered_Cache_t2 = {key: self._cache[key] for key in list(self.t2)[::-1] if key in self._cache}
-        ordered_Cache_t1.update(ordered_Cache_t2)
-        return ordered_Cache_t1
+        t1 = {key: self._cache[key] for key in list(self.t1) if key in self._cache}
+        t2 = {key: self._cache[key] for key in list(self.t2) if key in self._cache}
+        return t1, t2, list(self.b2), self.p
     
     @inheritdoc(Cache)
     def has(self, k, *args, **kwargs):

@@ -496,8 +496,19 @@ class Cost(Strategy):
             self.controller.forward_content_hop(u, v, main_path=True, size=size)
             # we are at node v
             if self.view.has_cache(v):
-                cache_dump_dict = self.view.cache_dump(v)
-                cache_dump = list(cache_dump_dict.keys()) if cache_dump_dict else []
+                cache_dump_t1, cache_dump_t2, b2, p = self.view.cache_dump(v)
+                t1 = list(cache_dump_t1.keys()) if cache_dump_t1 else []
+                t2 = list(cache_dump_t2.keys()) if cache_dump_t2 else []
+
+                if t1 and ((content in b2 and len(t1) == p) or (len(t1) > p)):
+                    cache_dump = t1
+                    cache_dump_dict = cache_dump_t1
+                else:
+                    cache_dump = t2
+                    cache_dump_dict = cache_dump_t2
+
+                # cache_dump_dict = self.view.cache_dump(v)
+                # cache_dump = list(cache_dump_dict.keys()) if cache_dump_dict else []
                 if cache_dump.__len__() == self.cache_size[v]:
                     is_reaccessed = self._predict_event(time, content, size, priority)
                     if is_reaccessed:

@@ -226,13 +226,71 @@ def plot_cache_hits_vs_topology(
         plotdir,
     )
 
+def plot_link_load_vs_cache_size(
+    resultset, topology, cache_size_range, strategies, plotdir
+):
+    desc = {}
+    desc["title"] = "Internal link load: T={}".format(topology)
+    desc["xlabel"] = "Cache to population ratio"
+    desc["ylabel"] = "Internal link load"
+    desc["xscale"] = "log"
+    desc["xparam"] = ("cache_placement", "network_cache")
+    desc["xvals"] = cache_size_range
+    desc["filter"] = {
+        "topology": {"name": topology},
+        "workload": {"name": "TRACE_DRIVEN"},
+    }
+    desc["ymetrics"] = [("LINK_LOAD", "MEAN_INTERNAL")] * len(strategies)
+    desc["ycondnames"] = [("strategy", "name")] * len(strategies)
+    desc["ycondvals"] = strategies
+    desc["errorbar"] = True
+    desc["legend_loc"] = "upper right"
+    desc["line_style"] = STRATEGY_STYLE
+    desc["legend"] = STRATEGY_LEGEND
+    desc["plotempty"] = PLOT_EMPTY_GRAPHS
+    plot_lines(
+        resultset,
+        desc,
+        "LINK_LOAD_INTERNAL_T={}.jpg".format(topology),
+        plotdir,
+    )
+
+def plot_path_stretch_vs_cache_size(
+    resultset, topology, cache_size_range, strategies, plotdir
+):
+    desc = {}
+    desc["title"] = "Path Stretch: T={}".format(topology)
+    desc["xlabel"] = "Cache to population ratio"
+    desc["ylabel"] = "Path Stretch"
+    desc["xscale"] = "log"
+    desc["xparam"] = ("cache_placement", "network_cache")
+    desc["xvals"] = cache_size_range
+    desc["filter"] = {
+        "topology": {"name": topology},
+        "workload": {"name": "TRACE_DRIVEN"},
+    }
+    desc["ymetrics"] = [("PATH_STRETCH", "MEAN")] * len(strategies)
+    desc["ycondnames"] = [("strategy", "name")] * len(strategies)
+    desc["ycondvals"] = strategies
+    desc["errorbar"] = True
+    desc["legend_loc"] = "upper right"
+    desc["line_style"] = STRATEGY_STYLE
+    desc["legend"] = STRATEGY_LEGEND
+    desc["plotempty"] = PLOT_EMPTY_GRAPHS
+    plot_lines(
+        resultset,
+        desc,
+        "PATH_STRETCH_T={}.jpg".format(topology),
+        plotdir,
+    )
+
 def plot_cost_components_vs_cache_size(
     resultset, topology, cache_size_range, strategies, plotdir
 ):
     """
     Plot cost components for each strategy as a stacked bar plot with strategy names under each bar.
     """
-    
+    print("here")
     # Cost component names in the result set
     cost_components = ["DEPRECIATION", "BANDWIDTH", "READ_STORAGE", "WRITE_STORAGE", "ROUTERS", "LINKS", "PENALTY"]
     num_components = len(cost_components)
@@ -248,6 +306,7 @@ def plot_cost_components_vs_cache_size(
     for i, cache_size in enumerate(cache_size_range):
         for j, strategy in enumerate(strategies):
             x_positions.append(i * (total_bars_per_group + 0.2) + j * (bar_width + bar_spacing))
+    
     x_positions = np.array(x_positions)
     
     # Define color and hatch styles for each cost component
@@ -329,7 +388,21 @@ def run(config, results, plotdir):
     strategies = settings.STRATEGIES
     # Plot graphs
     # for topology in topologies:
-    topology = "PATH"
+    topology = "GARR"
+    logger.info(
+        "Plotting link load for topology %s vs cache size"
+        % (topology)
+    )
+    plot_link_load_vs_cache_size(
+            resultset, topology, cache_sizes, strategies, plotdir
+    )
+    logger.info(
+        "Plotting path stretch for topology %s vs cache size"
+        % (topology)
+    )
+    plot_path_stretch_vs_cache_size(
+            resultset, topology, cache_sizes, strategies, plotdir
+    )
     logger.info(
         "Plotting cache hit ratio for topology %s vs cache size"
         % (topology)
