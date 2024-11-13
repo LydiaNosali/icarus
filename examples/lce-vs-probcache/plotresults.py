@@ -162,6 +162,33 @@ def plot_cost_vs_cache_size(
         resultset, desc, "COST_T={}.jpg".format(topology), plotdir
     )
 
+def plot_chrcp_vs_cache_size(
+    resultset, topology, cache_size_range, strategies, plotdir
+):
+    desc = {}
+    desc["title"] = "CHRCP: T={}".format(topology)
+    desc["xlabel"] = "Cache to population ratio"
+    desc["ylabel"] = "CHRCP"
+    desc["xscale"] = "log"
+    desc["xparam"] = ("cache_placement", "network_cache")
+    desc["xvals"] = cache_size_range
+    desc["filter"] = {
+        "topology": {"name": topology},
+        "workload": {"name": "TRACE_DRIVEN"},
+    }
+    desc["ymetrics"] = [("CHRCP", "MEAN")] * len(strategies)
+    desc["ycondnames"] = [("strategy", "name")] * len(strategies)
+    desc["ycondvals"] = strategies
+    desc["metric"] = ("CHRCP", "MEAN")
+    desc["errorbar"] = True
+    desc["legend_loc"] = "upper right"
+    desc["line_style"] = STRATEGY_STYLE
+    desc["legend"] = STRATEGY_LEGEND
+    desc["plotempty"] = PLOT_EMPTY_GRAPHS
+    plot_lines(
+        resultset, desc, "CHRCP_T={}.jpg".format(topology), plotdir
+    )
+
 def plot_latency_vs_cache_size(
     resultset, topology, cache_size_range, strategies, plotdir
 ):
@@ -394,6 +421,13 @@ def run(config, results, plotdir):
         % (topology)
     )
     plot_link_load_vs_cache_size(
+            resultset, topology, cache_sizes, strategies, plotdir
+    )
+    logger.info(
+        "Plotting chrcp for topology %s vs cache size"
+        % (topology)
+    )
+    plot_chrcp_vs_cache_size(
             resultset, topology, cache_sizes, strategies, plotdir
     )
     logger.info(

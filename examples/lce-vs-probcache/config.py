@@ -179,7 +179,7 @@ RESULTS_FORMAT = "PICKLE"
 
 TIERS = [
     {"name":"DRAM",
-    "size_factor": 1,
+    "size_factor": 1/31,
     "purchase_cost" : 150, # in $
     "lifespan" : 5, # in years
     "read_throughput" : 4e+10,  # 40GBPS
@@ -188,37 +188,37 @@ TIERS = [
     "active_caching_power_density" : 10**-9,  # w/bit
     "idle_power_density" : 10**-12,  # w/bit
     },
-    # {"name":"SSD",
-    # "size_factor": 5/31,
-    # "purchase_cost" : 100, # in $
-    # "lifespan" : 3, # in years (SSD generally has a shorter lifespan compared to DRAM)
-    # "read_throughput" : 5e+9,  # 5GBPS (typically slower than DRAM)
-    # "write_throughput" : 2.5e+9, # 2.5GBPS (writing to SSD is slower than reading)
-    # "latency"  : 1e-5,  # 10 microseconds (latency is higher than DRAM)
-    # "active_caching_power_density" : 5e-7,  # 0.5 microwatts/bit (active power)
-    # "idle_power_density" : 5e-9,  # 5 nanowatts/bit (idle power)
-    # },
-    # {"name":"HDD",
-    # "size_factor": 15/31,
-    # "purchase_cost" : 50,  # in $ (cheaper than SSD and DRAM)
-    # "lifespan" : 3,  # in years (HDDs can vary, but a 3-year lifespan is a reasonable assumption)
-    # "read_throughput" : 1e+8,  # 100MB/s (0.1 GBPS, slower than SSD and DRAM)
-    # "write_throughput" : 5e+7,  # 50MB/s (slower than reads)
-    # "latency"  : 5e-3,  # 5 milliseconds (higher latency due to mechanical operations)
-    # "active_caching_power_density" : 8e-7,  # 0.8 μW/bit (active power)
-    # "idle_power_density" : 1e-8,  # 10 nanowatts/bit (idle power)
-    # }
+    {"name":"SSD",
+    "size_factor": 5/31,
+    "purchase_cost" : 100, # in $
+    "lifespan" : 3, # in years (SSD generally has a shorter lifespan compared to DRAM)
+    "read_throughput" : 5e+9,  # 5GBPS (typically slower than DRAM)
+    "write_throughput" : 2.5e+9, # 2.5GBPS (writing to SSD is slower than reading)
+    "latency"  : 1e-5,  # 10 microseconds (latency is higher than DRAM)
+    "active_caching_power_density" : 5e-7,  # 0.5 microwatts/bit (active power)
+    "idle_power_density" : 5e-9,  # 5 nanowatts/bit (idle power)
+    },
+    {"name":"HDD",
+    "size_factor": 15/31,
+    "purchase_cost" : 50,  # in $ (cheaper than SSD and DRAM)
+    "lifespan" : 3,  # in years (HDDs can vary, but a 3-year lifespan is a reasonable assumption)
+    "read_throughput" : 1e+8,  # 100MB/s (0.1 GBPS, slower than SSD and DRAM)
+    "write_throughput" : 5e+7,  # 50MB/s (slower than reads)
+    "latency"  : 5e-3,  # 5 milliseconds (higher latency due to mechanical operations)
+    "active_caching_power_density" : 8e-7,  # 0.8 μW/bit (active power)
+    "idle_power_density" : 1e-8,  # 10 nanowatts/bit (idle power)
+    }
 ]
 
-# STRATEGIES = ["Algo4", "LCE"]
-STRATEGIES = ["Algo4", "LCE", "COST_CACHE", "CL4M", "PROB_CACHE"]
+STRATEGIES = ["COST", "LCE"]
+# STRATEGIES = ["COST", "LCE", "CL4M", "PROB_CACHE"]
 PENALTY_TABLE = [
     {"delay": 2, "P0": 0.0, "P1": 0.0},        # Delay < 20 ms
     {"delay": 6, "P0": 50, "P1": 10},     # Delay < 150 ms
     {"delay": float('inf'), "P0": 75, "P1": 15}  # Delay >= 150 ms (use infinity for no upper limit)
 ]
 strategy_params = {
-    "COST_CACHE": {
+    "COST": {
         "cost_per_joule" : 0.020324,  # $/joule
         "cost_per_bit" : 1.2 * 10**-6,  # $/bit
         "router_energy_density" : 2 * 10**-8,  # j/bit
@@ -226,27 +226,26 @@ strategy_params = {
         "penalty_table": PENALTY_TABLE,
         "chunk_size" : 10 ** 5,
         "tiers" : TIERS,   
-    },
-     "Algo4": {
-        "cost_per_joule" : 0.020324,  # $/joule
-        "cost_per_bit" : 1.2 * 10**-6,  # $/bit
-        "router_energy_density" : 2 * 10**-8,  # j/bit
-        "link_energy_density" : 1.5 * 10**-9,  # j/bit
-        "penalty_table": PENALTY_TABLE,
-        "chunk_size" : 10 ** 5,
-        "tiers" : TIERS,   
-    },
+    }
 }
 DATA_COLLECTORS = {
     "CACHE_HIT_RATIO": {},
     "COST": {
-        "cost_params": strategy_params["COST_CACHE"],
+        "cost_params": strategy_params["COST"],
         "tiers": TIERS
     },
     "LATENCY": {},
+    "PATH_STRETCH" : {},
+    "LINK_LOAD" : {},
+    "CHRCP" : {}
 }
 
-NETWORK_CACHE = [0.05, 0.1] # which is 5% and 10%
+NETWORK_CACHE = [0.0005, 0.001, 0.01, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 1] # which is 5% and 10%
+# NETWORK_CACHE = [0.1] # 10%
+# NETWORK_CACHE = [0.01] # 1%
+# NETWORK_CACHE = [0.001] # 0.1%
+# NETWORK_CACHE = [0.0005] # 0.05%
+
 
 default = Tree()
 default["workload"] = {
@@ -268,16 +267,18 @@ default["workload"] = {
 #     "high_priority_rate" :0.2,
 #     "priority_values": ["low", "high"],
 #     "data_size_range" : [1024, 4096]
+#     "seed" : 1
 # }
+
 default["content_placement"]["name"] = "UNIFORM"
 default["cache_placement"]["name"] = "UNIFORM"
 default["cache_policy"]["name"] = "QMARC" 
 default["cache_policy"]["tiers"] = TIERS
 default["cache_policy"]["alpha"] = 0.3
 
-
-default["topology"]["name"] = "PATH"
-default["topology"]["n"] = 5
+default["topology"]["name"] = "GARR"
+# default["topology"]["name"] = "PATH"
+# default["topology"]["n"] = 3
 
 # Create experiment configuration
 EXPERIMENT_QUEUE = deque()

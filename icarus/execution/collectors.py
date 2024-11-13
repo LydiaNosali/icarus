@@ -29,8 +29,10 @@ __all__ = [
     "CostCollector",
     "PathStretchCollector",
     "DummyCollector",
+    "CHRCPCollector",
 ]
 
+chrcp = {}
 
 class DataCollector:
     """Object collecting notifications about simulation events and measuring
@@ -583,9 +585,34 @@ class CostCollector(DataCollector):
             "LINKS": self.links_energy_cost,
             "PENALTY": self.penalty_cost
             })
+        chrcp["cost"] = self.cost
         return results
 
+@register_data_collector("CHRCP")
+class CHRCPCollector(DataCollector):
+    """Data collector measuring cost, i.e. the penalty from delivering a
+    content.
+    """
 
+    def __init__(self, view, **params):
+        """Constructor
+
+        Parameters
+        ----------
+        view : NetworkView
+        The network view instance
+        params : cost model and tiers info
+        """
+        self.view = view
+
+    @inheritdoc(DataCollector)
+    def results(self):
+        results = Tree(
+            {
+            "MEAN": chrcp["cost"]/chrcp["chr"]
+            })
+        return results
+    
 @register_data_collector("CACHE_HIT_RATIO")
 class CacheHitRatioCollector(DataCollector):
     """Collector measuring the cache hit ratio, i.e. the portion of content
@@ -655,6 +682,7 @@ class CacheHitRatioCollector(DataCollector):
         n_sess = self.cache_hits + self.serv_hits
         hit_ratio = self.cache_hits / n_sess
         results = Tree(**{"MEAN": hit_ratio})
+        chrcp["chr"] = hit_ratio
         if self.off_path_hits:
             results["MEAN_OFF_PATH"] = self.off_path_hit_count / n_sess
             results["MEAN_ON_PATH"] = results["MEAN"] - results["MEAN_OFF_PATH"]

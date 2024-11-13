@@ -224,7 +224,17 @@ def write_results_pickle(results, path):
     """
     with open(path, "wb") as pickle_file:
         pickle.dump(results, pickle_file)
+    
+    with open(path, 'rb') as file:
+        loaded_data = pickle.load(file)
+        print("Loaded data successfully!")
 
+        # Assuming ResultSet has an attribute 'results'
+        results = loaded_data._results
+        # print(results)
+        with open('/home/lydia/icarus/examples/lce-vs-probcache/results.txt', 'w') as txt_file:
+            for result in results:
+                txt_file.write(str(result) + '\n')
 
 @register_results_reader("PICKLE")
 def read_results_pickle(path):
