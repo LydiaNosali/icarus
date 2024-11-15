@@ -74,7 +74,7 @@ class Partition(Strategy):
     @inheritdoc(Strategy)
     def  process_event(self, time, receiver, content, size, priority, log):
         source = self.view.content_source(content)
-        self.controller.start_session(time, receiver, content, log)
+        self.controller.start_session(time, receiver, content, log, priority)
         cache = self.cache_assignment[receiver]
         self.controller.forward_request_path(receiver, cache)
         if not self.controller.get_content(cache):
@@ -202,7 +202,7 @@ class LeaveCopyDown(Strategy):
         source = self.view.content_source(content)
         path = self.view.shortest_path(receiver, source)
         # Route requests to original source and queries caches on the path
-        self.controller.start_session(time, receiver, content, log)
+        self.controller.start_session(time, receiver, content, log, priority)
         for u, v in path_links(path):
             self.controller.forward_request_hop(u, v)
             if self.view.has_cache(v):
@@ -382,7 +382,7 @@ class RandomBernoulli(Strategy):
         source = self.view.content_source(content)
         path = self.view.shortest_path(receiver, source)
         # Route requests to original source and queries caches on the path
-        self.controller.start_session(time, receiver, content, log)
+        self.controller.start_session(time, receiver, content, log, priority)
         for u, v in path_links(path):
             self.controller.forward_request_hop(u, v)
             if self.view.has_cache(v):
@@ -421,7 +421,7 @@ class RandomChoice(Strategy):
         source = self.view.content_source(content)
         path = self.view.shortest_path(receiver, source)
         # Route requests to original source and queries caches on the path
-        self.controller.start_session(time, receiver, content, log)
+        self.controller.start_session(time, receiver, content, log, priority)
         for u, v in path_links(path):
             self.controller.forward_request_hop(u, v)
             if self.view.has_cache(v):

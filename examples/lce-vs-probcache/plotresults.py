@@ -42,65 +42,59 @@ PLOT_EMPTY_GRAPHS = True
 # On-path strategies: dashed lines
 # No-cache: dotted line
 STRATEGY_STYLE = {
-    # "HR_SYMM": "b-o",
-    # "HR_ASYMM": "g-D",
-    # "HR_MULTICAST": "m-^",
-    # "HR_HYBRID_AM": "c-s",
-    # "HR_HYBRID_SM": "r-v",
+    "LCD": "g-o",
+    "RAND_CHOICE": "m--<",
+    "COST": "r-^",
     "LCE": "b--p",
-    # "COST_CACHE": "m-^",
-    # "LCD": "g-->",
-    "CL4M": "g-->",
     "PROB_CACHE": "c--<",
-    # "RAND_CHOICE": "r--<",
+    # "COST_CACHE": "m-^",
     # "RAND_BERNOULLI": "g--*",
     # "NO_CACHE": "k:o",
     # "OPTIMAL": "k-o",
-    "COST": "r-v",
+    
 }
 
 # This dict maps name of strategies to names to be displayed in the legend
 STRATEGY_LEGEND = {
     "LCE": "LCE",
-    # "COST_CACHE": "COST_CACHE",
-    # "LCD": "LCD",
+    "LCD": "LCD",
+    "PROB_CACHE": "ProbCache",
+    "COST": "Cost",
+    "RAND_CHOICE": "Random (choice)",
     # "HR_SYMM": "HR Symm",
     # "HR_ASYMM": "HR Asymm",
     # "HR_MULTICAST": "HR Multicast",
     # "HR_HYBRID_AM": "HR Hybrid AM",
     # "HR_HYBRID_SM": "HR Hybrid SM",
-    "CL4M": "CacheLessForMore",
-    "PROB_CACHE": "ProbCache",
-    # "RAND_CHOICE": "Random (choice)",
+    # "CL4M": "CacheLessForMore",
     # "RAND_BERNOULLI": "Random (Bernoulli)",
     # "NO_CACHE": "No caching",
     # "OPTIMAL": "Optimal",
-    "COST": "Cost",
 }
 
 # Color and hatch styles for bar charts of cache hit ratio and link load vs topology
 STRATEGY_BAR_COLOR = {
     "LCE": "k",
-    # "COST_CACHE" :"o.7",
-    # "LCD": "0.4",
+    "RAND_CHOICE" :"o.7",
+    "LCD": "0.4",
+    "PROB_CACHE": "0.5",
+    "COST": "0.6",
+    # "CL4M": "0.6",
     # "NO_CACHE": "0.5",
     # "HR_ASYMM": "0.6",
-    # "HR_SYMM": "0.7",
-    "CL4M": "0.6",
-    "PROB_CACHE": "0.5",
-    "COST": "0.4",
+    # "HR_SYMM": "0.7",   
 }
 
 STRATEGY_BAR_HATCH = {
     "LCE": None,
-    # "COST_CACHE" : "//",
-    # "LCD": "//",
+    "RAND_CHOICE" : "x",
+    "LCD": "//",
+    "PROB_CACHE": "\\",
+    "COST": "+",
     # "NO_CACHE": "x",
     # "HR_ASYMM": "+",
     # "HR_SYMM": "\\",
-    "CL4M": "x",
-    "PROB_CACHE": "\\",
-    "COST": "+",
+    # "CL4M": "x",
 }
 
 
@@ -118,7 +112,7 @@ def plot_cache_hits_vs_cache_size(
     desc["xvals"] = cache_size_range
     desc["filter"] = {
         "topology": {"name": topology},
-        "workload": {"name": "TRACE_DRIVEN"},
+        "workload": {"name": "STATIONARY"},
     }
     desc["ymetrics"] = [("CACHE_HIT_RATIO", "MEAN")] * len(strategies)
     desc["ycondnames"] = [("strategy", "name")] * len(strategies)
@@ -147,7 +141,7 @@ def plot_cost_vs_cache_size(
     desc["xvals"] = cache_size_range
     desc["filter"] = {
         "topology": {"name": topology},
-        "workload": {"name": "TRACE_DRIVEN"},
+        "workload": {"name": "STATIONARY"},
     }
     desc["ymetrics"] = [("COST", "MEAN")] * len(strategies)
     desc["ycondnames"] = [("strategy", "name")] * len(strategies)
@@ -174,7 +168,7 @@ def plot_chrcp_vs_cache_size(
     desc["xvals"] = cache_size_range
     desc["filter"] = {
         "topology": {"name": topology},
-        "workload": {"name": "TRACE_DRIVEN"},
+        "workload": {"name": "STATIONARY"},
     }
     desc["ymetrics"] = [("CHRCP", "MEAN")] * len(strategies)
     desc["ycondnames"] = [("strategy", "name")] * len(strategies)
@@ -201,7 +195,7 @@ def plot_latency_vs_cache_size(
     desc["xvals"] = cache_size_range
     desc["filter"] = {
         "topology": {"name": topology},
-        "workload": {"name": "TRACE_DRIVEN"},
+        "workload": {"name": "STATIONARY"},
     }
     desc["ymetrics"] = [("LATENCY", "MEAN")] * len(strategies)
     desc["ycondnames"] = [("strategy", "name")] * len(strategies)
@@ -235,7 +229,7 @@ def plot_cache_hits_vs_topology(
     desc["xvals"] = topology_range
     desc["filter"] = {
         "cache_placement": {"network_cache": cache_size},
-        "workload": {"name": "TRACE_DRIVEN"},
+        "workload": {"name": "STATIONARY"},
     }
     desc["ymetrics"] = [("CACHE_HIT_RATIO", "MEAN")] * len(strategies)
     desc["ycondnames"] = [("strategy", "name")] * len(strategies)
@@ -265,7 +259,7 @@ def plot_link_load_vs_cache_size(
     desc["xvals"] = cache_size_range
     desc["filter"] = {
         "topology": {"name": topology},
-        "workload": {"name": "TRACE_DRIVEN"},
+        "workload": {"name": "STATIONARY"},
     }
     desc["ymetrics"] = [("LINK_LOAD", "MEAN_INTERNAL")] * len(strategies)
     desc["ycondnames"] = [("strategy", "name")] * len(strategies)
@@ -294,7 +288,7 @@ def plot_path_stretch_vs_cache_size(
     desc["xvals"] = cache_size_range
     desc["filter"] = {
         "topology": {"name": topology},
-        "workload": {"name": "TRACE_DRIVEN"},
+        "workload": {"name": "STATIONARY"},
     }
     desc["ymetrics"] = [("PATH_STRETCH", "MEAN")] * len(strategies)
     desc["ycondnames"] = [("strategy", "name")] * len(strategies)
@@ -415,14 +409,14 @@ def run(config, results, plotdir):
     strategies = settings.STRATEGIES
     # Plot graphs
     # for topology in topologies:
-    topology = "GARR"
-    logger.info(
-        "Plotting link load for topology %s vs cache size"
-        % (topology)
-    )
-    plot_link_load_vs_cache_size(
-            resultset, topology, cache_sizes, strategies, plotdir
-    )
+    topology = "GEANT"
+    # logger.info(
+    #     "Plotting link load for topology %s vs cache size"
+    #     % (topology)
+    # )
+    # plot_link_load_vs_cache_size(
+    #         resultset, topology, cache_sizes, strategies, plotdir
+    # )
     logger.info(
         "Plotting chrcp for topology %s vs cache size"
         % (topology)
@@ -430,13 +424,13 @@ def run(config, results, plotdir):
     plot_chrcp_vs_cache_size(
             resultset, topology, cache_sizes, strategies, plotdir
     )
-    logger.info(
-        "Plotting path stretch for topology %s vs cache size"
-        % (topology)
-    )
-    plot_path_stretch_vs_cache_size(
-            resultset, topology, cache_sizes, strategies, plotdir
-    )
+    # logger.info(
+    #     "Plotting path stretch for topology %s vs cache size"
+    #     % (topology)
+    # )
+    # plot_path_stretch_vs_cache_size(
+    #         resultset, topology, cache_sizes, strategies, plotdir
+    # )
     logger.info(
         "Plotting cache hit ratio for topology %s vs cache size"
         % (topology)
