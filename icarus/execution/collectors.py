@@ -466,7 +466,7 @@ class CostCollector(DataCollector):
         tier_index = kwargs.get("tier_index") or 0
         cache_size = kwargs.get("cache_size") or None
         content_size = kwargs["size"]
-        logger.info(f"in cache_hit. tier index:{tier_index}, content_size:{content_size}, cache_size:{cache_size}")
+        # logger.info(f"in cache_hit. tier index:{tier_index}, content_size:{content_size}, cache_size:{cache_size}")
         tiers_last_access = self.view.get_last_access(node)
         
         tier = self.tiers[tier_index]
@@ -510,7 +510,7 @@ class CostCollector(DataCollector):
         server_idle_power_density =10**-12
         server_purchase_cost = 200
         server_lifespan = 5 * 365 * 24 * 60 * 60
-        logger.info(f"in server_hit.  content_size:{content_size}, server_size:{server_size}")
+        # logger.info(f"in server_hit.  content_size:{content_size}, server_size:{server_size}")
         
         # servers_last_access = self.view.get_last_access(node)
         # idle_time = max(0.0, time.time() - servers_last_access[node])
@@ -525,7 +525,7 @@ class CostCollector(DataCollector):
         cache_size = kwargs.get("cache_size") or None
         tier_index = kwargs.get("tier_index") or 0
         content_size = kwargs["size"]
-        logger.info(f"in write_content. tier index:{tier_index}, content_size:{content_size}, cache_size:{cache_size}")
+        # logger.info(f"in write_content. tier index:{tier_index}, content_size:{content_size}, cache_size:{cache_size}")
         
         tiers_last_access = self.view.get_last_access(node)
         for i, tier in enumerate(self.tiers[tier_index:], start=tier_index):

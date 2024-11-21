@@ -2122,8 +2122,8 @@ class QMARCCache(Cache):
     
     @inheritdoc(Cache)
     def dump(self):
-        t1 = {key: self._cache[key] for key in list(self.t1) if key in self._cache}
-        t2 = {key: self._cache[key] for key in list(self.t2) if key in self._cache}
+        t1 = {key: self._cache[key] for key in list(self.t1)[::-1] if key in self._cache}
+        t2 = {key: self._cache[key] for key in list(self.t2)[::-1] if key in self._cache}
         return t1, t2, list(self.b2), self.p
     
     @inheritdoc(Cache)
@@ -2131,7 +2131,7 @@ class QMARCCache(Cache):
         return k in self._cache
     
     def replace(self, **args):
-        logger.info("replace:%s"%args)
+        # logger.info("replace:%s"%args)
         k = args.get("k")
         min_content = args.get("min_content")
         """

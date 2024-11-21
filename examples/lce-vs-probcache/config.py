@@ -8,7 +8,7 @@ from icarus.util import Tree
 # GENERAL SETTINGS
 LOG_LEVEL = "INFO"
 PARALLEL_EXECUTION = False
-N_REPLICATIONS = 2
+N_REPLICATIONS = 1
 CACHING_GRANULARITY = "OBJECT"
 RESULTS_FORMAT = "PICKLE"
 
@@ -35,7 +35,9 @@ TIERS = [
     }
 ]
 
-STRATEGIES = ["LCD", "RAND_CHOICE", "COST", "LCE", "PROB_CACHE"]
+STRATEGIES = ["COST", "LCD", "RAND_CHOICE",  "LCE", "PROB_CACHE"]
+# STRATEGIES = ["COST"]
+
 PENALTY_TABLE = [
     {"delay": 2, "P0": 0.0, "P1": 0.0},        # Delay < 20 ms
     {"delay": 6, "P0": 50, "P1": 10},     # Delay < 150 ms
@@ -62,7 +64,9 @@ DATA_COLLECTORS = {
     "CHRCP" : {}
 }
 
-NETWORK_CACHE = [0.0005, 0.001, 0.01, 0.05, 0.1] # which is 5% and 10%
+NETWORK_CACHE = [0.005, 0.01, 0.05, 0.1] # which is 5% and 10%
+# NETWORK_CACHE = [0.01, 0.05, 0.1] # which is 5% and 10%
+
 # NETWORK_CACHE = [0.1] # 10%
 # NETWORK_CACHE = [0.01] # 1%
 # NETWORK_CACHE = [0.001] # 0.1%
@@ -82,9 +86,9 @@ default = Tree()
 default["workload"] = {
     "name": "STATIONARY",
     "alpha": 0.8,
-    "n_contents": 3 * 10 ** 5,
-    "n_warmup": 3 * 10 ** 5,
-    "n_measured": 6 * 10 ** 5,
+    "n_contents": 3 * 10 ** 3,
+    "n_warmup": 3 * 10 ** 3,
+    "n_measured": 6 * 10 ** 3,
     "rate": 1,
     "high_priority_rate" :0.2,
     "priority_values": ["low", "high"],
@@ -98,7 +102,13 @@ default["cache_policy"]["name"] = "QMARC"
 default["cache_policy"]["tiers"] = TIERS
 default["cache_policy"]["alpha"] = 0.3
 
-default["topology"]["name"] = "GEANT"
+# default["topology"]["name"] = "GARR"
+TOPOLOGIES = [
+    # "GEANT",
+    # "WIDE",
+    "GARR",
+    # "TISCALI",
+]
 # default["topology"]["name"] = "PATH"
 # default["topology"]["n"] = 3
 
@@ -107,17 +117,18 @@ EXPERIMENT_QUEUE = deque()
 for strategy in STRATEGIES:
     # for topology in TOPOLOGY:
     for network_cache in NETWORK_CACHE:
-        experiment = copy.deepcopy(default)
-        experiment["strategy"]["name"] = strategy
-        # experiment["topology"]["name"] = topology
-        experiment["cache_placement"]["network_cache"] = network_cache
-        if strategy in strategy_params:
-            experiment["strategy"].update(strategy_params[strategy])
-        experiment[
-            "desc"
-        ] = "Strategy: {},network cache: {}".format(
-            strategy,
-            # topology, 
-            str(network_cache),
-        )
-        EXPERIMENT_QUEUE.append(experiment)
+        for topology in TOPOLOGIES:
+            experiment = copy.deepcopy(default)
+            experiment["strategy"]["name"] = strategy
+            experiment["topology"]["name"] = topology
+            experiment["cache_placement"]["network_cache"] = network_cache
+            if strategy in strategy_params:
+                experiment["strategy"].update(strategy_params[strategy])
+            experiment[
+                "desc"
+            ] = "Strategy: {},topology: {},network cache: {}".format(
+                strategy,
+                topology, 
+                str(network_cache),
+            )
+            EXPERIMENT_QUEUE.append(experiment)

@@ -409,7 +409,7 @@ def run(config, results, plotdir):
     strategies = settings.STRATEGIES
     # Plot graphs
     # for topology in topologies:
-    topology = "GEANT"
+    topology = "GARR"
     # logger.info(
     #     "Plotting link load for topology %s vs cache size"
     #     % (topology)
