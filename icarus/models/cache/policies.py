@@ -899,11 +899,41 @@ class LruCache(Cache):
 
     @inheritdoc(Cache)
     def __init__(self, maxlen, **kwargs):
+        self._caches = kwargs["tiers"]
+        self._n_caches = len(self._caches)
         self._cache = LinkedSet()
         self._maxlen = int(maxlen)
+        self._sizes = [cache["size_factor"] * self._maxlen for cache in self._caches]
+        self._names = [cache["name"] for cache in self._caches]
+        self._tier_m_caches = self.initialize_caches()
+        
         if self._maxlen <= 0:
             raise ValueError("maxlen must be positive")
 
+    class TierMCache:
+        def __init__(self, name, maxlen):
+            self.name = name
+            self.tier_cache = LinkedSet()
+            self.tier_maxlen = maxlen
+            self.last_access = 0.0
+
+        def put(self, k, *args):
+            # if content in cache, push it on top, no eviction
+            if k in self.tier_cache:
+                self.tier_cache.move_to_top(k)
+                return None
+            # if content not in cache append it on top
+            self.tier_cache.append_top(k)
+            self.last_access = time.time()
+            return self.tier_cache.pop_bottom() if len(self.tier_cache) > self.tier_maxlen else None
+
+    def initialize_caches(self):
+        # Iterate through caches and initialize TierMCache with a reference to the next cache
+        tier_m_caches = {}
+        for i in range(self._n_caches):
+            tier_m_caches[i] = self.TierMCache(self._names[i], self._sizes[i])
+        return tier_m_caches
+    
     @inheritdoc(Cache)
     def __len__(self):
         return len(self._cache)
@@ -971,6 +1001,7 @@ class LruCache(Cache):
         # if content in cache, push it on top, no eviction
         if k in self._cache:
             self._cache.move_to_top(k)
+            self._tier_m_caches[0].tier_cache.move_to_top(k)
             return None
         # if content not in cache append it on top
         self._cache.append_top(k)
@@ -987,6 +1018,16 @@ class LruCache(Cache):
     def clear(self):
         self._cache.clear()
 
+    # def move_to_top(k):
+    #     # Move data to top of self._cache
+    #     # Move data to top of first tier
+
+    def get_tiers_last_access(self):
+        tiers_last_access = {}
+        for i in range(self._n_caches):
+            tiers_last_access[i] = self._tier_m_caches[i].last_access
+        return tiers_last_access
+    
 @register_cache_policy("SLRU")
 class SegmentedLruCache(Cache):
     """Segmented Least Recently Used (LRU) cache eviction policy.
@@ -2027,7 +2068,7 @@ class QMARCCache(Cache):
         self._caches = kwargs["tiers"]
         self._n_caches = len(self._caches)
         self._maxlen = int(maxlen)
-        self._sizes = [cache["size_factor"] * self._maxlen for cache in self._caches]
+        self._sizes = [int(cache["size_factor"] * self._maxlen) for cache in self._caches]
         self._names = [cache["name"] for cache in self._caches]
         self._tier_m_caches = self.initialize_caches()
         # logger.info(f"Cache initialized. Tiers: {self._tier_m_caches}")
@@ -2204,10 +2245,13 @@ class QMARCCache(Cache):
                     self.t2_append_by_index(k, new_pos)
                     res = True
         # logger.info(f"Cache after: {self._cache}")
-        # logger.info(f"T1 after: {self.t1}")
-        # logger.info(f"T2 after: {self.t2}")
+        logger.info(f"T1 after: {self.t1}")
+        logger.info(f"T2 after: {self.t2}")
         # logger.info(f"B1 after: {self.b1}")
         # logger.info(f"B2 after: {self.b2}")
+        for tier in self._tier_m_caches.values():
+            logger.info(f"T1 of tier {tier.name} after get: {tier.t1}")
+            logger.info(f"T2 of tier {tier.name} after get: {tier.t2}")
         return res  # Return value not found in cache
     
     @inheritdoc(Cache)
@@ -2246,10 +2290,13 @@ class QMARCCache(Cache):
                 self.t2_append_by_index(k, global_pos)
                 self._cache[k] = [True, size, priority]
             # logger.info(f"Cache after: {self._cache}")
-            # logger.info(f"T1 after: {self.t1}")
-            # logger.info(f"T2 after: {self.t2}")
+            logger.info(f"T1 after: {self.t1}")
+            logger.info(f"T2 after: {self.t2}")
             # logger.info(f"B1 after: {self.b1}")
             # logger.info(f"B2 after: {self.b2}")
+            for tier in self._tier_m_caches.values():
+                logger.info(f"T1 of tier {tier.name} after put: {tier.t1}")
+                logger.info(f"T2 of tier {tier.name} after put: {tier.t2}")
             return res
 
         # Case III: x is in B2
@@ -2271,10 +2318,13 @@ class QMARCCache(Cache):
                 self.t2_append_by_index(k, global_pos)
                 self._cache[k] = [True, size, priority]
             # logger.info(f"Cache after: {self._cache}")
-            # logger.info(f"T1 after: {self.t1}")
-            # logger.info(f"T2 after: {self.t2}")
+            logger.info(f"T1 after: {self.t1}")
+            logger.info(f"T2 after: {self.t2}")
             # logger.info(f"B1 after: {self.b1}")
             # logger.info(f"B2 after: {self.b2}")
+            for tier in self._tier_m_caches.values():
+                logger.info(f"T1 of tier {tier.name} after put: {tier.t1}")
+                logger.info(f"T2 of tier {tier.name} after put: {tier.t2}")
             return res
         
         # Case IV: x is not in (T1 u B1 u T2 u B2)
@@ -2316,10 +2366,13 @@ class QMARCCache(Cache):
             self.t1_append_by_index(k, global_pos)
             self._cache[k] = [True, size, priority]
         # logger.info(f"Cache after: {self._cache}")
-        # logger.info(f"T1 after: {self.t1}")
-        # logger.info(f"T2 after: {self.t2}")
+        logger.info(f"T1 after: {self.t1}")
+        logger.info(f"T2 after: {self.t2}")
         # logger.info(f"B1 after: {self.b1}")
         # logger.info(f"B2 after: {self.b2}")
+        for tier in self._tier_m_caches.values():
+            logger.info(f"T1 of tier {tier.name} after put: {tier.t1}")
+            logger.info(f"T2 of tier {tier.name} after put: {tier.t2}")
         return res
     
     @inheritdoc(Cache)
@@ -2377,27 +2430,27 @@ class QMARCCache(Cache):
 
     def t1_append_left(self, k):
         self.t1.append_left(k)
-        for i in range(self._n_caches):
-            a, b = self._tier_m_caches[i].put_t1(k)
+        a, b = self._tier_m_caches[0].put_t1(k)
+        for i in range(1, self._n_caches):
             if (a,b) != (None, None):
                 try:
                     if b =="t1":
-                        self._tier_m_caches[i + 1].put_t1(a)
+                        self._tier_m_caches[i].put_t1(a)
                     else:
-                        self._tier_m_caches[i + 1].put_t2(a)
+                        self._tier_m_caches[i].put_t2(a)
                 except Exception as e:
                     pass
 
     def t2_append_left(self, k):
         self.t2.append_left(k)
-        for i in range(self._n_caches):
-            a, b = self._tier_m_caches[i].put_t2(k)
+        a, b = self._tier_m_caches[0].put_t2(k)
+        for i in range(1, self._n_caches):
             if (a,b) != (None, None):
                 try:
                     if b =="t1":
-                        self._tier_m_caches[i + 1].put_t1(a)
+                        self._tier_m_caches[i].put_t1(a)
                     else:
-                        self._tier_m_caches[i + 1].put_t2(a)
+                        self._tier_m_caches[i].put_t2(a)
                 except Exception as e:
                     pass
 
@@ -2426,45 +2479,76 @@ class QMARCCache(Cache):
                 else:
                     new_index += t1_tier_length[i]
 
-        logger.info("write to t1 of %s at index = %s" % (tier_nb, new_index))
-        self._tier_m_caches[tier_nb].put_t1(k, new_index)
+        logger.info("initial index: %s, write to t1 of %s at index = %s" % (index, tier_nb, new_index))
+        a, b = self._tier_m_caches[tier_nb].put_t1(k, new_index)
+        logger.info("t1_append_by_index, a:%s, b:%s"%(a,b))
+        for i in range(tier_nb + 1, self._n_caches):
+            if (a,b) != (None, None):
+                try:
+                    logger.info(i)
+                    logger.info("here")
+                    if b =="t1":
+                        logger.info("here2")
+                        self._tier_m_caches[i].put_t1(a)
+                    else:
+                        self._tier_m_caches[i].put_t2(a)
+                except Exception as e:
+                    pass
 
     def t2_append_by_index(self, k, index):
         self.t2.append_by_index(index, k)
         t2_tier_length = []
         c_max = []
-        tier_nb = 0
 
-        for i in range (self._n_caches):
+        # Collect the lengths and maximum capacities for each tier
+        for i in range(self._n_caches):
             t2_tier_length.append(len(self._tier_m_caches[i].t2))
             c_max.append(self._tier_m_caches[i]._maxlen)
-        for i in range(len(t2_tier_length) -1, -1, -1):
-            if index <= t2_tier_length[i] != 0:
+
+        tier_nb = 0
+        new_index = index  # Default to the input index, will be adjusted below
+
+        # Calculate the correct tier and adjusted index
+        accumulated_length = 0
+        for i in range(len(t2_tier_length)):
+            tier_capacity = c_max[i]
+            current_tier_length = min(t2_tier_length[i], tier_capacity)
+
+            # Check if the index belongs in this tier
+            if index < accumulated_length + current_tier_length:
                 tier_nb = i
+                new_index = index - accumulated_length
                 break
 
-        if index == 0 or t2_tier_length[tier_nb] < c_max[tier_nb]:
-            new_index = index
-        else:
-            new_index = index - t2_tier_length[0]
-            for i in range(1, len(t2_tier_length)):
-                if new_index >= 0:
-                    break
-                else:
-                    new_index += t2_tier_length[i]
+            # Update accumulated length
+            accumulated_length += current_tier_length
 
-        logger.info("write to t2 of %s at index = %s" % (tier_nb, new_index))
-        self._tier_m_caches[tier_nb].put_t2(k, new_index)
-    
+        # Adjust new_index if it exceeds the maximum capacity of the identified tier
+        if new_index >= c_max[tier_nb]:
+            new_index = c_max[tier_nb] - 1  # Assign to the last valid position in this tier
+
+        logger.info("initial index: %s, write to t2 of tier %s at index = %s", index, tier_nb, new_index)
+
+        # Place the element in the computed position
+        a, b = self._tier_m_caches[tier_nb].put_t2(k, new_index)
+
+        # Handle promotions in subsequent tiers
+        for i in range(tier_nb + 1, self._n_caches):
+            if (a, b) != (None, None):
+                if b == "t1":
+                    self._tier_m_caches[i].put_t1(a)
+                else:
+                    self._tier_m_caches[i].put_t2(a)
+
     def increment_p(self, len_b1, len_b2):
         self.p = min(self._maxlen, self.p + max((len_b2 / len_b1) * (sum(self._beta.values())),
-                                          sum(self._beta.values())))
+                                        sum(self._beta.values())))
         for i in range(self._n_caches):
             self._tier_m_caches[i].p = min(self._tier_m_caches[i]._maxlen, self._tier_m_caches[i].p + max((len_b2 / len_b1) * self._beta[i], self._beta[i]))
 
     def decrement_p(self, len_b1, len_b2):
         self.p = max(0, self.p - max((len_b1 / len_b2) * (sum(self._beta.values())),
-                                     sum(self._beta.values())))
+                                    sum(self._beta.values())))
         for i in range(self._n_caches):
             self._tier_m_caches[i].p = max(0, self._tier_m_caches[i].p - max((len_b1 / len_b2) * self._beta[i],  self._beta[i]))
 
@@ -2537,7 +2621,7 @@ class QMARCCache(Cache):
         for i in range(self._n_caches):
             tiers_last_access[i] = self._tier_m_caches[i].last_access
         return tiers_last_access
-           
+        
         
 def insert_after_k_hits_cache(cache, k=2, memory=None):
     """Return a cache inserting items only after k requests.
