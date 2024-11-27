@@ -2026,11 +2026,10 @@ class QMARCCache(Cache):
         # logger.info(f"Initializing QMARCCache with maxlen: {maxlen} and kwargs: {kwargs}")
         self._caches = kwargs["tiers"]
         self._n_caches = len(self._caches)
-        self._maxlen = int(maxlen)
-        self._sizes = [cache["size_factor"] * self._maxlen for cache in self._caches]
+        self._maxlen = round(maxlen)
+        self._sizes = [round(cache["size_factor"] * self._maxlen) for cache in self._caches]
         self._names = [cache["name"] for cache in self._caches]
         self._tier_m_caches = self.initialize_caches()
-        # logger.info(f"Cache initialized. Tiers: {self._tier_m_caches}")
         self._cache= {}
         self.p = 0
         self.t1 = Deque()
@@ -2060,9 +2059,8 @@ class QMARCCache(Cache):
                 self.t1.append_by_index(args[0], k)
             else:
                 self.t1.append_left(k)
-            logger.info(f"put_t1: len(self.t1): {len(self.t1)} len(self.t2): {len(self.t2)}, self._maxlen: {self._maxlen}")
+            
             if len(self.t1) + len(self.t2) > self._maxlen:
-                # if len of T1 is higher than P move from T1 dram to T1 disk
                 if self.t1 and len(self.t1) > self.p:
                     old = self.t1.get_without_pop()
                     self.t1.pop()
@@ -2078,7 +2076,7 @@ class QMARCCache(Cache):
                     a, b = (old, "t1")
                 
             self.last_access = time.time()
-            return (a,b)
+            return (a, b)
         
         def put_t2(self, k, *args):
             a, b = (None, None)
@@ -2086,7 +2084,7 @@ class QMARCCache(Cache):
                 self.t2.append_by_index(args[0], k)
             else:
                 self.t2.append_left(k)
-            logger.info(f"put_t2: len(self.t1): {len(self.t1)} len(self.t2): {len(self.t2)}, self._maxlen: {self._maxlen}")
+            
             if len(self.t1) + len(self.t2) > self._maxlen:
                 # if len of T1 is higher than P move from T1 dram to T1 disk
                 if self.t1 and len(self.t1) > self.p:
@@ -2103,7 +2101,6 @@ class QMARCCache(Cache):
                     self.t1.pop()
                     a, b = (old, "t1")
 
-            
             self.last_access = time.time()
             return (a, b)
 
@@ -2134,7 +2131,6 @@ class QMARCCache(Cache):
         return k in self._cache
     
     def replace(self, **args):
-        # logger.info("replace:%s"%args)
         k = args.get("k")
         min_content = args.get("min_content")
         """
@@ -2207,8 +2203,11 @@ class QMARCCache(Cache):
                     self.t2_append_by_index(k, new_pos-1)
                     res = True
         # logger.info(f"Cache after: {self._cache}")
-        # logger.info(f"T1 after: {self.t1}")
-        # logger.info(f"T2 after: {self.t2}")
+        logger.info(f"T1 after get: {self.t1}")
+        logger.info(f"T2 after get: {self.t2}")
+        for cache in self._tier_m_caches.values():
+            logger.info(f"Tier {cache.name}, T1 after: {cache.t1}")
+            logger.info(f"Tier {cache.name}, T2 after: {cache.t2}")
         # logger.info(f"B1 after: {self.b1}")
         # logger.info(f"B2 after: {self.b2}")
         return res  # Return value not found in cache
@@ -2249,8 +2248,11 @@ class QMARCCache(Cache):
                 self.t2_append_by_index(k, global_pos)
                 self._cache[k] = [True, size, priority]
             # logger.info(f"Cache after: {self._cache}")
-            # logger.info(f"T1 after: {self.t1}")
-            # logger.info(f"T2 after: {self.t2}")
+            logger.info(f"T1 after put: {self.t1}")
+            logger.info(f"T2 after put: {self.t2}")
+            for cache in self._tier_m_caches.values():
+                logger.info(f"Tier {cache.name}, T1 after: {cache.t1}")
+                logger.info(f"Tier {cache.name}, T2 after: {cache.t2}")
             # logger.info(f"B1 after: {self.b1}")
             # logger.info(f"B2 after: {self.b2}")
             return res
@@ -2274,8 +2276,11 @@ class QMARCCache(Cache):
                 self.t2_append_by_index(k, global_pos)
                 self._cache[k] = [True, size, priority]
             # logger.info(f"Cache after: {self._cache}")
-            # logger.info(f"T1 after: {self.t1}")
-            # logger.info(f"T2 after: {self.t2}")
+            logger.info(f"T1 after put: {self.t1}")
+            logger.info(f"T2 after put: {self.t2}")
+            for cache in self._tier_m_caches.values():
+                logger.info(f"Tier {cache.name}, T1 after: {cache.t1}")
+                logger.info(f"Tier {cache.name}, T2 after: {cache.t2}")
             # logger.info(f"B1 after: {self.b1}")
             # logger.info(f"B2 after: {self.b2}")
             return res
@@ -2319,8 +2324,11 @@ class QMARCCache(Cache):
             self.t1_append_by_index(k, global_pos)
             self._cache[k] = [True, size, priority]
         # logger.info(f"Cache after: {self._cache}")
-        # logger.info(f"T1 after: {self.t1}")
-        # logger.info(f"T2 after: {self.t2}")
+        logger.info(f"T1 after put: {self.t1}")
+        logger.info(f"T2 after put: {self.t2}")
+        for cache in self._tier_m_caches.values():
+            logger.info(f"Tier {cache.name}, T1 after: {cache.t1}")
+            logger.info(f"Tier {cache.name}, T2 after: {cache.t2}")
         # logger.info(f"B1 after: {self.b1}")
         # logger.info(f"B2 after: {self.b2}")
         return res
@@ -2380,12 +2388,7 @@ class QMARCCache(Cache):
 
     def t1_append_left(self, k):
         self.t1.append_left(k)
-        logger.info(f"t1:{self.t1}")
-        logger.info(f"t2:{self.t2}")
         a, b = self._tier_m_caches[0].put_t1(k)
-        logger.info(f"tier: {self._tier_m_caches[0].name}, t1:{self._tier_m_caches[0].t1}")
-        logger.info(f"tier: {self._tier_m_caches[0].name}, t2:{self._tier_m_caches[0].t2}")
-        
         for i in range(1, self._n_caches):   
             if (a,b) != (None, None):
                 try:
@@ -2395,17 +2398,10 @@ class QMARCCache(Cache):
                         self._tier_m_caches[i].put_t2(a)
                 except Exception as e:
                     pass
-            logger.info(f"tier: {self._tier_m_caches[i].name}, t1:{self._tier_m_caches[i].t1}")
-            logger.info(f"tier: {self._tier_m_caches[i].name}, t2:{self._tier_m_caches[i].t2}") 
-
+            
     def t2_append_left(self, k):
         self.t2.append_left(k)
-        logger.info(f"t1:{self.t1}")
-        logger.info(f"t2:{self.t2}")
         a, b = self._tier_m_caches[0].put_t2(k)
-        logger.info(f"tier: {self._tier_m_caches[0].name}, t1:{self._tier_m_caches[0].t1}")
-        logger.info(f"tier: {self._tier_m_caches[0].name}, t2:{self._tier_m_caches[0].t2}")
-        
         for i in range(1, self._n_caches):
             if (a,b) != (None, None):
                 try:
@@ -2415,13 +2411,9 @@ class QMARCCache(Cache):
                         self._tier_m_caches[i].put_t2(a)
                 except Exception as e:
                     pass
-            logger.info(f"tier: {self._tier_m_caches[i].name}, t1:{self._tier_m_caches[i].t1}")
-            logger.info(f"tier: {self._tier_m_caches[i].name}, t2:{self._tier_m_caches[i].t2}")
 
     def t1_append_by_index(self, k, index):
         self.t1.append_by_index(index, k)
-        logger.info(f"t1:{self.t1}")
-        logger.info(f"t2:{self.t2}")
         t1_tier_length = []
         c_max = []
         tier_nb = 0
@@ -2445,14 +2437,10 @@ class QMARCCache(Cache):
                 break
             else:
                 new_index = index - t1_tier_length[i]
-                logger.info("t1_tier_length %s c_max %s tier_nb %s index %s" % (t1_tier_length, c_max, tier_nb, index))
                 break
 
         logger.info("write to t1 of %s at index = %s" % (tier_nb, new_index))
         a, b = self._tier_m_caches[tier_nb].put_t1(k, new_index)
-        logger.info(f"tier: {self._tier_m_caches[tier_nb].name}, t1:{self._tier_m_caches[tier_nb].t1}")
-        logger.info(f"tier: {self._tier_m_caches[tier_nb].name}, t2:{self._tier_m_caches[tier_nb].t2}")
-
         for i in range(tier_nb + 1, self._n_caches):
             if (a,b) != (None, None):
                 try:
@@ -2462,14 +2450,9 @@ class QMARCCache(Cache):
                         self._tier_m_caches[i].put_t2(a)
                 except Exception as e:
                     pass
-            logger.info(f"tier: {self._tier_m_caches[i].name}, t1:{self._tier_m_caches[i].t1}")
-            logger.info(f"tier: {self._tier_m_caches[i].name}, t2:{self._tier_m_caches[i].t2}")
-
 
     def t2_append_by_index(self, k, index):
         self.t2.append_by_index(index, k)
-        logger.info(f"t1:{self.t1}")
-        logger.info(f"t2:{self.t2}")
         t2_tier_length = []
         c_max = []
         tier_nb = 0
@@ -2493,15 +2476,11 @@ class QMARCCache(Cache):
                 break
             else:
                 new_index = index - t2_tier_length[i]
-                logger.info("t2_tier_length %s c_max %s tier_nb %s index %s" % (t2_tier_length, c_max, tier_nb, index))
                 break
         
         
         logger.info("write to t2 of %s at index = %s" % (tier_nb, new_index))
         a, b = self._tier_m_caches[tier_nb].put_t2(k, new_index)
-        logger.info(f"tier: {self._tier_m_caches[tier_nb].name}, t1:{self._tier_m_caches[tier_nb].t1}")
-        logger.info(f"tier: {self._tier_m_caches[tier_nb].name}, t2:{self._tier_m_caches[tier_nb].t2}")
-
         for i in range(tier_nb + 1, self._n_caches):
             if (a,b) != (None, None):
                 try:
@@ -2511,9 +2490,6 @@ class QMARCCache(Cache):
                         self._tier_m_caches[i].put_t2(a)
                 except Exception as e:
                     pass
-            logger.info(f"tier: {self._tier_m_caches[i].name}, t1:{self._tier_m_caches[i].t1}")
-            logger.info(f"tier: {self._tier_m_caches[i].name}, t2:{self._tier_m_caches[i].t2}")
-
     
     def increment_p(self, len_b1, len_b2):
         self.p = min(self._maxlen, self.p + max((len_b2 / len_b1) * (sum(self._beta.values())),
@@ -2550,7 +2526,6 @@ class QMARCCache(Cache):
                     break
                 else:
                     new_index += t1_tier_length[i]
-        # logger.info("write to t1 of tier %s at index = %s" % (self._tier_m_caches[tier_nb].name, new_index))
         return tier_nb
     
     def t2_get_index_tier(self, index):
@@ -2576,7 +2551,6 @@ class QMARCCache(Cache):
                     break
                 else:
                     new_index += t2_tier_length[i]
-        # logger.info("write to t2 of %s at index = %s" % (self._tier_m_caches[tier_nb].name, new_index))
         return tier_nb
 
     def get_tier_index(self, k):

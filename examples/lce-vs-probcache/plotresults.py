@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """Plot results read from a result set
 """
 import os
@@ -112,7 +111,7 @@ def plot_cache_hits_vs_cache_size(
     desc["xvals"] = cache_size_range
     desc["filter"] = {
         "topology": {"name": topology},
-        "workload": {"name": "STATIONARY"},
+        "workload": {"name": "TRACE_DRIVEN"},
     }
     desc["ymetrics"] = [("CACHE_HIT_RATIO", "MEAN")] * len(strategies)
     desc["ycondnames"] = [("strategy", "name")] * len(strategies)
@@ -141,7 +140,7 @@ def plot_cost_vs_cache_size(
     desc["xvals"] = cache_size_range
     desc["filter"] = {
         "topology": {"name": topology},
-        "workload": {"name": "STATIONARY"},
+        "workload": {"name": "TRACE_DRIVEN"},
     }
     desc["ymetrics"] = [("COST", "MEAN")] * len(strategies)
     desc["ycondnames"] = [("strategy", "name")] * len(strategies)
@@ -168,7 +167,7 @@ def plot_chrcp_vs_cache_size(
     desc["xvals"] = cache_size_range
     desc["filter"] = {
         "topology": {"name": topology},
-        "workload": {"name": "STATIONARY"},
+        "workload": {"name": "TRACE_DRIVEN"},
     }
     desc["ymetrics"] = [("CHRCP", "MEAN")] * len(strategies)
     desc["ycondnames"] = [("strategy", "name")] * len(strategies)
@@ -195,7 +194,7 @@ def plot_latency_vs_cache_size(
     desc["xvals"] = cache_size_range
     desc["filter"] = {
         "topology": {"name": topology},
-        "workload": {"name": "STATIONARY"},
+        "workload": {"name": "TRACE_DRIVEN"},
     }
     desc["ymetrics"] = [("LATENCY", "MEAN")] * len(strategies)
     desc["ycondnames"] = [("strategy", "name")] * len(strategies)
@@ -229,7 +228,7 @@ def plot_cache_hits_vs_topology(
     desc["xvals"] = topology_range
     desc["filter"] = {
         "cache_placement": {"network_cache": cache_size},
-        "workload": {"name": "STATIONARY"},
+        "workload": {"name": "TRACE_DRIVEN"},
     }
     desc["ymetrics"] = [("CACHE_HIT_RATIO", "MEAN")] * len(strategies)
     desc["ycondnames"] = [("strategy", "name")] * len(strategies)
@@ -259,7 +258,7 @@ def plot_link_load_vs_cache_size(
     desc["xvals"] = cache_size_range
     desc["filter"] = {
         "topology": {"name": topology},
-        "workload": {"name": "STATIONARY"},
+        "workload": {"name": "TRACE_DRIVEN"},
     }
     desc["ymetrics"] = [("LINK_LOAD", "MEAN_INTERNAL")] * len(strategies)
     desc["ycondnames"] = [("strategy", "name")] * len(strategies)
@@ -288,7 +287,7 @@ def plot_path_stretch_vs_cache_size(
     desc["xvals"] = cache_size_range
     desc["filter"] = {
         "topology": {"name": topology},
-        "workload": {"name": "STATIONARY"},
+        "workload": {"name": "TRACE_DRIVEN"},
     }
     desc["ymetrics"] = [("PATH_STRETCH", "MEAN")] * len(strategies)
     desc["ycondnames"] = [("strategy", "name")] * len(strategies)
@@ -404,26 +403,26 @@ def run(config, results, plotdir):
     if not os.path.exists(plotdir):
         os.makedirs(plotdir)
     # Parse params from settings
-    # topologies = settings.TOPOLOGIES
+    topologies = settings.TOPOLOGIES
     cache_sizes = settings.NETWORK_CACHE
     strategies = settings.STRATEGIES
     # Plot graphs
-    # for topology in topologies:
-    topology = "GARR"
-    # logger.info(
-    #     "Plotting link load for topology %s vs cache size"
-    #     % (topology)
-    # )
-    # plot_link_load_vs_cache_size(
-    #         resultset, topology, cache_sizes, strategies, plotdir
-    # )
-    logger.info(
-        "Plotting chrcp for topology %s vs cache size"
-        % (topology)
-    )
-    plot_chrcp_vs_cache_size(
-            resultset, topology, cache_sizes, strategies, plotdir
-    )
+    for topology in topologies:
+    # topology = "PATH"
+        # logger.info(
+        #     "Plotting link load for topology %s vs cache size"
+        #     % (topology)
+        # )
+        # plot_link_load_vs_cache_size(
+        #         resultset, topology, cache_sizes, strategies, plotdir
+        # )
+        logger.info(
+            "Plotting chrcp for topology %s vs cache size"
+            % (topology)
+        )
+        plot_chrcp_vs_cache_size(
+                resultset, topology, cache_sizes, strategies, plotdir
+        )
     # logger.info(
     #     "Plotting path stretch for topology %s vs cache size"
     #     % (topology)
@@ -431,44 +430,44 @@ def run(config, results, plotdir):
     # plot_path_stretch_vs_cache_size(
     #         resultset, topology, cache_sizes, strategies, plotdir
     # )
-    logger.info(
-        "Plotting cache hit ratio for topology %s vs cache size"
-        % (topology)
-    )
-    plot_cache_hits_vs_cache_size(
-        resultset, topology, cache_sizes, strategies, plotdir
-    )
-    logger.info(
-        "Plotting latency for topology %s vs cache size"
-        % (topology)
-    )
-    plot_latency_vs_cache_size(
-        resultset, topology, cache_sizes, strategies, plotdir
-    )
-    logger.info(
-        "Plotting cost for topology %s vs cache size"
-        % (topology)
-    )
-    plot_cost_vs_cache_size(
-        resultset, topology, cache_sizes, strategies, plotdir
-    )
+        logger.info(
+            "Plotting cache hit ratio for topology %s vs cache size"
+            % (topology)
+        )
+        plot_cache_hits_vs_cache_size(
+            resultset, topology, cache_sizes, strategies, plotdir
+        )
+        logger.info(
+            "Plotting latency for topology %s vs cache size"
+            % (topology)
+        )
+        plot_latency_vs_cache_size(
+            resultset, topology, cache_sizes, strategies, plotdir
+        )
+        logger.info(
+            "Plotting cost for topology %s vs cache size"
+            % (topology)
+        )
+        plot_cost_vs_cache_size(
+            resultset, topology, cache_sizes, strategies, plotdir
+        )
 
-    logger.info(
-        "Plotting cost componenets %s vs cache size"
-        % (topology)
-    )
-    plot_cost_components_vs_cache_size(
-    resultset, topology, cache_sizes, strategies, plotdir
-    )
+        logger.info(
+            "Plotting cost componenets %s vs cache size"
+            % (topology)
+        )
+        plot_cost_components_vs_cache_size(
+        resultset, topology, cache_sizes, strategies, plotdir
+        )
 
-    # for cache_size in cache_sizes:
-    #         logger.info(
-    #             "Plotting cache hit ratio for cache size %s vs topologies"
-    #             % (str(cache_size))
-    #         )
-    #         plot_cache_hits_vs_topology(
-    #             resultset, cache_size, topologies, strategies, plotdir
-    #         )
+        # for cache_size in cache_sizes:
+        #         logger.info(
+        #             "Plotting cache hit ratio for cache size %s vs topologies"
+        #             % (str(cache_size))
+        #         )
+        #         plot_cache_hits_vs_topology(
+        #             resultset, cache_size, topologies, strategies, plotdir
+        #         )
     logger.info("Exit. Plots were saved in directory %s" % os.path.abspath(plotdir))
 
 
