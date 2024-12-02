@@ -74,7 +74,7 @@ STRATEGY_LEGEND = {
 # Color and hatch styles for bar charts of cache hit ratio and link load vs topology
 STRATEGY_BAR_COLOR = {
     "LCE": "k",
-    "RAND_CHOICE" :"o.7",
+    "RAND_CHOICE" :"0.7",
     "LCD": "0.4",
     "PROB_CACHE": "0.5",
     "COST": "0.6",

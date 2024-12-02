@@ -35,7 +35,6 @@ __all__ = [
     "CacheLessForMore",
     "RandomBernoulli",
     "RandomChoice",
-    # "CostCache",
     "Cost",
 ]
 
@@ -476,53 +475,63 @@ class Cost(Strategy):
         self.link_energy_density = kwargs['link_energy_density']
         self.clf, self.feature_names, self.label_encoder_content = self.loadmodel("/home/lydia/icarus/examples/lce-vs-probcache/model")
         self.predictions = defaultdict(list)
+        self.distance = dict(
+            nx.all_pairs_dijkstra_path_length(self.view.topology(), weight="delay")
+        )
         
     @inheritdoc(Strategy)
     def process_event(self, time, receiver, content, size, priority, log):
-        source = self.view.content_source(content)
-        path = self.view.shortest_path(receiver, source)
+        locations = self.view.content_locations(content)
+        serving_node = min(locations, key=lambda x: self.distance[receiver][x])
+        
+        # source = self.view.content_source(content)
+        # path = self.view.shortest_path(receiver, source)
         self.controller.start_session(time, receiver, content, log, priority)
-        for u, v in path_links(path):
-            self.controller.forward_request_hop(u, v)
-            if self.view.has_cache(v):
-                if self.controller.get_content(v, size=size):
-                    serving_node = v
-                    break
-        else:
-            self.controller.get_content(v, tier_index=0, size=size)
-            serving_node = v
+        self.controller.get_content(serving_node, size=size)
+        # for u, v in path_links(path):
+        #     self.controller.forward_request_hop(u, v)
+        #     if self.view.has_cache(v):
+        #         if self.controller.get_content(v, size=size):
+        #             serving_node = v
+        #             break
+        # else:
+        #     self.controller.get_content(v, tier_index=0, size=size)
+        #     serving_node = v
         path = list(reversed(self.view.shortest_path(receiver, serving_node)))
         for u, v in path_links(path):
             self.controller.forward_content_hop(u, v, main_path=True, size=size)
             # we are at node v
             if self.view.has_cache(v):
-                cache_dump_t1, cache_dump_t2, b2, p = self.view.cache_dump(v)
-                t1 = list(cache_dump_t1.keys()) if cache_dump_t1 else []
-                t2 = list(cache_dump_t2.keys()) if cache_dump_t2 else []
-                if t1 and ((content in b2 and len(t1) == p) or (len(t1) > p)):
-                    cache_dump = t1
-                    cache_dump_dict = cache_dump_t1
-                else:
-                    cache_dump = t2
-                    cache_dump_dict = cache_dump_t2
+                is_reaccessed = self._predict_event(time, content, size, priority)
+                if is_reaccessed:
+                    logger.info("popular")
 
-                if cache_dump.__len__() == self.cache_size[v]:
-                    is_reaccessed = self._predict_event(time, content, size, priority)
-                    if is_reaccessed:
-                        logger.info("popular")
+                    cache_dump_t1, cache_dump_t2, b2, p, cache_lenghth = self.view.cache_dump(v)
+                    t1 = list(cache_dump_t1.keys()) if cache_dump_t1 else []
+                    t2 = list(cache_dump_t2.keys()) if cache_dump_t2 else []
+                    if t1 and ((content in b2 and len(t1) == p) or (len(t1) > p)):
+                        cache_dump = t1
+                        cache_dump_dict = cache_dump_t1
+                    else:
+                        cache_dump = t2
+                        cache_dump_dict = cache_dump_t2
+
+                    if cache_lenghth == self.cache_size[v]:
                         paths = {}
                         for c in cache_dump[:int(max(1, 0.1 * len(cache_dump)))]:
                             # look for source of data c in node v
-                            c_source = self.view.content_source(c)
+                            c_locations = self.view.content_locations(c)
+                            c_serving_node = min(c_locations, key=lambda x: self.distance[v][x])
+                            # c_source = self.view.content_source(c)
                             # look for path from node v to the src of data c
-                            c_path = self.view.shortest_path(v, c_source)
-                            for c_u, c_v in path_links(c_path):
-                                if self.view.has_cache(c_v):
-                                    if self.view.cache_lookup(c_v, c):
-                                        c_serving_node = c_v
-                                        break
-                            else:
-                                c_serving_node = c_v
+                            # c_path = self.view.shortest_path(v, c_source)
+                            # for c_u, c_v in path_links(c_path):
+                            #     if self.view.has_cache(c_v):
+                            #         if self.view.cache_lookup(c_v, c):
+                            #             c_serving_node = c_v
+                            #             break
+                            # else:
+                            #     c_serving_node = c_v
                             c_size = cache_dump_dict[c][1]
                             c_priority = cache_dump_dict[c][2]
                             c_gain = self.storage_gain(list(reversed(self.view.shortest_path(v, c_serving_node))), c_size, c_priority)
@@ -533,7 +542,6 @@ class Cost(Strategy):
                             min_content, min_gain = min(paths.items(), key=lambda x: x[1])
                             min_size = cache_dump_dict[min_content][1]
                             min_priority = cache_dump_dict[min_content][2]
-    
                             # calculate storage loss
                             storage_loss = self.storage_loss(v, content, size, min_gain)
                             # calculate storage gain
@@ -547,12 +555,13 @@ class Cost(Strategy):
                                 logger.info("cost is not for it")
                         else:
                             logger.info("no paths")
-                            self.controller.put_content(v, tier_index=0, size=size, priority=priority)
+                            tier_index = self.controller.get_tier_index(v, content)
+                            self.controller.put_content(v, tier_index=tier_index, size=size, priority=priority)
                     else:
-                        logger.info("other")
+                        tier_index = self.controller.get_tier_index(v, content)
+                        self.controller.put_content(v, tier_index=tier_index, size=size, priority=priority)
                 else:
-                    tier_index = self.controller.get_tier_index(v, content)
-                    self.controller.put_content(v, tier_index=tier_index, size=size, priority=priority)
+                    logger.info("other")
         self.controller.end_session()
     
     def loadmodel(self, model_filename):
@@ -571,6 +580,118 @@ class Cost(Strategy):
                 
         return clf, feature_names, label_encoder_content 
 
+    def storage_gain(self, path, content_size, priority) -> float:
+        storage_gain = self.bandwidth_cost(path, content_size) + self.transmission_energy_cost(path, content_size) + self.penalty_cost(path, priority)    
+        return storage_gain
+    
+    def storage_loss(self, receiver, content, content_size, min_value) -> float:
+        tier_index = self.controller.get_tier_index(receiver, content)
+        storage_loss = self.depreciation_cost(tier_index, receiver, content_size) + self.storage_energy_cost(tier_index, receiver, content_size) + min_value    
+        return storage_loss
+        
+    def depreciation_cost(self, tier_index, receiver, content_size) -> float: 
+        depreciation_cost = 0.0
+        cache_maxlen = self.cache_size[receiver]
+        for tier in self.tiers[tier_index:]:
+            tier_max_capacity = round(tier['size_factor'] * cache_maxlen)
+            tier_purchase_cost = tier['purchase_cost']
+            tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
+
+            depreciation_cost += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity)
+        return depreciation_cost
+
+    def storage_energy_cost(self, tier_index, receiver, content_size) -> float:
+        tiers_last_access = self.view.get_last_access(receiver)
+        
+        tier = self.tiers[tier_index]
+        tier_active_power_density  = tier['active_caching_power_density']
+        tier_idle_power_density = tier['idle_power_density']
+       
+        idle_time = max(0.0, time.time() - tiers_last_access[tier_index])
+
+        read_time = tier['latency'] + content_size / tier['read_throughput']
+        energy_cost = ((tier_idle_power_density * idle_time) + (tier_active_power_density * read_time * content_size)) * self.cost_per_joule
+        
+        for i, tier in enumerate(self.tiers[tier_index:], start=tier_index):
+            tier_active_power_density  = tier['active_caching_power_density']
+            tier_idle_power_density = tier['idle_power_density']
+            
+            idle_time = max(0.0, time.time() - tiers_last_access[i])
+            
+            write_time = tier['latency'] + content_size / tier['write_throughput']
+            energy_cost += ((tier_idle_power_density * idle_time) + (tier_active_power_density * write_time * content_size)) * self.cost_per_joule
+        
+        return energy_cost 
+
+    def penalty_cost(self, path, priority) -> float:
+        latency = 2 * sum(self.view.link_delay(u, v) for u, v in path_links(path))
+        for entry in self.penalty_table:
+            if latency <= entry["delay"]:
+                if priority == "high":
+                    return entry["P0"] * 1e-8 
+                elif priority == "low":
+                    return entry["P1"] * 1e-8 
+                return
+
+        # If no penalty threshold matches, raise an error (this should not happen)
+        raise ValueError(f"Latency {latency} is out of range for priority {priority}.")
+        
+    def transmission_energy_cost(self, path, content_size) -> float:
+        nodes_energy_cost = (len(path) + 1) * content_size * self.router_energy_density * self.cost_per_joule
+        links_energy_cost = len(path) * content_size * self.link_energy_density * self.cost_per_joule        
+        return nodes_energy_cost + links_energy_cost
+
+    def bandwidth_cost(self, path, content_size) -> float:
+        return len(path) * content_size * self.cost_per_bit
+
+    def print_costs(self, path, priority, node, receiver, content, content_size, min_value, min_content, min_size, min_priority):
+        tier_index = self.controller.get_tier_index(node, content)
+        depreciation_cost = 0.0
+        cache_maxlen = self.cache_size[node]
+        for tier in self.tiers[tier_index:]:
+            tier_max_capacity = round(tier['size_factor'] * cache_maxlen)
+            tier_purchase_cost = tier['purchase_cost']
+            tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
+
+            depreciation_cost += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity)
+        
+        tiers_last_access = self.view.get_last_access(node)
+        
+        tier = self.tiers[tier_index]
+        tier_active_power_density  = tier['active_caching_power_density']
+        tier_idle_power_density = tier['idle_power_density']
+       
+        idle_time = max(0.0, time.time() - tiers_last_access[tier_index])
+
+        read_time = tier['latency'] + content_size / tier['read_throughput']
+        energy_cost = ((tier_idle_power_density * idle_time) + (tier_active_power_density * read_time * content_size)) * self.cost_per_joule
+        
+        for i, tier in enumerate(self.tiers[tier_index:], start=tier_index):
+            tier_active_power_density  = tier['active_caching_power_density']
+            tier_idle_power_density = tier['idle_power_density']
+            
+            idle_time = max(0.0, time.time() - tiers_last_access[i])
+            
+            write_time = tier['latency'] + content_size / tier['write_throughput']
+            energy_cost += ((tier_idle_power_density * idle_time) + (tier_active_power_density * write_time * content_size)) * self.cost_per_joule
+        
+        bandwidth_cost = len(path) * content_size * self.cost_per_bit
+        nodes_energy_cost = (len(path) + 1) * content_size * self.router_energy_density * self.cost_per_joule
+        links_energy_cost = len(path) * content_size * self.link_energy_density * self.cost_per_joule
+        latency = 2 * sum(self.view.link_delay(u, v) for u, v in path_links(path))
+        for entry in self.penalty_table:
+            if latency <= entry["delay"]:
+                if priority == "high":
+                    penalty = entry["P0"] * 1e-8 
+                elif priority == "low":
+                    penalty = entry["P1"] * 1e-8 
+        total = depreciation_cost + energy_cost + bandwidth_cost + nodes_energy_cost + links_energy_cost + penalty
+        logger.info(f"content:{content},content_size:{content_size},priority:{priority}, min_content:{min_content},min_size:{min_size},min_priority:{min_priority}")
+        logger.info("storage_loss = depreciation_cost %s + storage_energy_cost %s + min_value %s = %s"%(depreciation_cost, energy_cost, min_value, depreciation_cost+ energy_cost+ min_value))
+        logger.info("storage_gain = bandwidth_cost %s + transmission_energy_cost %s + penalty_cost %s = %s"%(bandwidth_cost,nodes_energy_cost+links_energy_cost,penalty, bandwidth_cost + nodes_energy_cost+links_energy_cost+penalty))    
+        logger.info("ESTIMATED: node:%s,receiver:%s, routers:%s, links:%s, penalty:%s, min_loss:%s, total:%s "%
+                    (node, receiver, nodes_energy_cost, links_energy_cost, penalty, min_value, total))           
+   
     def modeltraining(self, traces_directory):
         # # Initialize XGBoost model
 
@@ -715,114 +836,3 @@ class Cost(Strategy):
 
         return accuracy, precision, recall, f1
     
-    def storage_gain(self, path, content_size, priority) -> float:
-        storage_gain = self.bandwidth_cost(path, content_size) + self.transmission_energy_cost(path, content_size) + self.penalty_cost(path, priority)    
-        return storage_gain
-    
-    def storage_loss(self, receiver, content, content_size, min_value) -> float:
-        tier_index = self.controller.get_tier_index(receiver, content)
-        storage_loss = self.depreciation_cost(tier_index, receiver, content_size) + self.storage_energy_cost(tier_index, receiver, content_size) + min_value    
-        return storage_loss
-    
-    def print_costs(self, path, priority, node, receiver, content, content_size, min_value, min_content, min_size, min_priority):
-        tier_index = self.controller.get_tier_index(node, content)
-        depreciation_cost = 0.0
-        cache_maxlen = self.cache_size[node]
-        for tier in self.tiers[tier_index:]:
-            tier_max_capacity = tier['size_factor'] * cache_maxlen
-            tier_purchase_cost = tier['purchase_cost']
-            tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
-
-            depreciation_cost += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity)
-        
-        tiers_last_access = self.view.get_last_access(node)
-        
-        tier = self.tiers[tier_index]
-        tier_active_power_density  = tier['active_caching_power_density']
-        tier_idle_power_density = tier['idle_power_density']
-       
-        idle_time = max(0.0, time.time() - tiers_last_access[tier_index])
-
-        read_time = tier['latency'] + content_size / tier['read_throughput']
-        energy_cost = ((tier_idle_power_density * idle_time) + (tier_active_power_density * read_time * content_size)) * self.cost_per_joule
-        
-        for i, tier in enumerate(self.tiers[tier_index:], start=tier_index):
-            tier_active_power_density  = tier['active_caching_power_density']
-            tier_idle_power_density = tier['idle_power_density']
-            
-            idle_time = max(0.0, time.time() - tiers_last_access[i])
-            
-            write_time = tier['latency'] + content_size / tier['write_throughput']
-            energy_cost += ((tier_idle_power_density * idle_time) + (tier_active_power_density * write_time * content_size)) * self.cost_per_joule
-        
-        bandwidth_cost = len(path) * content_size * self.cost_per_bit
-        nodes_energy_cost = (len(path) + 1) * content_size * self.router_energy_density * self.cost_per_joule
-        links_energy_cost = len(path) * content_size * self.link_energy_density * self.cost_per_joule
-        latency = 2 * sum(self.view.link_delay(u, v) for u, v in path_links(path))
-        for entry in self.penalty_table:
-            if latency <= entry["delay"]:
-                if priority == "high":
-                    penalty = entry["P0"] * 1e-8 
-                elif priority == "low":
-                    penalty = entry["P1"] * 1e-8 
-        total = depreciation_cost + energy_cost + bandwidth_cost + nodes_energy_cost + links_energy_cost + penalty
-        logger.info(f"content:{content},content_size:{content_size},priority:{priority}, min_content:{min_content},min_size:{min_size},min_priority:{min_priority}")
-        logger.info("storage_loss = depreciation_cost %s + storage_energy_cost %s + min_value %s = %s"%(depreciation_cost, energy_cost, min_value, depreciation_cost+ energy_cost+ min_value))
-        logger.info("storage_gain = bandwidth_cost %s + transmission_energy_cost %s + penalty_cost %s = %s"%(bandwidth_cost,nodes_energy_cost+links_energy_cost,penalty, bandwidth_cost + nodes_energy_cost+links_energy_cost+penalty))    
-        logger.info("ESTIMATED: node:%s,receiver:%s, routers:%s, links:%s, penalty:%s, min_loss:%s, total:%s "%
-                    (node, receiver, nodes_energy_cost, links_energy_cost, penalty, min_value, total))           
-        
-    def depreciation_cost(self, tier_index, receiver, content_size) -> float: 
-        depreciation_cost = 0.0
-        cache_maxlen = self.cache_size[receiver]
-        for tier in self.tiers[tier_index:]:
-            tier_max_capacity = tier['size_factor'] * cache_maxlen
-            tier_purchase_cost = tier['purchase_cost']
-            tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
-
-            depreciation_cost += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity)
-        return depreciation_cost
-
-    def storage_energy_cost(self, tier_index, receiver, content_size) -> float:
-        tiers_last_access = self.view.get_last_access(receiver)
-        
-        tier = self.tiers[tier_index]
-        tier_active_power_density  = tier['active_caching_power_density']
-        tier_idle_power_density = tier['idle_power_density']
-       
-        idle_time = max(0.0, time.time() - tiers_last_access[tier_index])
-
-        read_time = tier['latency'] + content_size / tier['read_throughput']
-        energy_cost = ((tier_idle_power_density * idle_time) + (tier_active_power_density * read_time * content_size)) * self.cost_per_joule
-        
-        for i, tier in enumerate(self.tiers[tier_index:], start=tier_index):
-            tier_active_power_density  = tier['active_caching_power_density']
-            tier_idle_power_density = tier['idle_power_density']
-            
-            idle_time = max(0.0, time.time() - tiers_last_access[i])
-            
-            write_time = tier['latency'] + content_size / tier['write_throughput']
-            energy_cost += ((tier_idle_power_density * idle_time) + (tier_active_power_density * write_time * content_size)) * self.cost_per_joule
-        
-        return energy_cost 
-
-    def penalty_cost(self, path, priority) -> float:
-        latency = 2 * sum(self.view.link_delay(u, v) for u, v in path_links(path))
-        for entry in self.penalty_table:
-            if latency <= entry["delay"]:
-                if priority == "high":
-                    return entry["P0"] * 1e-8 
-                elif priority == "low":
-                    return entry["P1"] * 1e-8 
-                return
-
-        # If no penalty threshold matches, raise an error (this should not happen)
-        raise ValueError(f"Latency {latency} is out of range for priority {priority}.")
-        
-    def transmission_energy_cost(self, path, content_size) -> float:
-        nodes_energy_cost = (len(path) + 1) * content_size * self.router_energy_density * self.cost_per_joule
-        links_energy_cost = len(path) * content_size * self.link_energy_density * self.cost_per_joule        
-        return nodes_energy_cost + links_energy_cost
-
-    def bandwidth_cost(self, path, content_size) -> float:
-        return len(path) * content_size * self.cost_per_bit

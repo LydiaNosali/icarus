@@ -8,7 +8,7 @@ from icarus.util import Tree
 # GENERAL SETTINGS
 LOG_LEVEL = "INFO"
 PARALLEL_EXECUTION = True
-N_REPLICATIONS = 2
+N_REPLICATIONS = 1
 CACHING_GRANULARITY = "OBJECT"
 RESULTS_FORMAT = "PICKLE"
 
@@ -35,10 +35,8 @@ TIERS = [
     }
 ]
 
-STRATEGIES = [ "COST", "LCD","RAND_CHOICE", "LCE", "PROB_CACHE"]
-# POLICIES = ["QMARC"]
+STRATEGIES = ["COST", "LCD","RAND_CHOICE", "LCE", "PROB_CACHE"]
 # STRATEGIES = ["COST"]
-POLICIES = ["QMARC", "QMARC", "QMARC", "QMARC", "QMARC"]
 
 
 PENALTY_TABLE = [
@@ -67,8 +65,8 @@ DATA_COLLECTORS = {
     "CHRCP" : {}
 }
 
-# NETWORK_CACHE = [0.001, 0.005, 0.01, 0.02, 0.05, 0.08, 0.1, 0.5, 0.8, 1.0] # which is 5% and 10%
-NETWORK_CACHE = [0.2, 0.3] # which is 5% and 10%
+NETWORK_CACHE = [0.001, 0.005, 0.01, 0.02, 0.05, 0.08, 0.1, 0.5, 0.8, 1.0] # which is 5% and 10%
+# NETWORK_CACHE = [0.005, 0.01] # which is 5% and 10%
 
 # NETWORK_CACHE = [0.1] # 10%
 # NETWORK_CACHE = [0.01] # 1%
@@ -88,7 +86,7 @@ default["workload"] = {
 
 # default["workload"] = {
 #     "name": "STATIONARY",
-#     "alpha": 1.2,
+#     "alpha": 0.8,
 #     "n_contents": 3 * 10 ** 3,
 #     "n_warmup": 3 * 10 ** 3,
 #     "n_measured": 6 * 10 ** 3,
@@ -101,37 +99,40 @@ default["workload"] = {
 
 default["content_placement"]["name"] = "UNIFORM"
 default["cache_placement"]["name"] = "UNIFORM"
-# default["cache_policy"]["name"] = "QMARC"
+default["cache_policy"]["name"] = "QMARC" 
 default["cache_policy"]["tiers"] = TIERS
 default["cache_policy"]["alpha"] = 0.3
 
-# default["topology"]["name"] = "WIDE"
 TOPOLOGIES = [
-    # "GEANT",
-    # "WIDE",
-    # "GARR",
+    "PATH",
+    "GEANT",
+    "WIDE",
+    "GARR",
     "TISCALI",
 ]
-# default["topology"]["name"] = "PATH"
-# default["topology"]["n"] = 3
+topology_params = {
+    "PATH": {
+        "n" : 3,
+    }
+}
 
 # Create experiment configuration
 EXPERIMENT_QUEUE = deque()
-for strategy, policy in zip(STRATEGIES, POLICIES):
+for strategy in STRATEGIES:
     for network_cache in NETWORK_CACHE:
         for topology in TOPOLOGIES:
             experiment = copy.deepcopy(default)
             experiment["strategy"]["name"] = strategy
-            experiment["cache_policy"]["name"] = policy  # Include the policy corresponding to the strategy
             experiment["topology"]["name"] = topology
             experiment["cache_placement"]["network_cache"] = network_cache
             if strategy in strategy_params:
                 experiment["strategy"].update(strategy_params[strategy])
+            if topology in topology_params:
+                experiment["topology"].update(topology_params[topology])
             experiment[
                 "desc"
-            ] = "Strategy: {}, Policy: {}, Topology: {}, Network cache: {}".format(
+            ] = "Strategy: {}, Topology: {}, Network cache: {}".format(
                 strategy,
-                policy,
                 topology, 
                 str(network_cache),
             )

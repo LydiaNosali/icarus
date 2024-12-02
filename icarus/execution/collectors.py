@@ -477,7 +477,7 @@ class CostCollector(DataCollector):
 
         read_time = tier['latency'] + content_size / tier['read_throughput']
         if cache_size:
-            tier_max_capacity = tier['size_factor'] * cache_size
+            tier_max_capacity = round(tier['size_factor'] * cache_size)
             tier_purchase_cost = tier['purchase_cost']
             tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
             
@@ -492,7 +492,7 @@ class CostCollector(DataCollector):
             
             write_time = tier['latency'] + content_size / tier['write_throughput']
             if cache_size:
-                tier_max_capacity = tier['size_factor'] * cache_size
+                tier_max_capacity = round(tier['size_factor'] * cache_size)
                 tier_purchase_cost = tier['purchase_cost']
                 tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
 
@@ -536,7 +536,7 @@ class CostCollector(DataCollector):
             
             write_time = tier['latency'] + content_size / tier['write_throughput']
             if cache_size:
-                tier_max_capacity = tier['size_factor'] * cache_size
+                tier_max_capacity = round(tier['size_factor'] * cache_size)
                 tier_purchase_cost = tier['purchase_cost']
                 tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
 

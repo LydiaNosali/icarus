@@ -2124,7 +2124,7 @@ class QMARCCache(Cache):
     def dump(self):
         t1 = {key: self._cache[key] for key in list(self.t1)[::-1] if key in self._cache}
         t2 = {key: self._cache[key] for key in list(self.t2)[::-1] if key in self._cache}
-        return t1, t2, list(self.b2), self.p
+        return t1, t2, list(self.b2), self.p, self._cache.__len__()
     
     @inheritdoc(Cache)
     def has(self, k, *args, **kwargs):
