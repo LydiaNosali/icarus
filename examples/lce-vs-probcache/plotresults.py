@@ -155,31 +155,57 @@ def plot_cost_vs_cache_size(
         resultset, desc, "COST_T={}.jpg".format(topology), plotdir
     )
 
-def plot_chrcp_vs_cache_size(
-    resultset, topology, cache_size_range, strategies, plotdir
-):
-    desc = {}
-    desc["title"] = "CHRCP: T={}".format(topology)
-    desc["xlabel"] = "Cache to population ratio"
-    desc["ylabel"] = "CHRCP"
-    desc["xscale"] = "log"
-    desc["xparam"] = ("cache_placement", "network_cache")
-    desc["xvals"] = cache_size_range
-    desc["filter"] = {
+def plot_chrcp_vs_cache_size(resultset, topology, cache_size_range, strategies, plotdir):
+    # Step 1: Filter results for the LCE strategy, specified topology, and CHRCP metric
+    lce_filtered = resultset.filter({
         "topology": {"name": topology},
-        "workload": {"name": "TRACE_DRIVEN"},
+        "strategy": {"name": "LCE"},
+        "CHRCP": {}
+    })
+    
+    # Step 2: Create a dictionary of LCE CHRCP values for normalization
+    lce_chrcp = {
+        res[0].get("cache_placement").get("network_cache"): res[1].get("CHRCP").get("MEAN")
+        for res in lce_filtered
+        if res[1].get("CHRCP").get("MEAN") is not None
     }
-    desc["ymetrics"] = [("CHRCP", "MEAN")] * len(strategies)
-    desc["ycondnames"] = [("strategy", "name")] * len(strategies)
-    desc["ycondvals"] = strategies
-    desc["metric"] = ("CHRCP", "MEAN")
-    desc["errorbar"] = True
-    desc["legend_loc"] = "upper right"
-    desc["line_style"] = STRATEGY_STYLE
-    desc["legend"] = STRATEGY_LEGEND
-    desc["plotempty"] = PLOT_EMPTY_GRAPHS
+    
+    if not lce_chrcp:
+        logger.error("No LCE CHRCP values found for normalization.")
+        return
+    
+    # Step 3: Normalize the resultset based on LCE CHRCP values
+    for entry, metrics in resultset:
+        cache_size = entry.get("cache_placement", {}).get("network_cache")
+        if cache_size in lce_chrcp and metrics.get("CHRCP", {}).get("MEAN") is not None:
+            normalized_value = metrics["CHRCP"]["MEAN"] / lce_chrcp[cache_size]
+            metrics["CHRCP"]["MEAN"] = normalized_value
+    
+    # Step 4: Plot the normalized CHRCP results
+    desc = {
+        "title": f"Normalized CHRCP: T={topology}",
+        "xlabel": "Cache to population ratio",
+        "ylabel": "Normalized CHRCP (relative to LCE)",
+        "xscale": "log",
+        "xparam": ("cache_placement", "network_cache"),
+        "xvals": cache_size_range,
+        "filter": {
+            "topology": {"name": topology},
+            "workload": {"name": "TRACE_DRIVEN"},
+        },
+        "ymetrics": [("CHRCP", "MEAN")] * len(strategies),
+        "ycondnames": [("strategy", "name")] * len(strategies),
+        "ycondvals": strategies,
+        "metric": ("CHRCP", "MEAN"),
+        "errorbar": True,
+        "legend_loc": "upper right",
+        "line_style": STRATEGY_STYLE,
+        "legend": STRATEGY_LEGEND,
+        "plotempty": PLOT_EMPTY_GRAPHS,
+    }
+    
     plot_lines(
-        resultset, desc, "CHRCP_T={}.jpg".format(topology), plotdir
+        resultset, desc, f"Normalized_CHRCP_T={topology}.jpg", plotdir
     )
 
 def plot_latency_vs_cache_size(
