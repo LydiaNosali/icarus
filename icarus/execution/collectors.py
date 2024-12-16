@@ -465,6 +465,18 @@ class CostCollector(DataCollector):
     def cache_hit(self, node, **kwargs):
         tier_index = kwargs.get("tier_index") or 0
         cache_size = kwargs.get("cache_size") or None
+        for tier in self.tiers:
+            tier['actual_size'] = round(tier['size_factor'] * cache_size)
+            
+        # Ensure the first tier does not end up with zero size
+        if self.tiers[0]['actual_size'] == 0:
+            self.tiers[0]['actual_size'] = 1
+            for i in range(1, len(self.tiers)):
+                if self.tiers[i]['actual_size'] > 0:
+                    self.tiers[i]['actual_size'] -= 1
+                    break
+        # Filter out tiers with zero actual size
+        self.tiers = [tier for tier in self.tiers if tier['actual_size'] > 0]
         content_size = kwargs["size"]
         # logger.info(f"in cache_hit. tier index:{tier_index}, content_size:{content_size}, cache_size:{cache_size}")
         tiers_last_access = self.view.get_last_access(node)
@@ -476,12 +488,11 @@ class CostCollector(DataCollector):
         idle_time = max(0.0, time.time() - tiers_last_access[tier_index])
 
         read_time = tier['latency'] + content_size / tier['read_throughput']
-        if cache_size:
-            tier_max_capacity = round(tier['size_factor'] * cache_size)
-            tier_purchase_cost = tier['purchase_cost']
-            tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
-            
-            self.sess_depreciation_cost += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity)
+        tier_max_capacity = tier['actual_size']
+        tier_purchase_cost = tier['purchase_cost']
+        tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
+        
+        self.sess_depreciation_cost += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity)
         self.sess_get_storage_energy_cost += ((tier_idle_power_density * idle_time) + (tier_active_power_density * read_time * content_size)) * self.cost_per_joule
         
         for i, tier in enumerate(self.tiers[tier_index:], start=tier_index):
@@ -491,12 +502,11 @@ class CostCollector(DataCollector):
             idle_time = max(0.0, time.time() - tiers_last_access[i])
             
             write_time = tier['latency'] + content_size / tier['write_throughput']
-            if cache_size:
-                tier_max_capacity = round(tier['size_factor'] * cache_size)
-                tier_purchase_cost = tier['purchase_cost']
-                tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
+            tier_max_capacity = tier['actual_size']
+            tier_purchase_cost = tier['purchase_cost']
+            tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
 
-                self.sess_depreciation_cost += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity)
+            self.sess_depreciation_cost += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity)
             self.sess_get_storage_energy_cost += ((tier_idle_power_density * idle_time) + (tier_active_power_density * write_time * content_size)) * self.cost_per_joule
 
     @inheritdoc(DataCollector)
@@ -522,7 +532,18 @@ class CostCollector(DataCollector):
         
     @inheritdoc(DataCollector)
     def write_content(self, node, **kwargs):
-        cache_size = kwargs.get("cache_size") or None
+        cache_size = kwargs.get("cache_size")
+        for tier in self.tiers:
+            tier['actual_size'] = round(tier['size_factor'] * cache_size)
+        # Ensure the first tier does not end up with zero size
+        if self.tiers[0]['actual_size'] == 0:
+            self.tiers[0]['actual_size'] = 1
+            for i in range(1, len(self.tiers)):
+                if self.tiers[i]['actual_size'] > 0:
+                    self.tiers[i]['actual_size'] -= 1
+                    break
+        # Filter out tiers with zero actual size
+        self.tiers = [tier for tier in self.tiers if tier['actual_size'] > 0]
         tier_index = kwargs.get("tier_index") or 0
         content_size = kwargs["size"]
         # logger.info(f"in write_content. tier index:{tier_index}, content_size:{content_size}, cache_size:{cache_size}")
@@ -535,12 +556,11 @@ class CostCollector(DataCollector):
             idle_time = max(0.0, time.time() - tiers_last_access[i])
             
             write_time = tier['latency'] + content_size / tier['write_throughput']
-            if cache_size:
-                tier_max_capacity = round(tier['size_factor'] * cache_size)
-                tier_purchase_cost = tier['purchase_cost']
-                tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
+            tier_max_capacity = tier['actual_size']
+            tier_purchase_cost = tier['purchase_cost']
+            tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
 
-                self.sess_depreciation_cost += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity)
+            self.sess_depreciation_cost += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity)
             self.sess_put_storage_energy_cost += ((tier_idle_power_density * idle_time) + (tier_active_power_density * write_time * content_size)) * self.cost_per_joule
 
     @inheritdoc(DataCollector)
@@ -609,7 +629,7 @@ class CHRCPCollector(DataCollector):
     def results(self):
         results = Tree(
             {
-            "MEAN": chrcp["cost"]/chrcp["chr"]
+            "MEAN": chrcp["cost"]/chrcp["chr"] if chrcp["chr"] != 0 else 0
             })
         return results
     

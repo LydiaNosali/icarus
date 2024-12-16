@@ -469,6 +469,20 @@ class Cost(Strategy):
         self.cache_size = view.cache_nodes(size=True)
         self.penalty_table = kwargs['penalty_table']
         self.tiers = kwargs['tiers']
+        for _, value in self.cache_size.items():
+            for tier in self.tiers:
+                tier['actual_size'] = round(tier['size_factor'] * value)
+        
+            # Ensure the first tier does not end up with zero size
+            if self.tiers[0]['actual_size'] == 0:
+                self.tiers[0]['actual_size'] = 1
+                for i in range(1, len(self.tiers)):
+                    if self.tiers[i]['actual_size'] > 0:
+                        self.tiers[i]['actual_size'] -= 1
+                        break
+            
+            # Filter out tiers with zero actual size
+            self.tiers = [tier for tier in self.tiers if tier['actual_size'] > 0]
         self.cost_per_joule = kwargs['cost_per_joule']
         self.cost_per_bit = kwargs['cost_per_bit']
         self.router_energy_density = kwargs['router_energy_density']
@@ -481,22 +495,18 @@ class Cost(Strategy):
         
     @inheritdoc(Strategy)
     def process_event(self, time, receiver, content, size, priority, log):
-        locations = self.view.content_locations(content)
-        serving_node = min(locations, key=lambda x: self.distance[receiver][x])
-        
-        # source = self.view.content_source(content)
-        # path = self.view.shortest_path(receiver, source)
+        source = self.view.content_source(content)
+        path = self.view.shortest_path(receiver, source)
         self.controller.start_session(time, receiver, content, log, priority)
-        self.controller.get_content(serving_node, size=size)
-        # for u, v in path_links(path):
-        #     self.controller.forward_request_hop(u, v)
-        #     if self.view.has_cache(v):
-        #         if self.controller.get_content(v, size=size):
-        #             serving_node = v
-        #             break
-        # else:
-        #     self.controller.get_content(v, tier_index=0, size=size)
-        #     serving_node = v
+        for u, v in path_links(path):
+            self.controller.forward_request_hop(u, v)
+            if self.view.has_cache(v):
+                if self.controller.get_content(v, size=size):
+                    serving_node = v
+                    break
+        else:
+            self.controller.get_content(v, tier_index=0, size=size)
+            serving_node = v
         path = list(reversed(self.view.shortest_path(receiver, serving_node)))
         for u, v in path_links(path):
             self.controller.forward_content_hop(u, v, main_path=True, size=size)
@@ -505,7 +515,6 @@ class Cost(Strategy):
                 is_reaccessed = self._predict_event(time, content, size, priority)
                 if is_reaccessed:
                     logger.info("popular")
-
                     cache_dump_t1, cache_dump_t2, b2, p, cache_lenghth = self.view.cache_dump(v)
                     t1 = list(cache_dump_t1.keys()) if cache_dump_t1 else []
                     t2 = list(cache_dump_t2.keys()) if cache_dump_t2 else []
@@ -520,18 +529,16 @@ class Cost(Strategy):
                         paths = {}
                         for c in cache_dump[:int(max(1, 0.1 * len(cache_dump)))]:
                             # look for source of data c in node v
-                            c_locations = self.view.content_locations(c)
-                            c_serving_node = min(c_locations, key=lambda x: self.distance[v][x])
-                            # c_source = self.view.content_source(c)
+                            c_source = self.view.content_source(c)
                             # look for path from node v to the src of data c
-                            # c_path = self.view.shortest_path(v, c_source)
-                            # for c_u, c_v in path_links(c_path):
-                            #     if self.view.has_cache(c_v):
-                            #         if self.view.cache_lookup(c_v, c):
-                            #             c_serving_node = c_v
-                            #             break
-                            # else:
-                            #     c_serving_node = c_v
+                            c_path = self.view.shortest_path(v, c_source)
+                            for c_u, c_v in path_links(c_path):
+                                if self.view.has_cache(c_v):
+                                    if self.view.cache_lookup(c_v, c):
+                                        c_serving_node = c_v
+                                        break
+                            else:
+                                c_serving_node = c_v
                             c_size = cache_dump_dict[c][1]
                             c_priority = cache_dump_dict[c][2]
                             c_gain = self.storage_gain(list(reversed(self.view.shortest_path(v, c_serving_node))), c_size, c_priority)
@@ -591,9 +598,8 @@ class Cost(Strategy):
         
     def depreciation_cost(self, tier_index, receiver, content_size) -> float: 
         depreciation_cost = 0.0
-        cache_maxlen = self.cache_size[receiver]
         for tier in self.tiers[tier_index:]:
-            tier_max_capacity = round(tier['size_factor'] * cache_maxlen)
+            tier_max_capacity = tier['actual_size']
             tier_purchase_cost = tier['purchase_cost']
             tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
 
@@ -647,9 +653,8 @@ class Cost(Strategy):
     def print_costs(self, path, priority, node, receiver, content, content_size, min_value, min_content, min_size, min_priority):
         tier_index = self.controller.get_tier_index(node, content)
         depreciation_cost = 0.0
-        cache_maxlen = self.cache_size[node]
         for tier in self.tiers[tier_index:]:
-            tier_max_capacity = round(tier['size_factor'] * cache_maxlen)
+            tier_max_capacity = tier['actual_size']
             tier_purchase_cost = tier['purchase_cost']
             tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
 

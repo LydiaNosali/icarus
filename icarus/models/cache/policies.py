@@ -2025,9 +2025,17 @@ class QMARCCache(Cache):
     def __init__(self, maxlen, **kwargs):
         # logger.info(f"Initializing QMARCCache with maxlen: {maxlen} and kwargs: {kwargs}")
         self._caches = kwargs["tiers"]
-        self._n_caches = len(self._caches)
         self._maxlen = round(maxlen)
-        self._sizes = [round(cache["size_factor"] * self._maxlen) for cache in self._caches]
+        for tier in self._caches:
+            tier['actual_size'] = round(tier["size_factor"] * self._maxlen)
+        if self._caches[0]['actual_size'] == 0:
+            self._caches[0]['actual_size'] = 1
+            for i in range(1, len(self._caches)):
+                if self._caches[i]['actual_size'] > 0:
+                    self._caches[i]['actual_size'] -= 1
+        self._caches = [tier for tier in self._caches if tier['actual_size'] > 0]
+        self._n_caches = len(self._caches)
+        self._sizes = [cache['actual_size'] for cache in self._caches]
         self._names = [cache["name"] for cache in self._caches]
         self._tier_m_caches = self.initialize_caches()
         self._cache= {}
