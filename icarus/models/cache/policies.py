@@ -2033,6 +2033,7 @@ class QMARCCache(Cache):
             for i in range(1, len(self._caches)):
                 if self._caches[i]['actual_size'] > 0:
                     self._caches[i]['actual_size'] -= 1
+                    break
         self._caches = [tier for tier in self._caches if tier['actual_size'] > 0]
         self._n_caches = len(self._caches)
         self._sizes = [cache['actual_size'] for cache in self._caches]

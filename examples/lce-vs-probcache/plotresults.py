@@ -111,7 +111,7 @@ def plot_cache_hits_vs_cache_size(
     desc["xvals"] = cache_size_range
     desc["filter"] = {
         "topology": {"name": topology},
-        "workload": {"name": "TRACE_DRIVEN"},
+        "workload": {"name": "STATIONARY"},
     }
     desc["ymetrics"] = [("CACHE_HIT_RATIO", "MEAN")] * len(strategies)
     desc["ycondnames"] = [("strategy", "name")] * len(strategies)
@@ -140,7 +140,7 @@ def plot_cost_vs_cache_size(
     desc["xvals"] = cache_size_range
     desc["filter"] = {
         "topology": {"name": topology},
-        "workload": {"name": "TRACE_DRIVEN"},
+        "workload": {"name": "STATIONARY"},
     }
     desc["ymetrics"] = [("COST", "MEAN")] * len(strategies)
     desc["ycondnames"] = [("strategy", "name")] * len(strategies)
@@ -164,34 +164,33 @@ def plot_chrcp_vs_cache_size(resultset, topology, cache_size_range, strategies, 
     })
     
     # Step 2: Create a dictionary of LCE CHRCP values for normalization
-    lce_chrcp = {
-        res[0].get("cache_placement").get("network_cache"): res[1].get("CHRCP").get("MEAN")
+    lce_cost = {
+        res[0].get("cache_placement").get("network_cache"): res[1].get("COST").get("MEAN")
         for res in lce_filtered
-        if res[1].get("CHRCP").get("MEAN") is not None
+        if res[1].get("COST").get("MEAN") is not None
     }
     
-    if not lce_chrcp:
+    if not lce_cost:
         logger.error("No LCE CHRCP values found for normalization.")
         return
     
     # Step 3: Normalize the resultset based on LCE CHRCP values
     for entry, metrics in resultset:
         cache_size = entry.get("cache_placement", {}).get("network_cache")
-        if cache_size in lce_chrcp and metrics.get("CHRCP", {}).get("MEAN") is not None:
-            normalized_value = metrics["CHRCP"]["MEAN"] / lce_chrcp[cache_size]
+        if cache_size in lce_cost and metrics.get("CHRCP", {}).get("MEAN") is not None:
+            normalized_value = metrics["CHRCP"]["MEAN"] / lce_cost[cache_size]
             metrics["CHRCP"]["MEAN"] = normalized_value
-    
     # Step 4: Plot the normalized CHRCP results
     desc = {
-        "title": f"Normalized CHRCP: T={topology}",
+        "title": f"CHRCP: T={topology}",
         "xlabel": "Cache to population ratio",
-        "ylabel": "Normalized CHRCP (relative to LCE)",
+        "ylabel": "CHRCP (relative to LCE)",
         "xscale": "log",
         "xparam": ("cache_placement", "network_cache"),
         "xvals": cache_size_range,
         "filter": {
             "topology": {"name": topology},
-            "workload": {"name": "TRACE_DRIVEN"},
+            "workload": {"name": "STATIONARY"},
         },
         "ymetrics": [("CHRCP", "MEAN")] * len(strategies),
         "ycondnames": [("strategy", "name")] * len(strategies),
@@ -205,7 +204,7 @@ def plot_chrcp_vs_cache_size(resultset, topology, cache_size_range, strategies, 
     }
     
     plot_lines(
-        resultset, desc, f"Normalized_CHRCP_T={topology}.jpg", plotdir
+        resultset, desc, f"CHRCP_T={topology}.jpg", plotdir
     )
 
 def plot_latency_vs_cache_size(
@@ -220,7 +219,7 @@ def plot_latency_vs_cache_size(
     desc["xvals"] = cache_size_range
     desc["filter"] = {
         "topology": {"name": topology},
-        "workload": {"name": "TRACE_DRIVEN"},
+        "workload": {"name": "STATIONARY"},
     }
     desc["ymetrics"] = [("LATENCY", "MEAN")] * len(strategies)
     desc["ycondnames"] = [("strategy", "name")] * len(strategies)
@@ -254,7 +253,7 @@ def plot_cache_hits_vs_topology(
     desc["xvals"] = topology_range
     desc["filter"] = {
         "cache_placement": {"network_cache": cache_size},
-        "workload": {"name": "TRACE_DRIVEN"},
+        "workload": {"name": "STATIONARY"},
     }
     desc["ymetrics"] = [("CACHE_HIT_RATIO", "MEAN")] * len(strategies)
     desc["ycondnames"] = [("strategy", "name")] * len(strategies)
@@ -284,7 +283,7 @@ def plot_link_load_vs_cache_size(
     desc["xvals"] = cache_size_range
     desc["filter"] = {
         "topology": {"name": topology},
-        "workload": {"name": "TRACE_DRIVEN"},
+        "workload": {"name": "STATIONARY"},
     }
     desc["ymetrics"] = [("LINK_LOAD", "MEAN_INTERNAL")] * len(strategies)
     desc["ycondnames"] = [("strategy", "name")] * len(strategies)
@@ -313,7 +312,7 @@ def plot_path_stretch_vs_cache_size(
     desc["xvals"] = cache_size_range
     desc["filter"] = {
         "topology": {"name": topology},
-        "workload": {"name": "TRACE_DRIVEN"},
+        "workload": {"name": "STATIONARY"},
     }
     desc["ymetrics"] = [("PATH_STRETCH", "MEAN")] * len(strategies)
     desc["ycondnames"] = [("strategy", "name")] * len(strategies)
@@ -336,7 +335,6 @@ def plot_cost_components_vs_cache_size(
     """
     Plot cost components for each strategy as a stacked bar plot with strategy names under each bar.
     """
-    print("here")
     # Cost component names in the result set
     cost_components = ["DEPRECIATION", "BANDWIDTH", "READ_STORAGE", "WRITE_STORAGE", "ROUTERS", "LINKS", "PENALTY"]
     num_components = len(cost_components)

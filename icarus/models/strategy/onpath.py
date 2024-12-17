@@ -472,16 +472,12 @@ class Cost(Strategy):
         for _, value in self.cache_size.items():
             for tier in self.tiers:
                 tier['actual_size'] = round(tier['size_factor'] * value)
-        
-            # Ensure the first tier does not end up with zero size
             if self.tiers[0]['actual_size'] == 0:
                 self.tiers[0]['actual_size'] = 1
                 for i in range(1, len(self.tiers)):
                     if self.tiers[i]['actual_size'] > 0:
                         self.tiers[i]['actual_size'] -= 1
                         break
-            
-            # Filter out tiers with zero actual size
             self.tiers = [tier for tier in self.tiers if tier['actual_size'] > 0]
         self.cost_per_joule = kwargs['cost_per_joule']
         self.cost_per_bit = kwargs['cost_per_bit']
@@ -489,9 +485,6 @@ class Cost(Strategy):
         self.link_energy_density = kwargs['link_energy_density']
         self.clf, self.feature_names, self.label_encoder_content = self.loadmodel("/home/lydia/icarus/examples/lce-vs-probcache/model")
         self.predictions = defaultdict(list)
-        self.distance = dict(
-            nx.all_pairs_dijkstra_path_length(self.view.topology(), weight="delay")
-        )
         
     @inheritdoc(Strategy)
     def process_event(self, time, receiver, content, size, priority, log):
@@ -528,21 +521,26 @@ class Cost(Strategy):
                     if cache_lenghth == self.cache_size[v]:
                         paths = {}
                         for c in cache_dump[:int(max(1, 0.1 * len(cache_dump)))]:
-                            # look for source of data c in node v
-                            c_source = self.view.content_source(c)
-                            # look for path from node v to the src of data c
-                            c_path = self.view.shortest_path(v, c_source)
-                            for c_u, c_v in path_links(c_path):
-                                if self.view.has_cache(c_v):
-                                    if self.view.cache_lookup(c_v, c):
-                                        c_serving_node = c_v
-                                        break
-                            else:
-                                c_serving_node = c_v
                             c_size = cache_dump_dict[c][1]
                             c_priority = cache_dump_dict[c][2]
-                            c_gain = self.storage_gain(list(reversed(self.view.shortest_path(v, c_serving_node))), c_size, c_priority)
-                            paths[c] = c_gain
+                            c_is_reaccessed = self._predict_event(time, c, c_size, c_priority)
+                            if c_is_reaccessed:
+                                # look for source of data c in node v
+                                c_source = self.view.content_source(c)
+                                # look for path from node v to the src of data c
+                                c_path = self.view.shortest_path(v, c_source)
+                                for c_u, c_v in path_links(c_path):
+                                    if self.view.has_cache(c_v):
+                                        if self.view.cache_lookup(c_v, c):
+                                            c_serving_node = c_v
+                                            break
+                                else:
+                                    c_serving_node = c_v
+                                
+                                c_gain = self.storage_gain(list(reversed(self.view.shortest_path(v, c_serving_node))), c_size, c_priority)
+                                paths[c] = c_gain
+                            else:
+                                continue
 
                         if paths: 
                             # we choose the data with the least retrieval time to evict
