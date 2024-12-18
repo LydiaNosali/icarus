@@ -7,18 +7,20 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 import matplotlib.pyplot as plt
+from sklearn.ensemble import RandomForestClassifier
 
+from lightgbm import LGBMClassifier
 
-xgboost_model = XGBClassifier(use_label_encoder=False, eval_metric='logloss')
-
+# xgboost_model = LGBMClassifier()
+# xgboost_model = XGBClassifier(use_label_encoder=False, eval_metric='logloss')
+xgboost_model = RandomForestClassifier(max_depth=5, n_estimators=10, max_features=1, random_state=42)
 # List all trace files in the directory
-traces_directory = "/home/lydia/icarus/examples/lce-vs-probcache/overfitting"
+traces_directory = "/home/lydia/icarus/examples/lce-vs-probcache/traces"
 trace_files = [f for f in os.listdir(traces_directory) if f.endswith('.csv')]
 
 for filename in trace_files:
     file_path = os.path.join(traces_directory, filename)
-    df = pd.read_csv(file_path, names=['timestamp', 'receiver', 'content', 'size', 'priority'])
-    
+    df = pd.read_csv(file_path, names=['timestamp', 'content', 'size', 'priority'])
     # Perform preprocessing steps on the individual trace
     df = df.iloc[1:]  # Subset to the first 499,999 rows
     # Create label for reaccessed data
@@ -32,13 +34,10 @@ for filename in trace_files:
    
     df['timestamp'] = df['timestamp'].astype(float)
     
-    
     # Encode 'content' column with label encoding
-        # Encode 'content' and 'receiver' columns with label encoding
     label_encoder_content = LabelEncoder()
-    # label_encoder_receiver = LabelEncoder()
+
     df['content'] = label_encoder_content.fit_transform(df['content'])
-    # df['receiver'] = label_encoder_receiver.fit_transform(df['receiver'])
     
     # Convert 'size' column to numeric (float or int)
     df['size'] = pd.to_numeric(df['size'], errors='coerce')
@@ -54,9 +53,8 @@ for filename in trace_files:
     df['time_since_last_access'] = df.groupby('content')['timestamp'].diff().fillna(0) 
     
     # Select relevant features for modeling 
-    X = df.drop(['receiver','is_reaccessed', 'timestamp', 'prev_timestamp'], axis=1) 
-    # X = df.drop(['is_reaccessed', 'timestamp'], axis=1) 
-    y = df['is_reaccessed'] 
+    X = df.drop(['is_reaccessed', 'timestamp', 'prev_timestamp'], axis=1) 
+    y = df['is_reaccessed']
     
     # Split the data into training and test sets
     test_size = 0.3
@@ -79,7 +77,7 @@ for filename in trace_files:
     print("accuracy: %s, precision:%s, recall:%s, f1:%s"%(accuracy,precision,recall,f1))
     # Save metrics as CSV
     headers = ['model_name','trace_name','accuracy', 'precision', 'recall', 'f1']
-    with open('model/xgboostmetrics.csv', 'w', newline='') as file:
+    with open('/home/lydia/icarus/examples/lce-vs-probcache/model/xgboostmetrics.csv', 'w', newline='') as file:
         writer = csv.DictWriter(file, fieldnames=headers)
         writer.writeheader()
         writer.writerow({
@@ -92,15 +90,15 @@ for filename in trace_files:
             })
 
 # Save the classifier model
-with open('model/clf.pkl', 'wb') as f:
+with open('/home/lydia/icarus/examples/lce-vs-probcache/model/clf.pkl', 'wb') as f:
     pickle.dump(xgboost_model, f)
 
 # Save the LabelEncoder separately using pickle
-with open('model/labelencoder.pkl', 'wb') as le_file:
+with open('/home/lydia/icarus/examples/lce-vs-probcache/model/labelencoder.pkl', 'wb') as le_file:
     pickle.dump(label_encoder_content, le_file)
 
 # Save feature names and trace file names as CSV
-with open('model/modelparams.csv', 'w', newline='') as cont_file:
+with open('/home/lydia/icarus/examples/lce-vs-probcache/model/modelparams.csv', 'w', newline='') as cont_file:
     writer = csv.writer(cont_file)
     # Write header for the contents file
     writer.writerow("feature_names")
@@ -360,3 +358,69 @@ with open('model/modelparams.csv', 'w', newline='') as cont_file:
 #     # Write header for the contents file
 #     writer.writerow("feature_names")
 #     writer.writerow(feature_names)
+
+# ////////////////////////////////////////////////////
+# modeltraining function from onpath
+    # def modeltraining(self, traces_directory):
+    #     # # Initialize XGBoost model
+
+    #     # xgboost_model = XGBClassifier(use_label_encoder=False, eval_metric='logloss')
+    #     clf = RandomForestClassifier(max_depth=5, n_estimators=10, max_features=1, random_state=42)
+    #     # List all trace files in the directory
+    #     trace_files = [f for f in os.listdir(traces_directory) if f.endswith('.csv')]
+
+    #     trace_names = []
+    #     accuracy_history = []
+    #     precision_history = []
+    #     recall_history = []
+    #     f1_history = []
+
+    #     for filename in trace_files:
+    #         file_path = os.path.join(traces_directory, filename)
+    #         df = pd.read_csv(file_path, names=['timestamp', 'content', 'size', 'priority'])
+    #         df = df.iloc[1:500000]
+    #         df['is_reaccessed'] = df.duplicated(subset='content', keep=False).astype(int)
+    #         df['priority'] = df['priority'].map({'low': 0, 'high': 1})
+    #         df['content'] = df['content'].astype(str)
+    #         label_encoder_content = LabelEncoder()            
+    #         df['content_encoded'] = label_encoder_content.fit_transform(df['content'])
+    #         df['timestamp'] = df['timestamp'].astype(float)
+    #         df['size'] = pd.to_numeric(df['size'], errors='coerce')
+    #         # Calculate inter-arrival time 
+    #         df['prev_timestamp'] = df['timestamp'].shift(1) 
+    #         df['inter_arrival_time'] = df['timestamp'] - df['prev_timestamp']
+    #         df['inter_arrival_time'].fillna(0, inplace=True)
+    #         # Previous access count and time since last access 
+    #         df['prev_access_count'] = df.groupby('content').cumcount() 
+    #         df['time_since_last_access'] = df.groupby('content')['timestamp'].diff().fillna(0) 
+    #         # Select relevant features for modeling 
+    #         X = df.drop(['is_reaccessed', 'timestamp', 'content', 'prev_timestamp'], axis=1) 
+    #         y = df['is_reaccessed'] 
+            
+    #         # Split the data into training and test sets
+    #         test_size = 0.3
+    #         train_size = 1 - test_size
+    #         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, train_size=train_size, random_state=20)
+            
+    #         # # Train the XGBoost model and predict
+    #         # xgboost_model.fit(X_train, y_train)
+    #         # y_pred = xgboost_model.predict(X_test)
+
+    #         clf = make_pipeline(StandardScaler(), clf)
+    #         clf.fit(X_train, y_train)
+    #         feature_names = X_train.columns.tolist()
+    #         # Predict on the test set
+    #         y_pred = clf.predict(X_test)
+    #         trace_names.append(filename[:4])
+    #         # Calculate metrics
+    #         accuracy = accuracy_score(y_test, y_pred)
+    #         precision = precision_score(y_test, y_pred)
+    #         recall = recall_score(y_test, y_pred)
+    #         f1 = f1_score(y_test, y_pred)
+
+    #         # Append metrics to history
+    #         accuracy_history.append(accuracy)
+    #         precision_history.append(precision)
+    #         recall_history.append(recall)
+    #         f1_history.append(f1)
+    #     return clf, feature_names, label_encoder_content

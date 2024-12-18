@@ -472,26 +472,19 @@ class Cost(Strategy):
         for _, value in self.cache_size.items():
             for tier in self.tiers:
                 tier['actual_size'] = round(tier['size_factor'] * value)
-        
-            # Ensure the first tier does not end up with zero size
             if self.tiers[0]['actual_size'] == 0:
                 self.tiers[0]['actual_size'] = 1
                 for i in range(1, len(self.tiers)):
                     if self.tiers[i]['actual_size'] > 0:
                         self.tiers[i]['actual_size'] -= 1
                         break
-            
-            # Filter out tiers with zero actual size
             self.tiers = [tier for tier in self.tiers if tier['actual_size'] > 0]
         self.cost_per_joule = kwargs['cost_per_joule']
         self.cost_per_bit = kwargs['cost_per_bit']
         self.router_energy_density = kwargs['router_energy_density']
         self.link_energy_density = kwargs['link_energy_density']
-        self.clf, self.feature_names, self.label_encoder_content = self.loadmodel("/home/lydia/icarus/examples/lce-vs-probcache/model")
+        self.clf, self.feature_names, self.label_encoder_content = self.loadmodel("/home/lydia/icarus/examples/lce-vs-probcache/xgboostmodel")
         self.predictions = defaultdict(list)
-        self.distance = dict(
-            nx.all_pairs_dijkstra_path_length(self.view.topology(), weight="delay")
-        )
         
     @inheritdoc(Strategy)
     def process_event(self, time, receiver, content, size, priority, log):
@@ -512,7 +505,10 @@ class Cost(Strategy):
             self.controller.forward_content_hop(u, v, main_path=True, size=size)
             # we are at node v
             if self.view.has_cache(v):
-                is_reaccessed = self._predict_event(time, content, size, priority)
+                if content in self.predictions:
+                    is_reaccessed = self.predictions[content]
+                else:
+                    is_reaccessed = self._predict_event(time, content, size, priority)
                 if is_reaccessed:
                     logger.info("popular")
                     cache_dump_t1, cache_dump_t2, b2, p, cache_lenghth = self.view.cache_dump(v)
@@ -527,7 +523,12 @@ class Cost(Strategy):
 
                     if cache_lenghth == self.cache_size[v]:
                         paths = {}
-                        for c in cache_dump[:int(max(1, 0.1 * len(cache_dump)))]:
+                        for c in cache_dump:
+                            c_size = cache_dump_dict[c][1]
+                            c_priority = cache_dump_dict[c][2]
+                            # c_is_reaccessed = self._predict_event(time, content, size, priority)
+                            # if c_is_reaccessed:
+                            # logger.info(f"content: {c} will be popular")
                             # look for source of data c in node v
                             c_source = self.view.content_source(c)
                             # look for path from node v to the src of data c
@@ -539,11 +540,12 @@ class Cost(Strategy):
                                         break
                             else:
                                 c_serving_node = c_v
-                            c_size = cache_dump_dict[c][1]
-                            c_priority = cache_dump_dict[c][2]
+                        
                             c_gain = self.storage_gain(list(reversed(self.view.shortest_path(v, c_serving_node))), c_size, c_priority)
                             paths[c] = c_gain
-
+                            # else:
+                            #     logger.info(f"content: {c} is other")
+                            #     continue
                         if paths: 
                             # we choose the data with the least retrieval time to evict
                             min_content, min_gain = min(paths.items(), key=lambda x: x[1])
@@ -553,6 +555,8 @@ class Cost(Strategy):
                             storage_loss = self.storage_loss(v, content, size, min_gain)
                             # calculate storage gain
                             storage_gain = self.storage_gain(list(reversed(self.view.shortest_path(v, serving_node))), size, priority) 
+                            logger.info(f"storage_loss:{storage_loss}")
+                            logger.info(f"storage_gain:{storage_gain}")
                             self.print_costs(list(reversed(self.view.shortest_path(v, serving_node))), priority, v, receiver, content,size, min_gain, min_content, min_size, min_priority)
                             if storage_gain > storage_loss:
                                 logger.info("storage_gain > storage_loss")
@@ -561,7 +565,7 @@ class Cost(Strategy):
                             else:
                                 logger.info("cost is not for it")
                         else:
-                            logger.info("no paths")
+                            # logger.info("no paths")
                             tier_index = self.controller.get_tier_index(v, content)
                             self.controller.put_content(v, tier_index=tier_index, size=size, priority=priority)
                     else:
@@ -593,16 +597,20 @@ class Cost(Strategy):
     
     def storage_loss(self, receiver, content, content_size, min_value) -> float:
         tier_index = self.controller.get_tier_index(receiver, content)
-        storage_loss = self.depreciation_cost(tier_index, receiver, content_size) + self.storage_energy_cost(tier_index, receiver, content_size) + min_value    
+        storage_loss = self.depreciation_cost(tier_index, content_size) + self.storage_energy_cost(tier_index, receiver, content_size) + min_value    
         return storage_loss
         
-    def depreciation_cost(self, tier_index, receiver, content_size) -> float: 
+    def depreciation_cost(self, tier_index, content_size) -> float: 
         depreciation_cost = 0.0
+        tier = self.tiers[0]
+        tier_max_capacity = tier['actual_size']
+        tier_purchase_cost = tier['purchase_cost']
+        tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
+        depreciation_cost += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity)
         for tier in self.tiers[tier_index:]:
             tier_max_capacity = tier['actual_size']
             tier_purchase_cost = tier['purchase_cost']
             tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
-
             depreciation_cost += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity)
         return depreciation_cost
 
@@ -653,32 +661,28 @@ class Cost(Strategy):
     def print_costs(self, path, priority, node, receiver, content, content_size, min_value, min_content, min_size, min_priority):
         tier_index = self.controller.get_tier_index(node, content)
         depreciation_cost = 0.0
-        for tier in self.tiers[tier_index:]:
-            tier_max_capacity = tier['actual_size']
-            tier_purchase_cost = tier['purchase_cost']
-            tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
-
-            depreciation_cost += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity)
-        
         tiers_last_access = self.view.get_last_access(node)
-        
         tier = self.tiers[tier_index]
         tier_active_power_density  = tier['active_caching_power_density']
         tier_idle_power_density = tier['idle_power_density']
-       
         idle_time = max(0.0, time.time() - tiers_last_access[tier_index])
-
         read_time = tier['latency'] + content_size / tier['read_throughput']
         energy_cost = ((tier_idle_power_density * idle_time) + (tier_active_power_density * read_time * content_size)) * self.cost_per_joule
+        tier_max_capacity = tier['actual_size']
+        tier_purchase_cost = tier['purchase_cost']
+        tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
+        depreciation_cost += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity)
         
         for i, tier in enumerate(self.tiers[tier_index:], start=tier_index):
+            tier_max_capacity = tier['actual_size']
+            tier_purchase_cost = tier['purchase_cost']
+            tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
             tier_active_power_density  = tier['active_caching_power_density']
             tier_idle_power_density = tier['idle_power_density']
-            
             idle_time = max(0.0, time.time() - tiers_last_access[i])
-            
             write_time = tier['latency'] + content_size / tier['write_throughput']
             energy_cost += ((tier_idle_power_density * idle_time) + (tier_active_power_density * write_time * content_size)) * self.cost_per_joule
+            depreciation_cost += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity)
         
         bandwidth_cost = len(path) * content_size * self.cost_per_bit
         nodes_energy_cost = (len(path) + 1) * content_size * self.router_energy_density * self.cost_per_joule
@@ -690,77 +694,14 @@ class Cost(Strategy):
                     penalty = entry["P0"] * 1e-8 
                 elif priority == "low":
                     penalty = entry["P1"] * 1e-8 
-        total = depreciation_cost + energy_cost + bandwidth_cost + nodes_energy_cost + links_energy_cost + penalty
+        # total = depreciation_cost + energy_cost + bandwidth_cost + nodes_energy_cost + links_energy_cost + penalty
+        
         logger.info(f"content:{content},content_size:{content_size},priority:{priority}, min_content:{min_content},min_size:{min_size},min_priority:{min_priority}")
-        logger.info("storage_loss = depreciation_cost %s + storage_energy_cost %s + min_value %s = %s"%(depreciation_cost, energy_cost, min_value, depreciation_cost+ energy_cost+ min_value))
-        logger.info("storage_gain = bandwidth_cost %s + transmission_energy_cost %s + penalty_cost %s = %s"%(bandwidth_cost,nodes_energy_cost+links_energy_cost,penalty, bandwidth_cost + nodes_energy_cost+links_energy_cost+penalty))    
-        logger.info("ESTIMATED: node:%s,receiver:%s, routers:%s, links:%s, penalty:%s, min_loss:%s, total:%s "%
-                    (node, receiver, nodes_energy_cost, links_energy_cost, penalty, min_value, total))           
+        logger.info(f"storage_loss = depreciation_cost :{depreciation_cost} + storage_energy_cost :{energy_cost} + min_value:{min_value} = {depreciation_cost+ energy_cost + min_value}")
+        logger.info(f"storage_gain = bandwidth_cost :{bandwidth_cost} + transmission_energy_cost :{nodes_energy_cost + links_energy_cost} + penalty : {penalty} = {bandwidth_cost + nodes_energy_cost + links_energy_cost + penalty} ")    
+        # logger.info("ESTIMATED: node:%s,receiver:%s, transmission_energy_cost %s, penalty:%s, total:%s "%
+        #             (node, receiver, nodes_energy_cost + links_energy_cost, penalty, total))           
    
-    def modeltraining(self, traces_directory):
-        # # Initialize XGBoost model
-
-        # xgboost_model = XGBClassifier(use_label_encoder=False, eval_metric='logloss')
-        clf = RandomForestClassifier(max_depth=5, n_estimators=10, max_features=1, random_state=42)
-        # List all trace files in the directory
-        trace_files = [f for f in os.listdir(traces_directory) if f.endswith('.csv')]
-
-        trace_names = []
-        accuracy_history = []
-        precision_history = []
-        recall_history = []
-        f1_history = []
-
-        for filename in trace_files:
-            file_path = os.path.join(traces_directory, filename)
-            df = pd.read_csv(file_path, names=['timestamp', 'content', 'size', 'priority'])
-            df = df.iloc[1:500000]
-            df['is_reaccessed'] = df.duplicated(subset='content', keep=False).astype(int)
-            df['priority'] = df['priority'].map({'low': 0, 'high': 1})
-            df['content'] = df['content'].astype(str)
-            label_encoder_content = LabelEncoder()            
-            df['content_encoded'] = label_encoder_content.fit_transform(df['content'])
-            df['timestamp'] = df['timestamp'].astype(float)
-            df['size'] = pd.to_numeric(df['size'], errors='coerce')
-            # Calculate inter-arrival time 
-            df['prev_timestamp'] = df['timestamp'].shift(1) 
-            df['inter_arrival_time'] = df['timestamp'] - df['prev_timestamp']
-            df['inter_arrival_time'].fillna(0, inplace=True)
-            # Previous access count and time since last access 
-            df['prev_access_count'] = df.groupby('content').cumcount() 
-            df['time_since_last_access'] = df.groupby('content')['timestamp'].diff().fillna(0) 
-            # Select relevant features for modeling 
-            X = df.drop(['is_reaccessed', 'timestamp', 'content', 'prev_timestamp'], axis=1) 
-            y = df['is_reaccessed'] 
-            
-            # Split the data into training and test sets
-            test_size = 0.3
-            train_size = 1 - test_size
-            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, train_size=train_size, random_state=20)
-            
-            # # Train the XGBoost model and predict
-            # xgboost_model.fit(X_train, y_train)
-            # y_pred = xgboost_model.predict(X_test)
-
-            clf = make_pipeline(StandardScaler(), clf)
-            clf.fit(X_train, y_train)
-            feature_names = X_train.columns.tolist()
-            # Predict on the test set
-            y_pred = clf.predict(X_test)
-            trace_names.append(filename[:4])
-            # Calculate metrics
-            accuracy = accuracy_score(y_test, y_pred)
-            precision = precision_score(y_test, y_pred)
-            recall = recall_score(y_test, y_pred)
-            f1 = f1_score(y_test, y_pred)
-
-            # Append metrics to history
-            accuracy_history.append(accuracy)
-            precision_history.append(precision)
-            recall_history.append(recall)
-            f1_history.append(f1)
-        return clf, feature_names, label_encoder_content
-
     def _predict_event(self, time, content, size, priority):
         # Create a DataFrame for the new event
         event_df = pd.DataFrame([(time, content, size, priority)], columns=['timestamp', 'content', 'size', 'priority'])
@@ -774,7 +715,6 @@ class Cost(Strategy):
 
         event_df['content'] = event_df['content'].astype(str)
         event_df['content'] = self.label_encoder_content.fit_transform([content])[0]
-        # df['content_encoded'] = label_encoder_content.fit_transform(df['content'])
         event_df['size'] = pd.to_numeric(event_df['size'], errors='coerce')
         event_df['inter_arrival_time'] = 0
         event_df['prev_access_count'] = 0
@@ -783,19 +723,8 @@ class Cost(Strategy):
         event_df = event_df.reindex(columns=self.feature_names, fill_value=0)
 
         # Predict reaccess
-        # self.predictions[content].append((time, is_reaccessed))
         is_reaccessed = self.clf.predict(event_df)[0]
-        headers = ['timestamp', 'content', 'is_reaccessed']
-        with open('predictions.csv', mode='a', newline='') as file:
-            writer = csv.DictWriter(file, fieldnames=headers)
-            writer.writeheader()
-        with open('predictions.csv', mode='a', newline='') as file:
-            writer = csv.DictWriter(file, fieldnames=headers)
-            writer.writerow({
-                'timestamp': time,
-                'content': content,
-                'is_reaccessed': is_reaccessed
-            })
+        self.predictions[content].append(is_reaccessed)
         return is_reaccessed
     
     def _process_chunk(self):
@@ -817,12 +746,6 @@ class Cost(Strategy):
             results = Parallel(n_jobs=-1)(
                 delayed(self._train_and_evaluate_model)(X, y)
             )
-
-            for accuracy, precision, recall, f1 in results:
-                self.accuracy_history.append(accuracy)
-                self.precision_history.append(precision)
-                self.recall_history.append(recall)
-                self.f1_history.append(f1)
 
             self.is_model_trained = True
 
