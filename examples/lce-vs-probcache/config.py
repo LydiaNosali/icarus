@@ -7,7 +7,7 @@ from icarus.util import Tree
 
 # GENERAL SETTINGS
 LOG_LEVEL = "INFO"
-PARALLEL_EXECUTION = True
+PARALLEL_EXECUTION = False
 N_REPLICATIONS = 1
 CACHING_GRANULARITY = "OBJECT"
 RESULTS_FORMAT = "PICKLE"
@@ -35,13 +35,13 @@ TIERS = [
     }
 ]
 
-STRATEGIES = ["COST", "LCD", "RAND_CHOICE", "LCE", "PROB_CACHE"]
-# STRATEGIES = ["COST"]
-
+# STRATEGIES = ["COST", "LCD", "RAND_CHOICE", "LCE", "PROB_CACHE"]
+STRATEGIES = ["LCE", "COST"]
+POLICIES = ["KLRU", "QMARC"]
 
 PENALTY_TABLE = [
-    {"delay": 2, "P0": 0.0, "P1": 0.0},        # Delay < 20 ms
-    {"delay": 6, "P0": 50, "P1": 10},     # Delay < 150 ms
+    {"delay": 50, "P0": 0.0, "P1": 0.0},        # Delay < 20 ms
+    {"delay": 80, "P0": 50, "P1": 10},     # Delay < 150 ms
     {"delay": float('inf'), "P0": 75, "P1": 15}  # Delay >= 150 ms (use infinity for no upper limit)
 ]
 strategy_params = {
@@ -65,8 +65,8 @@ DATA_COLLECTORS = {
     "CHRCP" : {}
 }
 
-NETWORK_CACHE = [0.001, 0.005, 0.01, 0.02, 0.05, 0.08, 0.1, 0.5, 0.8, 1.0] # which is 5% and 10%
-# NETWORK_CACHE = [0.005, 0.01] # which is 5% and 10%
+# NETWORK_CACHE = [0.001, 0.005, 0.01, 0.02, 0.05, 0.08, 0.1, 0.5, 0.8, 1.0] # which is 5% and 10%
+NETWORK_CACHE = [0.01, 0.1] # which is 5% and 10%
 
 # NETWORK_CACHE = [0.1] # 10%
 # NETWORK_CACHE = [0.01] # 1%
@@ -75,40 +75,40 @@ NETWORK_CACHE = [0.001, 0.005, 0.01, 0.02, 0.05, 0.08, 0.1, 0.5, 0.8, 1.0] # whi
 
 
 default = Tree()
-default["workload"] = {
-    "name": "TRACE_DRIVEN",
-    "reqs_file": "/home/lydia/icarus/examples/lce-vs-probcache/overfitting/events.csv",
-    "contents_file" : "/home/lydia/icarus/examples/lce-vs-probcache/overfitting/events_contents.csv",
-    "n_contents": 768,
-    "n_warmup": 1000,
-    "n_measured": 2000,
-}
-
 # default["workload"] = {
-#     "name": "STATIONARY",
-#     "alpha": 0.8,
-#     "n_contents": 3 * 10 ** 3,
-#     "n_warmup": 3 * 10 ** 3,
-#     "n_measured": 6 * 10 ** 3,
-#     "rate": 1,
-#     "high_priority_rate" :0.2,
-#     "priority_values": ["low", "high"],
-#     "data_size_range" : [1000, 8000],
-#     "seed" : 1
+#     "name": "TRACE_DRIVEN",
+#     "reqs_file": "/home/lydia/icarus/examples/lce-vs-probcache/traces/events.csv",
+#     "contents_file" : "/home/lydia/icarus/examples/lce-vs-probcache/traces/events_contents.csv",
+#     "n_contents": 2275,
+#     "n_warmup": 2275,
+#     "n_measured": 5000,
 # }
+
+default["workload"] = {
+    "name": "STATIONARY",
+    "alpha": 0.8,
+    "n_contents": 3 * 10 ** 3,
+    "n_warmup": 3 * 10 ** 3,
+    "n_measured": 6 * 10 ** 3,
+    "rate": 1,
+    "high_priority_rate" :0.2,
+    "priority_values": ["low", "high"],
+    "data_size_range" : [1000, 8000],
+    "seed" : 1
+}
 
 default["content_placement"]["name"] = "UNIFORM"
 default["cache_placement"]["name"] = "UNIFORM"
-default["cache_policy"]["name"] = "QMARC" 
+# default["cache_policy"]["name"] = "QMARC" 
 default["cache_policy"]["tiers"] = TIERS
 default["cache_policy"]["alpha"] = 0.3
 
 TOPOLOGIES = [
     "PATH",
-    "GEANT",
-    "WIDE",
-    "GARR",
-    "TISCALI",
+    # "GEANT",
+    # "WIDE",
+    # "GARR",
+    # "TISCALI",
 ]
 topology_params = {
     "PATH": {
@@ -118,11 +118,12 @@ topology_params = {
 
 # Create experiment configuration
 EXPERIMENT_QUEUE = deque()
-for strategy in STRATEGIES:
+for (strategy, policy) in zip(STRATEGIES, POLICIES):
     for network_cache in NETWORK_CACHE:
         for topology in TOPOLOGIES:
             experiment = copy.deepcopy(default)
             experiment["strategy"]["name"] = strategy
+            experiment["cache_policy"]["name"] = policy
             experiment["topology"]["name"] = topology
             experiment["cache_placement"]["network_cache"] = network_cache
             if strategy in strategy_params:
@@ -131,8 +132,9 @@ for strategy in STRATEGIES:
                 experiment["topology"].update(topology_params[topology])
             experiment[
                 "desc"
-            ] = "Strategy: {}, Topology: {}, Network cache: {}".format(
+            ] = "Strategy: {}, Policy: {}, Topology: {}, Network cache: {}".format(
                 strategy,
+                policy,
                 topology, 
                 str(network_cache),
             )

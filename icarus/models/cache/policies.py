@@ -33,6 +33,7 @@ __all__ = [
     "ARCCache",
     "MARCCache",
     "QMARCCache",
+    "KLruCache",
     "insert_after_k_hits_cache",
     "rand_insert_cache",
     "keyval_cache",
@@ -2579,7 +2580,187 @@ class QMARCCache(Cache):
             tiers_last_access[i] = self._tier_m_caches[i].last_access
         return tiers_last_access
            
+@register_cache_policy("KLRU")
+class KLruCache(Cache):
+    """Least Recently Used (LRU) cache eviction policy for multi-tier.
+
+    According to this policy, When a new item needs to inserted into the cache,
+    it evicts the least recently requested one.
+    This eviction policy is efficient for line speed operations because both
+    search and replacement tasks can be performed in constant time (*O(1)*).
+
+    This policy has been shown to perform well in the presence of temporal
+    locality in the request pattern. However, its performance drops under the
+    Independent Reference Model (IRM) assumption (i.e. the probability that an
+    item is requested is not dependent on previous requests).
+    """
+
+    @inheritdoc(Cache)
+    def __init__(self, maxlen, **kwargs):
+        self._cache = LinkedSet()
+        self._maxlen = int(maxlen)
+        if self._maxlen <= 0:
+            raise ValueError("maxlen must be positive")
+        self._caches = kwargs["tiers"]
+        for tier in self._caches:
+            tier['actual_size'] = round(tier["size_factor"] * self._maxlen)
+        if self._caches[0]['actual_size'] == 0:
+            self._caches[0]['actual_size'] = 1
+            for i in range(1, len(self._caches)):
+                if self._caches[i]['actual_size'] > 0:
+                    self._caches[i]['actual_size'] -= 1
+        self._caches = [tier for tier in self._caches if tier['actual_size'] > 0]
+        self._n_caches = len(self._caches)
+        self._sizes = [cache['actual_size'] for cache in self._caches]
+        self._names = [cache["name"] for cache in self._caches]
+        self._tier_m_caches = self.initialize_caches()
         
+
+    class TierMCache:
+        def __init__(self, name, maxlen):
+            self.name = name
+            self._maxlen = maxlen
+            self._cache = LinkedSet()
+            self.last_access = 0.0
+
+        def put(self, k, *args):
+            # if content in cache, push it on top, no eviction
+            if k in self._cache:
+                self._cache.move_to_top(k)
+                return None
+            # if content not in cache append it on top
+            self._cache.append_top(k)
+            return self._cache.pop_bottom() if len(self._cache) > self._maxlen else None
+
+    def initialize_caches(self):
+        # Iterate through caches and initialize TierMCache with a reference to the next cache
+        tier_m_caches = {}
+        for i in range(self._n_caches):
+            tier_m_caches[i] = self.TierMCache(self._names[i], self._sizes[i])
+        return tier_m_caches
+    
+    @inheritdoc(Cache)
+    def __len__(self):
+        return len(self._cache)
+
+    @property
+    @inheritdoc(Cache)
+    def maxlen(self):
+        return self._maxlen
+
+    @inheritdoc(Cache)
+    def dump(self):
+        return list(iter(self._cache))
+
+    def position(self, k, *args, **kwargs):
+        """Return the current position of an item in the cache. Position *0*
+        refers to the head of cache (i.e. most recently used item), while
+        position *maxlen - 1* refers to the tail of the cache (i.e. the least
+        recently used item).
+
+        This method does not change the internal state of the cache.
+
+        Parameters
+        ----------
+        k : any hashable type
+            The item looked up in the cache
+
+        Returns
+        -------
+        position : int
+            The current position of the item in the cache
+        """
+        if k not in self._cache:
+            raise ValueError("The item %s is not in the cache" % str(k))
+        return self._cache.index(k)
+
+    @inheritdoc(Cache)
+    def has(self, k, *args, **kwargs):
+        return k in self._cache
+
+    @inheritdoc(Cache)
+    def get(self, k, *args, **kwargs):
+        # search content over the list
+        # if it has it push on top, otherwise return false
+        logger.info(f"get : {k}")
+        if k not in self._cache:
+            return False
+        self._cache.move_to_top(k)
+        if k in self._tier_m_caches[0]._cache:
+            self._tier_m_caches[0]._cache.move_to_top(k)
+        else:
+            for tier in self._tier_m_caches.values():
+                try:
+                    if k in tier._cache:
+                        self._tier_m_caches[0]._cache.put(k)
+                        tier._cache.remove(k)
+                        break
+                except Exception as e:
+                    pass
+        logger.info(f"cache:{self._cache}")
+        for tier in self._tier_m_caches.values():
+            logger.info(f"tier name : {tier.name}, tier:{tier._cache}")
+        
+        return True
+
+    def put(self, k, *args, **kwargs):
+        logger.info(f"put : {k}")
+        # if content in cache, push it on top, no eviction
+        if k in self._cache:
+            self._cache.move_to_top(k)
+            if k in self._tier_m_caches[0]._cache:
+                self._tier_m_caches[0]._cache.move_to_top(k)
+            else:
+                for tier in self._tier_m_caches.values():
+                    try:
+                        if k in tier._cache:
+                            self._tier_m_caches[0]._cache.put(k)
+                            tier._cache.remove(k)
+                            break
+                    except Exception as e:
+                        pass
+            return None
+        # if content not in cache append it on top
+        self._cache.append_top(k)
+        a = self._tier_m_caches[0].put(k)
+        for i in range(1, self._n_caches):   
+            if a != None:
+                try:
+                    self._tier_m_caches[i].put(a)
+                except Exception as e:
+                    pass
+        logger.info(f"cache:{self._cache}")
+        for tier in self._tier_m_caches.values():
+            logger.info(f"tier name : {tier.name}, tier:{tier._cache}")
+        return self._cache.pop_bottom() if len(self._cache) > self._maxlen else None
+
+    @inheritdoc(Cache)
+    def remove(self, k, *args, **kwargs):
+        if k not in self._cache:
+            return False
+        self._cache.remove(k)
+        for tier in self._tier_m_caches.values():
+            try:
+                if k in tier._cache:
+                    tier._cache.remove(k)
+                    break
+            except Exception as e:
+                pass
+        return True
+
+    @inheritdoc(Cache)
+    def clear(self):
+        self._cache.clear()
+    
+    def get_tiers_last_access(self):
+        tiers_last_access = {}
+        for i in range(self._n_caches):
+            tiers_last_access[i] = self._tier_m_caches[i].last_access
+        return tiers_last_access
+    
+    def get_tier_index(self, k):
+        return 0
+
 def insert_after_k_hits_cache(cache, k=2, memory=None):
     """Return a cache inserting items only after k requests.
 
