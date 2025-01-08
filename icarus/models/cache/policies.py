@@ -33,6 +33,7 @@ __all__ = [
     "ARCCache",
     "MARCCache",
     "QMARCCache",
+    "KLruCache",
     "insert_after_k_hits_cache",
     "rand_insert_cache",
     "keyval_cache",
@@ -90,7 +91,6 @@ class Deque(object):
     def __index__(self, key):
         keys = list(self.od.keys())
         return keys.index(key)
-
 
 
 class LinkedSet:
@@ -987,6 +987,9 @@ class LruCache(Cache):
     def clear(self):
         self._cache.clear()
 
+    def get_tier_index(self, k):
+        return 0
+
 @register_cache_policy("SLRU")
 class SegmentedLruCache(Cache):
     """Segmented Least Recently Used (LRU) cache eviction policy.
@@ -1645,7 +1648,7 @@ class ARCCache():
 
     @inheritdoc(Cache)
     def get(self, k, *args, **kwargs):
-        logger.info("get"+k.__str__())
+        # logger.info("get"+k.__str__())
         # Case I: x is in T1 or T2.
         #  A cache hit has occurred in ARC(c) and DBL(2c)
         #   Move x to MRU position in T2.
@@ -1663,7 +1666,7 @@ class ARCCache():
         return res  # Return value not found in cache
         
     def put(self, k, *args, **kwargs):
-        logger.info("put"+k.__str__())
+        # logger.info("put"+k.__str__())
         # Case II: x is in B1
         #  A cache miss has occurred in ARC(c)
         #   ADAPTATION
@@ -2023,7 +2026,7 @@ class MARCCache(Cache):
 class QMARCCache(Cache):
     @inheritdoc(Cache)
     def __init__(self, maxlen, **kwargs):
-        # logger.info(f"Initializing QMARCCache with maxlen: {maxlen} and kwargs: {kwargs}")
+        logger.info(f"Initializing QMARCCache with maxlen: {maxlen} and kwargs: {kwargs}")
         self._caches = kwargs["tiers"]
         self._maxlen = round(maxlen)
         for tier in self._caches:
@@ -2034,12 +2037,15 @@ class QMARCCache(Cache):
                 if self._caches[i]['actual_size'] > 0:
                     self._caches[i]['actual_size'] -= 1
                     break
+        
         self._caches = [tier for tier in self._caches if tier['actual_size'] > 0]
         self._n_caches = len(self._caches)
         self._sizes = [cache['actual_size'] for cache in self._caches]
         self._names = [cache["name"] for cache in self._caches]
         self._tier_m_caches = self.initialize_caches()
         self._cache= {}
+        for tier in self._caches:
+            logger.info(f"tier:{tier}")
         self.p = 0
         self.t1 = Deque()
         self.t2 = Deque()
@@ -2178,11 +2184,11 @@ class QMARCCache(Cache):
         #  A cache hit has occurred in ARC(c) and DBL(2c)
         #   Move x to MRU position in T2.
         res = False
-        # logger.info(f"Cache before: {self._cache}")
-        # logger.info(f"T1 before: {self.t1}")
-        # logger.info(f"T2 before: {self.t2}")
-        # logger.info(f"B1 before: {self.b1}")
-        # logger.info(f"B2 before: {self.b2}")
+        logger.info(f"Cache before: {self._cache}")
+        logger.info(f"T1 before: {self.t1}")
+        logger.info(f"T2 before: {self.t2}")
+        logger.info(f"B1 before: {self.b1}")
+        logger.info(f"B2 before: {self.b2}")
         if args[0] == 'high':
             if k in self.t1:
                 logger.info("move %s from t1 to t2", k.__str__())
@@ -2211,19 +2217,19 @@ class QMARCCache(Cache):
                     self.t2_remove(k)
                     self.t2_append_by_index(k, new_pos-1)
                     res = True
-        # logger.info(f"Cache after: {self._cache}")
+        logger.info(f"Cache after: {self._cache}")
         logger.info(f"T1 after get: {self.t1}")
         logger.info(f"T2 after get: {self.t2}")
         for cache in self._tier_m_caches.values():
             logger.info(f"Tier {cache.name}, T1 after: {cache.t1}")
             logger.info(f"Tier {cache.name}, T2 after: {cache.t2}")
-        # logger.info(f"B1 after: {self.b1}")
-        # logger.info(f"B2 after: {self.b2}")
+        logger.info(f"B1 after: {self.b1}")
+        logger.info(f"B2 after: {self.b2}")
         return res  # Return value not found in cache
     
     @inheritdoc(Cache)
     def put(self, k, *args, **kwargs):
-        # logger.info("put: "+k.__str__())
+        logger.info("put: "+k.__str__())
         min_content = kwargs.get("min_content") or None
         size = kwargs.get("size") or None
         priority = kwargs.get("priority") or None
@@ -2234,16 +2240,16 @@ class QMARCCache(Cache):
         #   Move x from B1 to the MRU position in T2 (also fetch x to the cache).
         logger.info(f"put : {k} and remove {min_content}")
         if k in self._cache:
-            # logger.info("%s already in cache, updating value and moving to MRU position." + k.__str__())
+            logger.info("%s already in cache, updating value and moving to MRU position." + k.__str__())
             self.get(k, *args, **kwargs)
             return
 
         res = None
-        # logger.info(f"Cache before: {self._cache}")
-        # logger.info(f"T1 before: {self.t1}")
-        # logger.info(f"T2 before: {self.t2}")
-        # logger.info(f"B1 before: {self.b1}")
-        # logger.info(f"B2 before: {self.b2}")
+        logger.info(f"Cache before: {self._cache}")
+        logger.info(f"T1 before: {self.t1}")
+        logger.info(f"T2 before: {self.t2}")
+        logger.info(f"B1 before: {self.b1}")
+        logger.info(f"B2 before: {self.b2}")
         if k in self.b1:
             self.increment_p(len(self.b1), len(self.b2))
             self.replace(k=k, min_content=min_content)
@@ -2256,14 +2262,14 @@ class QMARCCache(Cache):
                 global_pos = round(len(self.t2) * self._alpha)
                 self.t2_append_by_index(k, global_pos)
                 self._cache[k] = [True, size, priority]
-            # logger.info(f"Cache after: {self._cache}")
+            logger.info(f"Cache after: {self._cache}")
             logger.info(f"T1 after put: {self.t1}")
             logger.info(f"T2 after put: {self.t2}")
             for cache in self._tier_m_caches.values():
                 logger.info(f"Tier {cache.name}, T1 after: {cache.t1}")
                 logger.info(f"Tier {cache.name}, T2 after: {cache.t2}")
-            # logger.info(f"B1 after: {self.b1}")
-            # logger.info(f"B2 after: {self.b2}")
+            logger.info(f"B1 after: {self.b1}")
+            logger.info(f"B2 after: {self.b2}")
             return res
 
         # Case III: x is in B2
@@ -2284,14 +2290,14 @@ class QMARCCache(Cache):
                 global_pos = round(len(self.t2) * self._alpha)
                 self.t2_append_by_index(k, global_pos)
                 self._cache[k] = [True, size, priority]
-            # logger.info(f"Cache after: {self._cache}")
+            logger.info(f"Cache after: {self._cache}")
             logger.info(f"T1 after put: {self.t1}")
             logger.info(f"T2 after put: {self.t2}")
             for cache in self._tier_m_caches.values():
                 logger.info(f"Tier {cache.name}, T1 after: {cache.t1}")
                 logger.info(f"Tier {cache.name}, T2 after: {cache.t2}")
-            # logger.info(f"B1 after: {self.b1}")
-            # logger.info(f"B2 after: {self.b2}")
+            logger.info(f"B1 after: {self.b1}")
+            logger.info(f"B2 after: {self.b2}")
             return res
         
         # Case IV: x is not in (T1 u B1 u T2 u B2)
@@ -2332,14 +2338,14 @@ class QMARCCache(Cache):
             global_pos = round(len(self.t1) * self._alpha)
             self.t1_append_by_index(k, global_pos)
             self._cache[k] = [True, size, priority]
-        # logger.info(f"Cache after: {self._cache}")
+        logger.info(f"Cache after: {self._cache}")
         logger.info(f"T1 after put: {self.t1}")
         logger.info(f"T2 after put: {self.t2}")
         for cache in self._tier_m_caches.values():
             logger.info(f"Tier {cache.name}, T1 after: {cache.t1}")
             logger.info(f"Tier {cache.name}, T2 after: {cache.t2}")
-        # logger.info(f"B1 after: {self.b1}")
-        # logger.info(f"B2 after: {self.b2}")
+        logger.info(f"B1 after: {self.b1}")
+        logger.info(f"B2 after: {self.b2}")
         return res
     
     @inheritdoc(Cache)
@@ -2579,7 +2585,212 @@ class QMARCCache(Cache):
         for i in range(self._n_caches):
             tiers_last_access[i] = self._tier_m_caches[i].last_access
         return tiers_last_access
-           
+
+@register_cache_policy("KLRU")
+class KLruCache(Cache):
+    @inheritdoc(Cache)
+    def __init__(self, maxlen, **kwargs):
+        self._cache = LinkedSet()
+        self._maxlen = int(maxlen)
+        if self._maxlen <= 0:
+            raise ValueError("maxlen must be positive")
+        self._caches = kwargs["tiers"]
+        for tier in self._caches:
+            tier['actual_size'] = round(tier["size_factor"] * self._maxlen)
+        if self._caches[0]['actual_size'] == 0:
+            self._caches[0]['actual_size'] = 1
+            for i in range(1, len(self._caches)):
+                if self._caches[i]['actual_size'] > 0:
+                    self._caches[i]['actual_size'] -= 1
+        self._caches = [tier for tier in self._caches if tier['actual_size'] > 0]
+        self._n_caches = len(self._caches)
+        self._sizes = [cache['actual_size'] for cache in self._caches]
+        self._names = [cache["name"] for cache in self._caches]
+        self._tier_m_caches = self.initialize_caches()
+        
+    class TierMCache:
+        def __init__(self, name, maxlen):
+            self.name = name
+            self._maxlen = maxlen
+            self._cache = LinkedSet()
+            self.last_access = 0.0
+        
+        def put(self, k, *args):
+            # logger.info(f"put in tier:{self.name}")
+            # if content in cache, push it on top, no eviction
+            if k in self._cache:
+                self._cache.move_to_top(k)
+                return None
+            # if content not in cache append it on top
+            self._cache.append_top(k)
+            return self._cache.pop_bottom() if len(self._cache) > self._maxlen else None
+    
+    def initialize_caches(self):
+        # Iterate through caches and initialize TierMCache with a reference to the next cache
+        tier_m_caches = {}
+        for i in range(self._n_caches):
+            tier_m_caches[i] = self.TierMCache(self._names[i], self._sizes[i])
+        return tier_m_caches
+    
+    @inheritdoc(Cache)
+    def __len__(self):
+        return len(self._cache)
+    
+    @property
+    @inheritdoc(Cache)
+    def maxlen(self):
+        return self._maxlen
+    
+    @inheritdoc(Cache)
+    def dump(self):
+        dicti = {item[0]:[item[1], item[2]] for item in list(iter(self._cache))[::-1]}
+        return dicti
+    
+    def position(self, k, *args, **kwargs):
+        """Return the current position of an item in the cache. Position *0*
+        refers to the head of cache (i.e. most recently used item), while
+        position *maxlen - 1* refers to the tail of the cache (i.e. the least
+        recently used item).
+        This method does not change the internal state of the cache.
+        Parameters
+        ----------
+        k : any hashable type
+            The item looked up in the cache
+        Returns
+        -------
+        position : int
+            The current position of the item in the cache
+        """
+        if k not in self._cache:
+            raise ValueError("The item %s is not in the cache" % str(k))
+        return self._cache.index(k)
+    
+    @inheritdoc(Cache)
+    def has(self, k, *args, **kwargs):
+        return k in self._cache
+    
+    @inheritdoc(Cache)
+    def get(self, k, *args, **kwargs):
+        logger.info(f"get: {k}")  
+        logger.info(f"cache before:{self._cache}")
+        for tier in self._tier_m_caches.values():
+            logger.info(f"tier name before: {tier.name}, tier:{tier._cache}")      
+        if k not in self._cache:
+            return False
+        # logger.info(f"cache before : {self._cache}")
+        self._cache.move_to_top(k)
+        # for tier in self._tier_m_caches.values():
+        #     logger.info(f"before tier name : {tier.name}, tier:{tier._cache}")
+        # logger.info(f"move {k} to top")
+        if k in self._tier_m_caches[0]._cache:
+            # logger.info(f"in tier 0 : {self._tier_m_caches[0]._cache}")
+            self._tier_m_caches[0]._cache.move_to_top(k)
+        else:
+            for tier in self._tier_m_caches.values():
+                try:
+                    if k in tier._cache:
+                        # logger.info(f"{k} k in tier : {tier.name}")
+                        a = self._tier_m_caches[0].put(k)
+                        tier._cache.remove(k)
+                        # logger.info(f"tier 0 cache:{self._tier_m_caches[0]._cache}")
+                        for i in range(1, self._n_caches):   
+                            if a != None:
+                                try:
+                                    self._tier_m_caches[i].put(a)
+                                except Exception as e:
+                                    pass
+                        break
+                except Exception as e:
+                    pass
+        logger.info(f"cache after : {self._cache}")
+        for tier in self._tier_m_caches.values():
+            logger.info(f"after tier name : {tier.name}, tier:{tier._cache}")
+
+        return True
+    
+    def put(self, k, *args, **kwargs):
+        logger.info(f"put : {k}")
+        logger.info(f"cache before:{self._cache}")
+        for tier in self._tier_m_caches.values():
+            logger.info(f"tier name before: {tier.name}, tier:{tier._cache}")
+        size = kwargs.get("size") or None
+        priority = kwargs.get("priority") or None
+        k = (k, size, priority)
+        min_content = kwargs.get("min_content")
+        logger.info(min_content)
+        if k in self._cache:
+            # logger.info(f"cache before : {self._cache}")
+            self._cache.move_to_top(k)
+            # for tier in self._tier_m_caches.values():
+            #     logger.info(f"before tier name : {tier.name}, tier:{tier._cache}")
+            # logger.info(f"move {k} to top")
+            if k in self._tier_m_caches[0]._cache:
+                # logger.info(f"in tier 0 : {self._tier_m_caches[0]._cache}")
+                self._tier_m_caches[0]._cache.move_to_top(k)
+            else:
+                for tier in self._tier_m_caches.values():
+                    try:
+                        if k in tier._cache:
+                            # logger.info(f"{k} k in tier : {tier.name}")
+                            a = self._tier_m_caches[0].put(k)
+                            tier._cache.remove(k)
+                            # logger.info(f"tier 0 cache:{self._tier_m_caches[0]._cache}")
+                            for i in range(1, self._n_caches):   
+                                if a != None:
+                                    try:
+                                        self._tier_m_caches[i].put(a)
+                                    except Exception as e:
+                                        pass
+                    except Exception as e:
+                        pass
+            # logger.info(f"cache after : {self._cache}")
+            # for tier in self._tier_m_caches.values():
+            #     logger.info(f"after tier name : {tier.name}, tier:{tier._cache}")
+            return None
+        # logger.info(f"cache before : {self._cache}")
+        self._cache.append_top(k)
+        # for tier in self._tier_m_caches.values():
+        #     logger.info(f"before tier name : {tier.name}, tier:{tier._cache}")
+        # logger.info(f"append {k} to top")
+        a = self._tier_m_caches[0].put(k)
+        for i in range(1, self._n_caches):   
+            if a != None:
+                try:
+                    self._tier_m_caches[i].put(a)
+                except Exception as e:
+                    pass
+        old = self._cache.remove(min_content) if len(self._cache) > self._maxlen else None
+        logger.info(f"cache after:{self._cache}")
+        for tier in self._tier_m_caches.values():
+            logger.info(f"tier name after: {tier.name}, tier:{tier._cache}")
+        return old
+    
+    @inheritdoc(Cache)
+    def remove(self, k, *args, **kwargs):
+        if k not in self._cache:
+            return False
+        self._cache.remove(k)
+        for tier in self._tier_m_caches.values():
+            try:
+                if k in tier._cache:
+                    tier._cache.remove(k)
+                    break
+            except Exception as e:
+                pass
+        return True
+    
+    @inheritdoc(Cache)
+    def clear(self):
+        self._cache.clear()
+    
+    def get_tiers_last_access(self):
+        tiers_last_access = {}
+        for i in range(self._n_caches):
+            tiers_last_access[i] = self._tier_m_caches[i].last_access
+        return tiers_last_access
+    
+    def get_tier_index(self, k):
+        return 0
         
 def insert_after_k_hits_cache(cache, k=2, memory=None):
     """Return a cache inserting items only after k requests.
@@ -2655,7 +2866,6 @@ def insert_after_k_hits_cache(cache, k=2, memory=None):
         cache._metacache_queue = queue
     return cache
 
-
 def rand_insert_cache(cache, p, seed=None):
     """Return a random insertion cache
 
@@ -2694,7 +2904,6 @@ def rand_insert_cache(cache, p, seed=None):
     cache.put = put
     cache.put.__doc__ = c_put.__doc__
     return cache
-
 
 def keyval_cache(cache):
     """It modifies the instance of a cache object such that items are saved
@@ -2839,7 +3048,6 @@ def keyval_cache(cache):
     cache.value = value
 
     return cache
-
 
 def ttl_cache(cache, f_time):
     """Return a TTL cache.
@@ -3023,7 +3231,6 @@ def ttl_cache(cache, f_time):
     cache.clear.__doc__ = c_clear.__doc__
 
     return cache
-
 
 def ttl_keyval_cache():
     pass

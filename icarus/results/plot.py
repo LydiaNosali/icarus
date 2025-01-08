@@ -26,10 +26,10 @@ __all__ = ["plot_lines", "plot_bar_chart", "plot_cdf"]
 plt.rcParams["text.usetex"] = False
 
 # Aspect ratio of the output figures
-plt.rcParams["figure.figsize"] = 8, 5
+plt.rcParams["figure.figsize"] = 12, 5
 
 # Size of font in legends
-LEGEND_SIZE = 14
+LEGEND_SIZE = 16
 
 # Plot
 PLOT_EMPTY_GRAPHS = False
@@ -159,19 +159,23 @@ def plot_lines(resultset, desc, filename, plotdir):
     """
     fig = plt.figure()
     _, ax1 = plt.subplots()
+    fontsize = 24
     if "title" in desc:
-        plt.title(desc["title"])
+        plt.title(desc["title"], fontsize=fontsize)
     if "xlabel" in desc:
-        plt.xlabel(desc["xlabel"])
+        plt.xlabel(desc["xlabel"], fontsize=fontsize)
     if "ylabel" in desc:
-        plt.ylabel(desc["ylabel"])
+        plt.ylabel(desc["ylabel"], fontsize=fontsize)
     if "xscale" in desc:
         plt.xscale(desc["xscale"])
     if "yscale" in desc:
         plt.yscale(desc["yscale"])
     if "filter" not in desc or desc["filter"] is None:
         desc["filter"] = {}
-    xvals = sorted(desc["xvals"])
+    
+    ax1.tick_params(axis='both', which='major', labelsize=fontsize)
+
+    # ax1.set_xticklabels([x for x in xvals])
     if "xticks" in desc:
         ax1.set_xticks(desc["xticks"])
         ax1.get_xaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
@@ -196,6 +200,7 @@ def plot_lines(resultset, desc, filename, plotdir):
     plot_args = desc.get("plot_args", {})
     plot_empty = desc.get("plotempty", True)
     empty = True
+    xvals = sorted(desc["xvals"])
     for i in range(len(yvals)):
         means = np.zeros(len(xvals))
         err = np.zeros(len(xvals))
@@ -243,6 +248,8 @@ def plot_lines(resultset, desc, filename, plotdir):
         if "legend_loc" in desc:
             legend_args["loc"] = desc["legend_loc"]
         plt.legend(legend, prop={"size": LEGEND_SIZE}, **legend_args)
+    ax1.set_xticks(xvals)
+    ax1.set_xticklabels([str(x) for x in xvals])
     plt.savefig(os.path.join(plotdir, filename), bbox_inches="tight")
     plt.close(fig)
 

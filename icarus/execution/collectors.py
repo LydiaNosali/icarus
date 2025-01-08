@@ -400,8 +400,8 @@ class CostCollector(DataCollector):
         params : cost model and tiers info
         """
         
-        self.sess_depreciation_cost = 0.0
-        self.sess_bandwidth_cost = 0.0
+        # self.sess_depreciation_cost = 0.0
+        # self.sess_bandwidth_cost = 0.0
         self.sess_get_storage_energy_cost = 0.0
         self.sess_put_storage_energy_cost = 0.0
         self.sess_routers_energy_cost = 0.0
@@ -409,8 +409,8 @@ class CostCollector(DataCollector):
         self.sess_penalty_cost = 0.0
         self.sess_cost = 0.0
 
-        self.depreciation_cost = 0.0
-        self.bandwidth_cost = 0.0
+        # self.depreciation_cost = 0.0
+        # self.bandwidth_cost = 0.0
         self.get_storage_energy_cost = 0.0
         self.put_storage_energy_cost = 0.0
         self.routers_energy_cost = 0.0
@@ -435,8 +435,8 @@ class CostCollector(DataCollector):
         self.receiver = receiver
         self.priority = priority
         self.sess_latency = 0.0
-        self.sess_depreciation_cost = 0.0
-        self.sess_bandwidth_cost = 0.0
+        # self.sess_depreciation_cost = 0.0
+        # self.sess_bandwidth_cost = 0.0
         self.sess_get_storage_energy_cost = 0.0
         self.sess_put_storage_energy_cost = 0.0
         self.sess_routers_energy_cost = 0.0
@@ -459,7 +459,7 @@ class CostCollector(DataCollector):
             
             self.sess_routers_energy_cost += content_size * self.router_energy_density * self.cost_per_joule
             self.sess_links_energy_cost += content_size * self.link_energy_density * self.cost_per_joule
-            self.sess_bandwidth_cost += content_size * self.cost_per_bit
+            # self.sess_bandwidth_cost += content_size * self.cost_per_bit
 
     @inheritdoc(DataCollector)
     def cache_hit(self, node, **kwargs):
@@ -478,7 +478,7 @@ class CostCollector(DataCollector):
         # Filter out tiers with zero actual size
         self.tiers = [tier for tier in self.tiers if tier['actual_size'] > 0]
         content_size = kwargs["size"]
-        # logger.info(f"in cache_hit. tier index:{tier_index}, content_size:{content_size}, cache_size:{cache_size}")
+        logger.info(f"in cache_hit cost collector. tier index:{tier_index}, content_size:{content_size}, cache_size:{cache_size}")
         tiers_last_access = self.view.get_last_access(node)
         
         tier = self.tiers[tier_index]
@@ -492,7 +492,7 @@ class CostCollector(DataCollector):
         tier_purchase_cost = tier['purchase_cost']
         tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
         
-        self.sess_depreciation_cost += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity)
+        # self.sess_depreciation_cost += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity)
         self.sess_get_storage_energy_cost += ((tier_idle_power_density * idle_time) + (tier_active_power_density * read_time * content_size)) * self.cost_per_joule
         
         for i, tier in enumerate(self.tiers[tier_index:], start=tier_index):
@@ -506,7 +506,7 @@ class CostCollector(DataCollector):
             tier_purchase_cost = tier['purchase_cost']
             tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
 
-            self.sess_depreciation_cost += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity)
+            # self.sess_depreciation_cost += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity)
             self.sess_get_storage_energy_cost += ((tier_idle_power_density * idle_time) + (tier_active_power_density * write_time * content_size)) * self.cost_per_joule
 
     @inheritdoc(DataCollector)
@@ -520,14 +520,14 @@ class CostCollector(DataCollector):
         server_idle_power_density =10**-12
         server_purchase_cost = 200
         server_lifespan = 5 * 365 * 24 * 60 * 60
-        # logger.info(f"in server_hit.  content_size:{content_size}, server_size:{server_size}")
+        logger.info(f"in server_hit cost collector. content_size:{content_size}, server_size:{server_size}")
         
         # servers_last_access = self.view.get_last_access(node)
         # idle_time = max(0.0, time.time() - servers_last_access[node])
         idle_time = 0.0
         read_time = server_latency + content_size / server_read_throughput
 
-        self.sess_depreciation_cost += (content_size * server_purchase_cost) / (server_lifespan * server_size)
+        # self.sess_depreciation_cost += (content_size * server_purchase_cost) / (server_lifespan * server_size)
         self.sess_get_storage_energy_cost += ((server_idle_power_density * idle_time) + (server_active_power_density * read_time * content_size)) * self.cost_per_joule
         
     @inheritdoc(DataCollector)
@@ -546,7 +546,7 @@ class CostCollector(DataCollector):
         self.tiers = [tier for tier in self.tiers if tier['actual_size'] > 0]
         tier_index = kwargs.get("tier_index") or 0
         content_size = kwargs["size"]
-        # logger.info(f"in write_content. tier index:{tier_index}, content_size:{content_size}, cache_size:{cache_size}")
+        logger.info(f"in write_content cost collector. tier index:{tier_index}, content_size:{content_size}, cache_size:{cache_size}")
         
         tiers_last_access = self.view.get_last_access(node)
         for i, tier in enumerate(self.tiers[tier_index:], start=tier_index):
@@ -560,7 +560,7 @@ class CostCollector(DataCollector):
             tier_purchase_cost = tier['purchase_cost']
             tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
 
-            self.sess_depreciation_cost += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity)
+            # self.sess_depreciation_cost += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity)
             self.sess_put_storage_energy_cost += ((tier_idle_power_density * idle_time) + (tier_active_power_density * write_time * content_size)) * self.cost_per_joule
 
     @inheritdoc(DataCollector)
@@ -574,19 +574,20 @@ class CostCollector(DataCollector):
                 elif self.priority == "low":
                     self.sess_penalty_cost += entry["P1"] * 1e-8
                 
-                self.depreciation_cost += self.sess_depreciation_cost
-                self.bandwidth_cost += self.sess_bandwidth_cost
+                # self.depreciation_cost += self.sess_depreciation_cost
+                # self.bandwidth_cost += self.sess_bandwidth_cost
                 self.get_storage_energy_cost += self.sess_get_storage_energy_cost
                 self.put_storage_energy_cost += self.sess_put_storage_energy_cost
                 self.routers_energy_cost += self.sess_routers_energy_cost
                 self.links_energy_cost += self.sess_links_energy_cost
                 self.penalty_cost += self.sess_penalty_cost
-                self.sess_cost += self.sess_depreciation_cost + self.sess_bandwidth_cost + self.sess_get_storage_energy_cost + self.sess_put_storage_energy_cost + self.sess_routers_energy_cost + self.sess_links_energy_cost + self.sess_penalty_cost
+                # self.sess_cost += self.sess_depreciation_cost + self.sess_bandwidth_cost + self.sess_get_storage_energy_cost + self.sess_put_storage_energy_cost + self.sess_routers_energy_cost + self.sess_links_energy_cost + self.sess_penalty_cost
+                self.sess_cost += self.sess_get_storage_energy_cost + self.sess_put_storage_energy_cost + self.sess_routers_energy_cost + self.sess_links_energy_cost + self.sess_penalty_cost
                 
                 self.cost += self.sess_cost
                 
-                logger.info("REAL: content:%s, receiver:%s, depreciation:%s, get storage:%s, put storage:%s, bandwidth:%s, routers:%s, links:%s, penalty:%s, total:%s"%
-                            (self.content, self.receiver, self.sess_depreciation_cost, self.sess_get_storage_energy_cost, self.sess_put_storage_energy_cost, self.sess_bandwidth_cost, self.sess_routers_energy_cost, self.sess_links_energy_cost,self.sess_penalty_cost, self.sess_cost))
+                # logger.info("Cost Collector: content:%s, receiver:%s, depreciation:%s, get storage:%s, put storage:%s, bandwidth:%s, routers:%s, links:%s, penalty:%s, total:%s"%
+                #             (self.content, self.receiver, self.sess_depreciation_cost, self.sess_get_storage_energy_cost, self.sess_put_storage_energy_cost, self.sess_bandwidth_cost, self.sess_routers_energy_cost, self.sess_links_energy_cost,self.sess_penalty_cost, self.sess_cost))
                 return
 
         # If no penalty threshold matches, raise an error (this should not happen)
@@ -597,8 +598,8 @@ class CostCollector(DataCollector):
         results = Tree(
             {
             "MEAN": self.cost,
-            "DEPRECIATION": self.depreciation_cost,
-            "BANDWIDTH": self.bandwidth_cost,
+            # "DEPRECIATION": self.depreciation_cost,
+            # "BANDWIDTH": self.bandwidth_cost,
             "READ_STORAGE": self.get_storage_energy_cost,
             "WRITE_STORAGE": self.put_storage_energy_cost,
             "ROUTERS":self.routers_energy_cost,
@@ -681,6 +682,7 @@ class CacheHitRatioCollector(DataCollector):
 
     @inheritdoc(DataCollector)
     def cache_hit(self, node, **kwargs):
+        logger.info("cache hit")
         self.cache_hits += 1
         if self.off_path_hits and node not in self.curr_path:
             self.off_path_hit_count += 1

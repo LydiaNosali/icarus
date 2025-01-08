@@ -97,10 +97,17 @@ class StationaryWorkload:
         seed=None,
         **kwargs
     ):
+       
         if alpha < 0:
             raise ValueError("alpha must be positive")
         if beta < 0:
             raise ValueError("beta must be positive")
+        if seed is not None:
+            random.seed(seed)
+        if seed is not None:
+            self.local_random = random.Random(seed)
+        else:
+            self.local_random = random.Random()
         self.receivers = [
             v for v in topology.nodes() if topology.node[v]["stack"][0] == "receiver"
         ]
@@ -111,17 +118,19 @@ class StationaryWorkload:
         self.priority_values = kwargs["priority_values"]
         self.high_priority_rate = kwargs["high_priority_rate"]
         self.data_size_range =kwargs["data_size_range"]
-        
+        # self.contents = {content_id: {
+        #                     "priority": random.choices(self.priority_values, weights=[1 - self.high_priority_rate, self.high_priority_rate])[0],
+        #                     "size": random.randint(self.data_size_range[0], self.data_size_range[1])
+        #                  } for content_id in range(1, n_contents + 1)}
         self.contents = {content_id: {
-                            "priority": random.choices(self.priority_values, weights=[1 - self.high_priority_rate, self.high_priority_rate])[0],
-                            "size": random.randint(self.data_size_range[0], self.data_size_range[1])
-                         } for content_id in range(1, n_contents + 1)}
-        
+            "priority": self.local_random.choices(self.priority_values, weights=[1 - self.high_priority_rate, self.high_priority_rate])[0],
+            "size": self.local_random.randint(self.data_size_range[0], self.data_size_range[1])
+        } for content_id in range(1, n_contents + 1)}
+
         self.alpha = alpha
         self.rate = rate
         self.n_warmup = n_warmup
         self.n_measured = n_measured
-        random.seed(seed)
         self.beta = beta
         if beta != 0:
             degree = nx.degree(self.topology)
