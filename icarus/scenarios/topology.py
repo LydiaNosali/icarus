@@ -391,7 +391,7 @@ def topology_tiscali(**kwargs):
     # 14                 3
     # 15                 3
     # 16                 2
-    icr_candidates = [v for v in topology.nodes() if deg[v] >= 6]  # 36 nodes
+    icr_candidates = [v for v in topology.nodes() if deg[v] >= 2]  # 36 nodes
     # sources are node with degree 1 whose neighbor has degree at least equal to 5
     # we assume that sources are nodes connected to a hub
     # they are 44

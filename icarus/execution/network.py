@@ -383,9 +383,9 @@ class NetworkModel:
         self.cache_size = {}
         for node in topology.nodes():
             stack_name, stack_props = fnss.get_stack(topology, node)
-            logger.info("stack_name:%s, stack_props:%s"%(stack_name, stack_props ))
             if stack_name == "router":
                 if "cache_size" in stack_props:
+                    logger.info("stack_name:%s, stack_props:%s"%(stack_name, stack_props ))
                     self.cache_size[node] = stack_props["cache_size"]
             elif stack_name == "source":
                 contents = stack_props["contents"]
@@ -582,6 +582,7 @@ class NetworkController:
             The evicted object or *None* if no contents were evicted.
         """
         if node in self.model.cache:
+            logger.info(f"node:{node}")
             self.collector.write_content(node, cache_size=self.model.cache_size[node], **kwargs)
             return self.model.cache[node].put(self.session["content"], self.session["priority"], **kwargs)
 
@@ -598,6 +599,7 @@ class NetworkController:
         content : bool
             True if the content is available, False otherwise
         """
+        logger.info(f"node:{node}")
         if node in self.model.cache:
             cache_hit = self.model.cache[node].get(self.session["content"], self.session["priority"])
             if cache_hit:
@@ -607,6 +609,7 @@ class NetworkController:
             else:
                 if self.session["log"]:
                     self.collector.cache_miss(node)
+            logger.info(f"cache_hit:{cache_hit}")
             return cache_hit
         name, props = fnss.get_stack(self.model.topology, node)
         if name == "source" and self.session["content"] in props["contents"]:

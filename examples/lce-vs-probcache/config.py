@@ -118,13 +118,14 @@ policy_params = {
 }
 
 
-STRATEGIES = ["COST", "LCD", "RAND_CHOICE", "LCE", "PROB_CACHE"]
+# STRATEGIES = ["COST", "LCD", "RAND_CHOICE", "LCE", "PROB_CACHE"]
+STRATEGIES = ["COST", "LCE"]
 
-ALPHA = [0.6, 0.8, 1.0, 1.2]
-
+# ALPHA = [0.6, 0.8, 1.0, 1.2]
+ALPHA = [0.8]
 # NETWORK_CACHE = [0.001, 0.005, 0.01, 0.02, 0.05, 0.08, 0.1, 0.5, 0.8, 1.0] # which is 5% and 10%
 # nb_items*nb_caches/nb_contents=%
-nb_items = [6, 8, 10, 12, 14, 16]
+nb_items = [6]
 # geant 19 caches
 # garr 27 caches
 # rocket fuel 36 caches
@@ -143,7 +144,7 @@ TOPOLOGIES = [
 
 topology_params = {
     "PATH": {
-        "n" : 4,
+        "n" : 3,
     },
     "ROCKET_FUEL" :{
         "asn" :1221,

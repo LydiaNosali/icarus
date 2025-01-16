@@ -501,8 +501,8 @@ def config_logging(log_level="INFO"):
     log_level = eval("logging.%s" % log_level.upper())
     logging.basicConfig(format=FORMAT, datefmt=DATE_FMT, level=log_level,
                     handlers=[
-                        logging.FileHandler("logfile.log"),
-                        logging.StreamHandler()
+                        logging.FileHandler("logfile8.log"),
+                        # logging.StreamHandler()
                     ])
     
 

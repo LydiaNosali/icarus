@@ -234,38 +234,109 @@ def plot_latency_vs_cache_size(
         resultset, desc, "LATENCY_T={}@A={}.jpg".format(topology, alpha), plotdir
     )
 
+# def plot_cost_components_vs_cache_size(
+#     resultset, topology, alpha, cache_size_range, strategies, plotdir
+# ):
+#     """
+#     Plot cost components for each strategy as a stacked bar plot with strategy names under each bar.
+#     """
+#     # Cost component names in the result set
+#     cost_components = ["DEPRECIATION", "BANDWIDTH", "READ_STORAGE", "WRITE_STORAGE", "ROUTERS", "LINKS", "PENALTY"]
+#     num_components = len(cost_components)
+    
+#     # Prepare for plotting
+#     fig, ax = plt.subplots(figsize=(10, 6))  # Increase figure size
+#     bar_width = 0.15  # Width of each strategy's bar
+#     bar_spacing = 0.05  # Extra space between groups of bars
+#     total_bars_per_group = len(strategies) * (bar_width + bar_spacing)
+    
+#     # Generate positions for each bar, spacing them based on both cache sizes and strategies
+#     x_positions = []
+#     for i, cache_size in enumerate(cache_size_range):
+#         for j, strategy in enumerate(strategies):
+#             x_positions.append(i * (total_bars_per_group + 0.2) + j * (bar_width + bar_spacing))
+    
+#     x_positions = np.array(x_positions)
+    
+#     # Define color and hatch styles for each cost component
+#     cost_colors = ['#FF7F0E', '#1F77B4', '#2CA02C', '#D62728', '#9467BD', '#8C564B', '#E377C2']
+#     cost_hatches = ['/', '\\', '|', '-', '+', 'x', 'o']
+    
+#     # Plot bars for each strategy and component
+#     for i, strategy in enumerate(strategies):
+#         bottom = np.zeros(len(cache_size_range))  # Initialize for stacking bars
+
+#         for j, component in enumerate(cost_components):
+#             data = []
+#             for cache_size in cache_size_range:
+#                 filtered = resultset.filter({
+#                     "topology": {"name": topology},
+#                     "cache_placement": {"network_cache": cache_size},
+#                     "strategy": {"name": strategy},
+#                     "workload" :{"name": "STATIONARY", "alpha": alpha},
+#                 })
+                
+#                 cost = filtered[0][1]['COST'].get(component, 0) if len(filtered) > 0 else 0
+#                 data.append(cost)
+            
+#             ax.bar(
+#                 x_positions[i::len(strategies)], data, bar_width,
+#                 bottom=bottom,
+#                 color=cost_colors[j],
+#                 hatch=cost_hatches[j]
+#             )
+#             bottom += np.array(data)
+
+#     # Set labels, title, ticks, and legends
+#     ax.set_xlabel('Cache Proportion and Strategy', fontsize=14)
+#     ax.set_ylabel('Cost', fontsize=14)
+#     # ax.set_title('Cost Components per Cache Size and Strategy', fontsize=16)
+    
+#     # Add cache size and strategy labels as x-axis labels
+#     xtick_labels = []
+#     for cache_size in cache_size_range:
+#         for strategy in strategies:
+#             xtick_labels.append(f'{strategy}\n(Cache {cache_size})')
+    
+#     ax.set_xticks(x_positions)
+#     ax.set_xticklabels(xtick_labels, fontsize=10, rotation=45, ha="right")
+    
+#     # Add gridlines
+#     ax.grid(True, linestyle='--', linewidth=0.5, alpha=0.7)
+
+#     # Add a legend for the cost components only
+#     handles = [plt.Rectangle((0,0),1,1, color=cost_colors[i], hatch=cost_hatches[i]) for i in range(num_components)]
+#     ax.legend(handles, cost_components, loc='upper right', fontsize=10, title="Cost Components")
+
+#     # Save the plot
+#     plt.tight_layout()
+#     plt.savefig(os.path.join(plotdir, f"COST_COMPONENTS_T={topology}@A={alpha}.jpg"), bbox_inches='tight')
+#     # plt.show()cache_size_rangecache_size_range
 def plot_cost_components_vs_cache_size(
     resultset, topology, alpha, cache_size_range, strategies, plotdir
 ):
     """
-    Plot cost components for each strategy as a stacked bar plot with strategy names under each bar.
+    Plot cost components for each strategy as grouped bar plots (not stacked) with strategy names under each bar.
     """
     # Cost component names in the result set
     cost_components = ["DEPRECIATION", "BANDWIDTH", "READ_STORAGE", "WRITE_STORAGE", "ROUTERS", "LINKS", "PENALTY"]
     num_components = len(cost_components)
-    
+
     # Prepare for plotting
-    fig, ax = plt.subplots(figsize=(10, 6))  # Increase figure size
-    bar_width = 0.15  # Width of each strategy's bar
-    bar_spacing = 0.05  # Extra space between groups of bars
-    total_bars_per_group = len(strategies) * (bar_width + bar_spacing)
-    
-    # Generate positions for each bar, spacing them based on both cache sizes and strategies
-    x_positions = []
-    for i, cache_size in enumerate(cache_size_range):
-        for j, strategy in enumerate(strategies):
-            x_positions.append(i * (total_bars_per_group + 0.2) + j * (bar_width + bar_spacing))
-    
-    x_positions = np.array(x_positions)
-    
-    # Define color and hatch styles for each cost component
+    fig, ax = plt.subplots(figsize=(12, 8))  # Adjust figure size
+    bar_width = 0.1  # Width of each component's bar
+    bar_spacing = 0.02  # Extra space between bars of components
+    group_spacing = 0.3  # Extra space between groups of bars
+    num_strategies = len(strategies)
+
+    # Generate positions for each group (each cache size)
+    x_group_positions = np.arange(len(cache_size_range)) * (num_strategies * num_components * (bar_width + bar_spacing) + group_spacing)
+
+    # Define color styles for each cost component
     cost_colors = ['#FF7F0E', '#1F77B4', '#2CA02C', '#D62728', '#9467BD', '#8C564B', '#E377C2']
-    cost_hatches = ['/', '\\', '|', '-', '+', 'x', 'o']
-    
+
     # Plot bars for each strategy and component
     for i, strategy in enumerate(strategies):
-        bottom = np.zeros(len(cache_size_range))  # Initialize for stacking bars
-
         for j, component in enumerate(cost_components):
             data = []
             for cache_size in cache_size_range:
@@ -273,45 +344,42 @@ def plot_cost_components_vs_cache_size(
                     "topology": {"name": topology},
                     "cache_placement": {"network_cache": cache_size},
                     "strategy": {"name": strategy},
-                    "workload" :{"name": "STATIONARY", "alpha": alpha},
+                    "workload": {"name": "STATIONARY", "alpha": alpha},
                 })
-                
                 cost = filtered[0][1]['COST'].get(component, 0) if len(filtered) > 0 else 0
                 data.append(cost)
-            
+
+            # Calculate the x positions for this strategy and component
+            x_positions = x_group_positions + i * num_components * (bar_width + bar_spacing) + j * (bar_width + bar_spacing)
+
+            # Plot the bars
             ax.bar(
-                x_positions[i::len(strategies)], data, bar_width,
-                bottom=bottom,
+                x_positions, data, bar_width,
                 color=cost_colors[j],
-                hatch=cost_hatches[j]
+                label=component if i == 0 else "",  # Add legend only once
             )
-            bottom += np.array(data)
 
     # Set labels, title, ticks, and legends
     ax.set_xlabel('Cache Proportion and Strategy', fontsize=14)
     ax.set_ylabel('Cost', fontsize=14)
-    # ax.set_title('Cost Components per Cache Size and Strategy', fontsize=16)
-    
+    ax.set_title('Cost Components per Cache Size and Strategy', fontsize=16)
+
     # Add cache size and strategy labels as x-axis labels
-    xtick_labels = []
-    for cache_size in cache_size_range:
-        for strategy in strategies:
-            xtick_labels.append(f'{strategy}\n(Cache {cache_size})')
-    
-    ax.set_xticks(x_positions)
-    ax.set_xticklabels(xtick_labels, fontsize=10, rotation=45, ha="right")
-    
+    xtick_labels = [f'Cache {cache_size}' for cache_size in cache_size_range]
+    ax.set_xticks(x_group_positions + (num_strategies * num_components * bar_width) / 2)
+    ax.set_xticklabels(xtick_labels, fontsize=12)
+
     # Add gridlines
     ax.grid(True, linestyle='--', linewidth=0.5, alpha=0.7)
 
-    # Add a legend for the cost components only
-    handles = [plt.Rectangle((0,0),1,1, color=cost_colors[i], hatch=cost_hatches[i]) for i in range(num_components)]
-    ax.legend(handles, cost_components, loc='upper right', fontsize=10, title="Cost Components")
+    # Add a legend for the cost components
+    ax.legend(loc='upper right', fontsize=10, title="Cost Components")
 
     # Save the plot
     plt.tight_layout()
     plt.savefig(os.path.join(plotdir, f"COST_COMPONENTS_T={topology}@A={alpha}.jpg"), bbox_inches='tight')
-    # plt.show()cache_size_rangecache_size_range
+    # plt.show()
+
 
 def plot_cache_hits_vs_topology(
     resultset, alpha, cache_size, topology_range, strategies, plotdir
@@ -539,7 +607,7 @@ def run(config, results, plotdir):
     for entry, metrics in resultset:
         cache_size = entry.get("cache_placement", {})["network_cache"]
         workload = entry.get("workload", {}).get("n_contents")
-        normalized_value = int(cache_size * workload / 13)
+        normalized_value = int(cache_size * workload / 19)
         entry.get("cache_placement", {})["network_cache"] = normalized_value
         original_list.append(normalized_value)
         print(normalized_value)
@@ -548,36 +616,36 @@ def run(config, results, plotdir):
     strategies = settings.STRATEGIES
     alphas = settings.ALPHA
     # Plot graphs
-    for topology in topologies:
-        for cache_size in cache_sizes:
-            logger.info(
-                "Plotting cache hit ratio for topology %s and cache size %s vs alpha"
-                % (topology, str(cache_size))
-            )
-            plot_cache_hits_vs_alpha(
-                resultset, topology, cache_size, alphas, strategies, plotdir
-            )
-            logger.info(
-                "Plotting latency for topology %s vs cache size %s"
-                % (topology, str(cache_size))
-            )
-            plot_latency_vs_alpha(
-                resultset, topology, cache_size, alphas, strategies, plotdir
-            )
-            logger.info(
-                "Plotting cost for topology %s vs cache size %s"
-                % (topology, str(cache_size))
-            )
-            plot_cost_vs_alpha(
-                resultset, topology, cache_size, alphas, strategies, plotdir
-            )
-            logger.info(
-                "Plotting cost components for topology %s vs cache size %s"
-                % (topology, str(cache_size))
-            )
-            plot_cost_components_alpha(
-            resultset, topology, cache_size, alphas, strategies, plotdir
-            )
+    # for topology in topologies:
+    #     for cache_size in cache_sizes:
+    #         logger.info(
+    #             "Plotting cache hit ratio for topology %s and cache size %s vs alpha"
+    #             % (topology, str(cache_size))
+    #         )
+    #         plot_cache_hits_vs_alpha(
+    #             resultset, topology, cache_size, alphas, strategies, plotdir
+    #         )
+    #         logger.info(
+    #             "Plotting latency for topology %s vs cache size %s"
+    #             % (topology, str(cache_size))
+    #         )
+    #         plot_latency_vs_alpha(
+    #             resultset, topology, cache_size, alphas, strategies, plotdir
+    #         )
+    #         logger.info(
+    #             "Plotting cost for topology %s vs cache size %s"
+    #             % (topology, str(cache_size))
+    #         )
+    #         plot_cost_vs_alpha(
+    #             resultset, topology, cache_size, alphas, strategies, plotdir
+    #         )
+    #         logger.info(
+    #             "Plotting cost components for topology %s vs cache size %s"
+    #             % (topology, str(cache_size))
+    #         )
+    #         plot_cost_components_alpha(
+    #         resultset, topology, cache_size, alphas, strategies, plotdir
+    #         )
 
     for topology in topologies:
         for alpha in alphas:
