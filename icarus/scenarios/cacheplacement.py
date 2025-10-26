@@ -6,6 +6,7 @@ labelled, these functions deploy caching space to the nodes of the topology.
 """
 import random
 import networkx as nx
+import numpy as np
 
 from icarus.util import iround
 from icarus.registry import register_cache_placement
@@ -24,6 +25,9 @@ __all__ = [
     "optimal_median_cache_placement",
     "optimal_hashrouting_cache_placement",
     "clustered_hashrouting_cache_placement",
+    "green_cache_placement",
+    "hybrid_cache_placement",
+    "allocated_cache_placement"
 ]
 
 
@@ -66,23 +70,49 @@ def degree_centrality_cache_placement(topology, cache_budget, **kwargs):
 
 @register_cache_placement("BETWEENNESS_CENTRALITY")
 def betweenness_centrality_cache_placement(topology, cache_budget, **kwargs):
-    """Places cache budget proportionally to the betweenness centrality of the
-    node.
-
-    Parameters
-    ----------
-    topology : Topology
-        The topology object
-    cache_budget : int
-        The cumulative cache budget
+    """Assigns cache only to nodes with non-zero betweenness-based allocation.
+    
+    Ensures Icarus doesn't see cache_size=0 on any node.
     """
+    # Step 1: Compute betweenness centrality
     betw = dict(nx.betweenness_centrality(topology))
-    icr_candidates = set(topology.graph["icr_candidates"])
-    total_betw = sum(v for k, v in betw.items() if k in icr_candidates)
+    icr_candidates = list(topology.graph["icr_candidates"])
+    centralities = {v: betw[v] for v in icr_candidates}
+
+    # Step 2: Remove candidates with 0 centrality (they shouldn't get any cache)
+    centralities = {v: c for v, c in centralities.items() if c > 0}
+    if not centralities:
+        return
+
+    # Step 3: Allocate cache proportionally
+    total_centrality = sum(centralities.values())
+    raw_alloc = {
+        v: cache_budget * centralities[v] / total_centrality for v in centralities
+    }
+
+    # Step 4: Round allocation, enforce ≥1, and adjust total
+    rounded_alloc = {v: max(1, round(raw_alloc[v])) for v in raw_alloc}
+    total_allocated = sum(rounded_alloc.values())
+
+    # Adjust if we over-allocated due to enforcing ≥1
+    while total_allocated > cache_budget:
+        # Find the node with the smallest allocation > 1 to reduce
+        over_nodes = [v for v in rounded_alloc if rounded_alloc[v] > 1]
+        if not over_nodes:
+            break  # Can't reduce anymore without violating ≥1 constraint
+        # Reduce the one with the smallest centrality
+        victim = min(over_nodes, key=lambda v: centralities[v])
+        rounded_alloc[victim] -= 1
+        total_allocated -= 1
+
+    # Step 5: Apply allocation
     for v in icr_candidates:
-        topology.node[v]["stack"][1]["cache_size"] = iround(
-            cache_budget * betw[v] / total_betw
-        )
+        if v in rounded_alloc:
+            topology.node[v]["stack"][1]["cache_size"] = rounded_alloc[v]
+        else:
+            # Unused ICR candidate – mark explicitly non-caching if needed
+            if "cache_size" in topology.node[v]["stack"][1]:
+                del topology.node[v]["stack"][1]["cache_size"]
 
 
 @register_cache_placement("CONSOLIDATED")
@@ -369,3 +399,179 @@ def clustered_hashrouting_cache_placement(
                 topology.node[v]["stack"][1]["cache_size"] = cache_size
     else:
         raise ValueError("clustering policy %s not supported" % policy)
+
+
+@register_cache_placement("GREEN")
+def green_cache_placement(topology, cache_budget, **kwargs):
+    """Places cache budget uniformly across cache nodes.
+
+    Parameters
+    ----------
+    topology : Topology
+        The topology object
+    cache_budget : int
+        The cumulative cache budget        
+    """
+    
+    seed = kwargs.get("seed", 1.0)
+    RGN = kwargs.get("RGN", 0.2)
+    random.seed(seed)
+
+    icr_candidates = topology.graph.get("icr_candidates", list(topology.nodes))
+    if not icr_candidates:
+        raise ValueError("No ICR candidates found in topology.")
+
+    greenness = {}
+    for node in icr_candidates:
+        carbon_intensity = topology.nodes[node].get("carbon_intensity", 400)
+        greenness[node] = carbon_intensity  # lower is better!
+
+    # Select the greenest nodes (lowest carbon intensity)
+    num_greens = max(1, int(len(icr_candidates) * RGN))  # at least 1 node
+    sorted_nodes = sorted(greenness, key=greenness.get)  # ascending
+    green_nodes = sorted_nodes[:num_greens]
+    print(f"icr_candidates:{len(icr_candidates)}, num_green:{num_greens}")
+   # Determine uniform cache size for selected green nodes
+    cache_size = iround(cache_budget / num_greens)
+    if cache_size == 0:
+        raise ValueError(
+            f"Cache budget ({cache_budget}) too small for {num_greens} green nodes. "
+            f"Each would get zero cache. Increase budget or reduce RGN."
+        )
+
+    for v in green_nodes:
+        topology.node[v]["stack"][1]["cache_size"] = cache_size
+
+
+@register_cache_placement("HYBRID_GREEN_CENTRALITY")
+def hybrid_cache_placement(topology, cache_budget, **kwargs):
+    """
+    Cache placement based on a hybrid score of greenness (low carbon intensity)
+    and betweenness centrality. You control the balance with 'alpha'.
+
+    Improvements:
+    - Greenness normalized using min/max scaling.
+    - Centrality normalized to [0,1].
+    - Stochastic rounding for fairer allocations.
+    - Uses topology.nodes instead of deprecated topology.node.
+    """
+
+    alpha = kwargs.get("alpha", 0.5)
+    seed = kwargs.get("seed", 1)
+    random.seed(seed)
+
+    icr_candidates = topology.graph.get("icr_candidates", list(topology.nodes))
+    if not icr_candidates:
+        raise ValueError("No ICR candidates found in topology.")
+
+    # 1. Greenness (lower carbon intensity is better → normalized score)
+    carbon_intensities = {
+        node: topology.nodes[node].get("carbon_intensity", 400)
+        for node in icr_candidates
+    }
+    min_ci, max_ci = min(carbon_intensities.values()), max(carbon_intensities.values())
+    greenness = {
+        node: (max_ci - ci) / (max_ci - min_ci + 1e-9)
+        for node, ci in carbon_intensities.items()
+    }
+
+    # 2. Betweenness centrality (normalized)
+    betw = nx.betweenness_centrality(topology, normalized=True)
+    centralities = {v: betw.get(v, 0.0) for v in icr_candidates}
+
+    # 3. Combine into hybrid score
+    scores = {
+        node: alpha * greenness[node] + (1 - alpha) * centralities[node]
+        for node in icr_candidates
+    }
+
+    # 4. Normalize scores to allocate proportionally
+    total_score = sum(scores.values()) or 1e-9
+    raw_alloc = {v: cache_budget * scores[v] / total_score for v in scores}
+
+    # 5. Stochastic rounding + ensure ≥1
+    rounded_alloc = {}
+    for node, val in raw_alloc.items():
+        base = int(val)
+        frac = val - base
+        rounded = base + (1 if random.random() < frac else 0)
+        rounded_alloc[node] = max(1, rounded)
+
+    # Adjust to exact budget if needed
+    total_allocated = sum(rounded_alloc.values())
+    while total_allocated > cache_budget:
+        # Reduce from node with lowest score that has >1
+        over_nodes = [n for n, a in rounded_alloc.items() if a > 1]
+        if not over_nodes:
+            break
+        victim = min(over_nodes, key=lambda n: scores[n])
+        rounded_alloc[victim] -= 1
+        total_allocated -= 1
+    while total_allocated < cache_budget:
+        # Add to node with highest score
+        winner = max(rounded_alloc, key=lambda n: scores[n])
+        rounded_alloc[winner] += 1
+        total_allocated += 1
+
+    # 6. Apply cache sizes
+    for node in icr_candidates:
+        topology.nodes[node]["stack"][1]["cache_size"] = rounded_alloc[node]
+
+
+@register_cache_placement("ALLOCATED")
+def allocated_cache_placement(topology, cache_budget, allocations=None, **kwargs):
+    """Assigns cache to ICR candidates based on user-provided allocations.
+
+    - Supports allocations as a list (order = icr_candidates order).
+    - Supports allocations as a dict {node: weight or count}.
+    - If allocations sum to 1.0, they are treated as fractions of cache_budget.
+    - Otherwise, they are treated as weights and normalized to cache_budget.
+    - Ensures Icarus never sees cache_size=0 on active nodes.
+    """
+    icr_candidates = list(topology.graph["icr_candidates"])
+    if allocations is None:
+        raise ValueError("ALLOCATED placement requires 'allocations'")
+
+    # --- Handle list case
+    if isinstance(allocations, list):
+        if len(allocations) != len(icr_candidates):
+            raise ValueError(
+                f"Allocations list length {len(allocations)} != icr_candidates length {len(icr_candidates)}"
+            )
+        allocations = {v: a for v, a in zip(icr_candidates, allocations)}
+
+    # --- Active nodes only
+    active_allocs = {v: a for v, a in allocations.items() if a > 0}
+    if not active_allocs:
+        return
+
+    total_alloc = sum(active_allocs.values())
+
+    # --- Normalize allocations
+    if np.isclose(total_alloc, 1.0):
+        # Treat as fractions
+        norm_alloc = {v: allocations[v] * cache_budget for v in icr_candidates}
+    else:
+        # Treat as weights
+        norm_alloc = {v: (allocations[v] / total_alloc) * cache_budget for v in icr_candidates}
+
+    # --- Round, enforce ≥1 for active, adjust total
+    rounded_alloc = {v: max(1, int(round(norm_alloc.get(v, 0)))) for v in active_allocs}
+    total_allocated = sum(rounded_alloc.values())
+
+    # Fix over-allocation (like in your betweenness code)
+    while total_allocated > cache_budget:
+        over_nodes = [v for v in rounded_alloc if rounded_alloc[v] > 1]
+        if not over_nodes:
+            break
+        victim = min(over_nodes, key=lambda v: allocations[v])
+        rounded_alloc[victim] -= 1
+        total_allocated -= 1
+
+    # --- Apply allocations to topology
+    for v in icr_candidates:
+        if v in rounded_alloc:
+            topology.node[v]["stack"][1]["cache_size"] = rounded_alloc[v]
+        else:
+            if "cache_size" in topology.node[v]["stack"][1]:
+                del topology.node[v]["stack"][1]["cache_size"]

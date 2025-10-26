@@ -59,7 +59,13 @@ DATA_COLLECTORS = {
     "COST": {
         "cost_params": strategy_params["CL2SM"],
     },
-   "CHRCP" : {},
+    "CHRCP" : {},
+    "CARBONFOOTPRINT":{
+        "cost_params": strategy_params["CL2SM"],
+        "cf_params": {
+            "carbon_intensity" : {}
+        }
+    },
     # "LINK_LOAD":{}
     # "REPLICA_MONITOR":{}
 }
@@ -83,12 +89,18 @@ default["content_placement"]["seed"] = 1
 default["cache_policy"]["name"] = "QMARC"
 default["cache_policy"]["alpha"] = 0.3
 default["cache_policy"]["tiers"] = TIERS
-default["cache_placement"]["name"]="UNIFORM"
 
-STRATEGIES = ["CL2SM", "LCE", "LCD", "PROB_CACHE", "CL4M", "CPCache"]
-ALPHA = [0.8, 1.2, 2.0]
+# CACHE_PLACEMENT = [ "HYBRID_GREEN_CENTRALITY","GREEN", "BETWEENNESS_CENTRALITY", "CONSOLIDATED", "UNIFORM", "DEGREE", "RANDOM","OPTIMAL_MEDIAN", "OPTIMAL_HASHROUTING"]
+CACHE_PLACEMENT = ["ALLOCATED", "GREEN", "UNIFORM", "BETWEENNESS_CENTRALITY"]
+# CACHE_PLACEMENT = ["UNIFORM"]
+# STRATEGIES = ["CL2SM", "LCE", "LCD", "PROB_CACHE", "CL4M", "CPCache"]
+STRATEGIES = ["CL2SM"]
+# ALPHA = [0.8, 1.2, 2.0]
+ALPHA = [1.2]
 
 NETWORK_CACHE = [0.005, 0.01, 0.015, 0.02, 0.025, 0.03] # which is 5% and 10%
+# NETWORK_CACHE = [0.015] # which is 5% and 10%
+print(NETWORK_CACHE)
 
 TOPOLOGIES = [
     # "GEANT",
@@ -108,6 +120,29 @@ TOPOLOGIES = [
 #     }
 # }
 
+cache_placement_params = {
+    "OPTIMAL_MEDIAN" :{
+        "n_cache_nodes" :21,
+        "hit_ratio" : 1.0
+    },
+    "RANDOM": {
+        "n_cache_nodes" : 27
+    },
+    "OPTIMAL_HASHROUTING" :{
+        "n_cache_nodes" :27,
+        "hit_ratio" : 1.0
+    },
+    "GREEN" :{
+        "seed": 1.0,
+        "RGN" : 1.0,
+    },
+    "HYBRID_GREEN_CENTRALITY":{
+        "seed": 1.0,
+        "alpha": 0.0,
+    },
+    "ALLOCATED": {"allocations": [3, 0, 5, 22, 1, 1, 9, 0, 9, 1, 3, 1, 14, 7, 18, 17, 0, 1, 2, 0, 0, 1, 9, 22, 1, 1, 2]},
+}
+
 EXPERIMENT_QUEUE = deque()
 
 
@@ -115,23 +150,42 @@ for topology in TOPOLOGIES:
     for alpha in ALPHA:
         for strategy in STRATEGIES:
             for network_cache in NETWORK_CACHE:
-		experiment = copy.deepcopy(default)
-		experiment["cache_placement"]["name"] = cache_placement
-		experiment["cache_placement"]["network_cache"] = network_cache
-		experiment["topology"]["name"] = topology
-		experiment["strategy"]["name"] = strategy
-		experiment["workload"]["alpha"] = alpha
-		if strategy in strategy_params:
-			experiment["strategy"].update(strategy_params[strategy])  
+                for cache_placement in CACHE_PLACEMENT:
+                    experiment = copy.deepcopy(default)
+                    experiment["cache_placement"]["name"] = cache_placement
+                    experiment["cache_placement"]["network_cache"] = network_cache
+                    experiment["topology"]["name"] = topology
+                    experiment["strategy"]["name"] = strategy
+                    experiment["workload"]["alpha"] = alpha
+                    if strategy in strategy_params:
+                        experiment["strategy"].update(strategy_params[strategy])  
+                    if cache_placement in cache_placement_params:
+                        experiment["cache_placement"].update(cache_placement_params[cache_placement])
                     # if topology in topology_params:
                     #     experiment["topology"].update(topology_params[topology])
-			experiment[
-                        	"desc"
-                    		] = "alpha: {}, strategy: {}, topology: {}, network cache: {}".format(
-                        	str(alpha),
-                        	strategy,
-                        	topology,
-                        	str(network_cache),
-                    		)
-                EXPERIMENT_QUEUE.append(experiment)
+                    experiment[
+                        "desc"
+                    ] = "alpha: {}, strategy: {}, topology: {}, network cache: {}".format(
+                        str(alpha),
+                        strategy,
+                        topology,
+                        str(network_cache),
+                    )
+                    EXPERIMENT_QUEUE.append(experiment)
 
+def build_experiment(topology, alpha, strategy, network_cache, cache_placement, allocations=None):
+    import copy
+    exp = copy.deepcopy(default)
+    exp["cache_placement"]["name"] = cache_placement
+    exp["cache_placement"]["network_cache"] = network_cache
+    exp["topology"]["name"] = topology
+    exp["strategy"]["name"] = strategy
+    exp["workload"]["alpha"] = alpha
+    if strategy in strategy_params:
+        exp["strategy"].update(strategy_params[strategy])
+    if cache_placement in cache_placement_params:
+        exp["cache_placement"].update(cache_placement_params[cache_placement])
+    exp["desc"] = f"alpha: {alpha}, strategy: {strategy}, topology: {topology}, network cache: {network_cache}"
+    if allocations is not None:
+        exp["allocations"] = allocations
+    return exp
