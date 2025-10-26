@@ -26,7 +26,7 @@ __all__ = [
     "apportionment",
 ]
 
-logger = logging.getLogger("main")
+logger = logging.getLogger("babel")
 
 class Tree(collections.defaultdict):
     """Tree data structure
@@ -501,7 +501,7 @@ def config_logging(log_level="INFO"):
     log_level = eval("logging.%s" % log_level.upper())
     logging.basicConfig(format=FORMAT, datefmt=DATE_FMT, level=log_level,
                     handlers=[
-                        logging.FileHandler("logfile8.log"),
+                        # logging.FileHandler("logfile_g.log"),
                         # logging.StreamHandler()
                     ])
     

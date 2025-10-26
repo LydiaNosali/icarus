@@ -232,7 +232,6 @@ def run_scenario(settings, params, curr_exp, n_exp):
 
         # Copy parameters so that they can be manipulated
         tree = copy.deepcopy(params)
-
         # Set topology
         topology_spec = tree["topology"]
         topology_name = topology_spec.pop("name")
@@ -266,7 +265,13 @@ def run_scenario(settings, params, curr_exp, n_exp):
             cachepl_spec["cache_budget"] = workload.n_contents * network_cache
             logger.info("total cache_budget:%s"%cachepl_spec["cache_budget"])
             CACHE_PLACEMENT[cachepl_name](topology, **cachepl_spec)
-
+        allocs = {}
+        for v in topology.nodes():
+            stack = topology.node[v].get("stack", [])
+            if len(stack) > 1 and "cache_size" in stack[1]:
+                allocs[v] = stack[1]["cache_size"]
+        # attach to results
+        results = {"allocations": allocs}
         # Assign contents to sources
         # If there are many contents, after doing this, performing operations
         # requiring a topology deep copy, i.e. to_directed/undirected, will
@@ -296,15 +301,20 @@ def run_scenario(settings, params, curr_exp, n_exp):
             )
             return None
 
+        avg_content_size = getattr(workload, "avg_content_size", None)
+        if avg_content_size is not None:
+            # Inject average content size into netconf so it flows to NetworkModel
+            tree.setdefault("netconf", {})["avg_content_size"] = avg_content_size
+        
         # Configuration parameters of network model
         netconf = tree["netconf"]
-
         # Text description of the scenario run to print on screen
         scenario = tree["desc"] if "desc" in tree else "Description N/A"
 
         logger.info(
             "Experiment %d/%d | Preparing scenario: %s", curr_exp, n_exp, scenario
         )
+        print(f"Experiment {curr_exp}/{n_exp} | Preparing scenario: {scenario}, total nb items:{cachepl_spec["cache_budget"]}")
 
         if any(m not in DATA_COLLECTOR for m in metrics):
             logger.error(
@@ -318,7 +328,13 @@ def run_scenario(settings, params, curr_exp, n_exp):
         results = exec_experiment(
             topology, workload, netconf, strategy, cache_policy, collectors
         )
-
+        allocs = {}
+        for v in topology.nodes():
+            stack = topology.node[v].get("stack", [])
+            if len(stack) > 1 and "cache_size" in stack[1]:
+                allocs[v] = stack[1]["cache_size"]
+        results["cache_allocations"] = allocs
+        
         duration = time.time() - start_time
         logger.info(
             "Experiment %d/%d | End simulation | Duration %s.",
@@ -326,6 +342,8 @@ def run_scenario(settings, params, curr_exp, n_exp):
             n_exp,
             timestr(duration, True),
         )
+        print(f"Experiment {curr_exp}/{n_exp} | End simulation | Duration {timestr(duration, True)}")
+        
         return (params, results, duration)
     except KeyboardInterrupt:
         logger.error("Received keyboard interrupt. Terminating")

@@ -126,7 +126,7 @@ class StationaryWorkload:
             "priority": self.local_random.choices(self.priority_values, weights=[1 - self.high_priority_rate, self.high_priority_rate])[0],
             "size": self.local_random.randint(self.data_size_range[0], self.data_size_range[1])
         } for content_id in range(1, n_contents + 1)}
-
+        self.avg_content_size = sum(c["size"] for c in self.contents.values()) / len(self.contents)
         self.alpha = alpha
         self.rate = rate
         self.n_warmup = n_warmup

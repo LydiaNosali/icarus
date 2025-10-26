@@ -230,7 +230,17 @@ class NetworkView:
             if size
             else list(self.model.cache.keys())
         )
+    
+    def cache_tiers(self, node):
+        """Returns a dictionary mapping each caching node to its list of tiers.
 
+        Returns
+        -------
+        per_node_tiers : dict
+            Dictionary where keys are node IDs and values are lists of tier dicts.
+        """
+        return self.model.per_node_tiers.get(node, [])
+    
     def has_cache(self, node):
         """Check if a node has a content cache.
 
@@ -302,7 +312,7 @@ class NetworkView:
         else:
             return False
 
-    def cache_dump(self, node):
+    def cache_dump(self, node, k=None):
         """Returns the dump of the content of a cache in a specific node
 
         Parameters
@@ -316,7 +326,23 @@ class NetworkView:
             List of contents currently in the cache
         """
         if node in self.model.cache:
-            return self.model.cache[node].dump()
+            return self.model.cache[node].dump(k)
+
+    def cache_dump2(self, node, k=None):
+        """Returns the dump of the content of a cache in a specific node
+
+        Parameters
+        ----------
+        node : any hashable type
+            The node identifier
+
+        Returns
+        -------
+        dump : list
+            List of contents currently in the cache
+        """
+        if node in self.model.cache:
+            return self.model.cache[node].dump2(k)
 
     def get_last_access(self, node):
         if node in self.model.cache:
@@ -330,7 +356,7 @@ class NetworkModel:
     calls to the network controller.
     """
 
-    def __init__(self, topology, cache_policy, shortest_path=None):
+    def __init__(self, topology, cache_policy, shortest_path=None, avg_content_size=None, **kwargs):
         """Constructor
 
         Parameters
@@ -338,42 +364,30 @@ class NetworkModel:
         topology : fnss.Topology
             The topology object
         cache_policy : dict or Tree
-            cache policy descriptor. It has the name attribute which identify
-            the cache policy name and keyworded arguments specific to the
-            policy
+            Cache policy descriptor.
         shortest_path : dict of dict, optional
             The all-pair shortest paths of the network
         """
-        # Filter inputs
+
         if not isinstance(topology, fnss.Topology):
             raise ValueError(
                 "The topology argument must be an instance of "
                 "fnss.Topology or any of its subclasses."
             )
 
-        # Shortest paths of the network
         self.shortest_path = (
             dict(shortest_path)
             if shortest_path is not None
             else symmetrify_paths(dict(nx.all_pairs_dijkstra_path(topology)))
         )
-
-        # Network topology
+        self.avg_content_size = avg_content_size
         self.topology = topology
-
-        # Dictionary mapping each content object to its source
-        # dict of location of contents keyed by content ID
         self.content_source = {}
-        # Dictionary mapping the reverse, i.e. nodes to set of contents stored
         self.source_node = {}
 
-        # Dictionary of link types (internal/external)
         self.link_type = nx.get_edge_attributes(topology, "type")
         self.link_delay = fnss.get_delays(topology)
-        # Instead of this manual assignment, I could have converted the
-        # topology to directed before extracting type and link delay but that
-        # requires a deep copy of the topology that can take long time if
-        # many content source mappings are included in the topology
+
         if not topology.is_directed():
             for (u, v), link_type in list(self.link_type.items()):
                 self.link_type[(v, u)] = link_type
@@ -381,44 +395,91 @@ class NetworkModel:
                 self.link_delay[(v, u)] = delay
 
         self.cache_size = {}
-        for node in topology.nodes():
+        
+        self.node_carbon_intensity = {}
+        self.cache = {}
+        
+        policy_name = cache_policy["name"]
+        policy_args = {k: v for k, v in cache_policy.items() if k != "name"}
+        base_tiers = cache_policy.get("tiers", [])
+        self.per_node_tiers = cache_policy.get("tiers_per_node", {})
+
+        for node, data in topology.nodes(data=True):
+            # Carbon intensity (default to 300 if not present)
+            self.node_carbon_intensity[node] = data.get("carbon_intensity", 300) / 1000
+
             stack_name, stack_props = fnss.get_stack(topology, node)
+
             if stack_name == "router":
                 if "cache_size" in stack_props:
-                    logger.info("stack_name:%s, stack_props:%s"%(stack_name, stack_props ))
-                    self.cache_size[node] = stack_props["cache_size"]
+                    size = max(1, stack_props["cache_size"])
+                    self.cache_size[node] = size
+                    # print(f"cache_size:{size}")
+                    
+                    node_policy_args = {k: v for k, v in policy_args.items() if k != "tiers"}
+                    if node in self.per_node_tiers:
+                        tiers_src = self.per_node_tiers[node]
+                    else:
+                        tiers_src = base_tiers
+                        
+                    if tiers_src:
+                        node_tier_list = []
+                        for tier in tiers_src:
+                            tier_copy = tier.copy()
+                            tier_copy["actual_size"] = round(tier_copy["size_factor"] * size)
+                            tier_copy["actual_size_bytes"] = tier_copy["actual_size"] * self.avg_content_size
+                            node_tier_list.append(tier_copy)
+
+                        if node_tier_list and node_tier_list[0]["actual_size"] == 0:
+                            node_tier_list[0]["actual_size"] = 1
+                            node_tier_list[0]["actual_size_bytes"] = 8000
+                            for i in range(1, len(node_tier_list)):
+                                if node_tier_list[i]["actual_size"] > 0:
+                                    node_tier_list[i]["actual_size"] -= 1
+                                    if node_tier_list[i]["actual_size"] == 1:
+                                        node_tier_list[i]["actual_size_bytes"] = 8000 
+                                    else:
+                                        node_tier_list[i]["actual_size_bytes"] -= self.avg_content_size
+                                    break
+
+                        node_tier_list = [t for t in node_tier_list if t["actual_size"] > 0]
+                        self.per_node_tiers[node] = node_tier_list
+                        node_policy_args["tiers"] = node_tier_list
+
+                    if size > 0:
+                        self.cache[node] = CACHE_POLICY[policy_name](size, **node_policy_args)
+
             elif stack_name == "source":
-                contents = stack_props["contents"]
+                contents = stack_props.get("contents", [])
                 self.source_node[node] = contents
                 for content in contents:
                     self.content_source[content] = node
-        if any(c < 1 for c in self.cache_size.values()):
-            logger.warn(
-                "Some content caches have size equal to 0. "
-                "I am setting them to 1 and run the experiment anyway"
-            )
-            for node in self.cache_size:
-                if self.cache_size[node] < 1:
-                    self.cache_size[node] = 1
 
-        policy_name = cache_policy["name"]
-        policy_args = {k: v for k, v in cache_policy.items() if k != "name"}
-        # The actual cache objects storing the content
-        self.cache = {
-            node: CACHE_POLICY[policy_name](self.cache_size[node], **policy_args)
-            for node in self.cache_size
-        }
+        # --- NEW: compute tier statistics ---
+        self.tier_statistics = {}
+        self.tier_sizes_mb = {}
+        for node, tiers in self.per_node_tiers.items():
+            for tier in tiers:
+                tier_name = tier["name"]
+                if tier_name not in self.tier_statistics:
+                    self.tier_statistics[tier_name] = 0
+                self.tier_statistics[tier_name] += 1
+                 # Sum sizes in GB
+                size_bytes = tier["actual_size_bytes"]
+                if tier_name not in self.tier_sizes_mb:
+                    self.tier_sizes_mb[tier_name] = 0
+                self.tier_sizes_mb[tier_name] += size_bytes / (1024 * 1024)  # convert bytes -> MB
 
-        # This is for a local un-coordinated cache (currently used only by
-        # Hashrouting with edge cache)
+        # print example
+        print(f"Tier statistics: {self.tier_statistics}")
+        print(f"Tier sizes (MB): {self.tier_sizes_mb}")
+        # print(f"self.node_carbon_intensity:{self.node_carbon_intensity}")
+        # print(f"self.per_node_tiers:{self.per_node_tiers}")
+        # Local uncoordinated cache (for edge cache mode)
         self.local_cache = {}
 
-        # Keep track of nodes and links removed to simulate failures
+        # Failure simulation state
         self.removed_nodes = {}
-        # This keeps track of neighbors of a removed node at the time of removal.
-        # It is needed to ensure that when the node is restored only links that
-        # were removed as part of the node removal are restored and to prevent
-        # restoring nodes that were removed manually before removing the node.
         self.disconnected_neighbors = {}
         self.removed_links = {}
         self.removed_sources = {}
@@ -543,7 +604,7 @@ class NetworkController:
         """
         main_path = kwargs.get("main_path") or True
         if self.collector is not None and self.session["log"]:
-            self.collector.request_hop(u, v, main_path=main_path)
+            self.collector.request_hop(u, v, main_path=main_path, carbon_intensity=self.model.node_carbon_intensity[v])
 
     def forward_content_hop(self, u, v, **kwargs):
         """Forward a content over link  u -> v.
@@ -561,7 +622,7 @@ class NetworkController:
             *True*
         """
         if self.collector is not None and self.session["log"]:
-            self.collector.content_hop(u, v, **kwargs)
+            self.collector.content_hop(u, v, carbon_intensity=self.model.node_carbon_intensity[v], **kwargs)
 
     def put_content(self, node, **kwargs):
         """Store content in the specified node.
@@ -582,9 +643,11 @@ class NetworkController:
             The evicted object or *None* if no contents were evicted.
         """
         if node in self.model.cache:
-            logger.info(f"node:{node}")
-            self.collector.write_content(node, cache_size=self.model.cache_size[node], **kwargs)
-            return self.model.cache[node].put(self.session["content"], self.session["priority"], **kwargs)
+            logger.info(f"put content: {self.session["content"]} in node {node}")
+            res = self.model.cache[node].put(self.session["content"], self.session["priority"], **kwargs)
+            if (res is None or type(res) is int) and self.collector is not None and self.session["log"]:
+                self.collector.write_content(node, cache_tiers=self.model.per_node_tiers[node], carbon_intensity=self.model.node_carbon_intensity[node],**kwargs)
+            return res 
 
     def get_content(self, node, **kwargs):
         """Get a content from a server or a cache.
@@ -599,22 +662,21 @@ class NetworkController:
         content : bool
             True if the content is available, False otherwise
         """
-        logger.info(f"node:{node}")
         if node in self.model.cache:
             cache_hit = self.model.cache[node].get(self.session["content"], self.session["priority"])
+            logger.info(f"is content:{self.session["content"]} in cache {node} : {cache_hit}")
             if cache_hit:
                 if self.session["log"]:
-                    tier_index = self.get_tier_index(node, self.session["content"])
-                    self.collector.cache_hit(node, cache_size=self.model.cache_size[node], tier_index=tier_index, **kwargs)
+                    tier_index = self.get_tier_index(node, self.session["content"], self.session['priority'])
+                    self.collector.cache_hit(node, cache_tiers=self.model.per_node_tiers[node], tier_index=tier_index, carbon_intensity=self.model.node_carbon_intensity[node], **kwargs)
             else:
                 if self.session["log"]:
                     self.collector.cache_miss(node)
-            logger.info(f"cache_hit:{cache_hit}")
             return cache_hit
         name, props = fnss.get_stack(self.model.topology, node)
         if name == "source" and self.session["content"] in props["contents"]:
             if self.collector is not None and self.session["log"]:
-                self.collector.server_hit(node, server_size=len(self.model.source_node[node]), **kwargs)
+                self.collector.server_hit(node, server_size=len(self.model.source_node[node]), carbon_intensity=self.model.node_carbon_intensity[node], **kwargs)
             return True
         else:
             return False
@@ -848,7 +910,11 @@ class NetworkController:
         if node in self.model.local_cache:
             return self.model.local_cache[node].put(self.session["content"], self.session["priority"])
 
-    def get_tier_index(self, node, content):
+    def get_tier_index(self, node, content, priority):
         if node in self.model.cache:
-            return self.model.cache[node].get_tier_index(content)
+            return self.model.cache[node].get_tier_index(content, priority)
+        
+    def storage_div(self, path, storage_gain, storage_loss, dep, stor, band, trans, pen, min_gain):
+        if self.collector is not None and self.session["log"]:
+            self.collector.storage_div(path, storage_gain, storage_loss, dep, stor, band, trans, pen, min_gain)
     

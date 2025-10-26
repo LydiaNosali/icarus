@@ -200,13 +200,15 @@ def plot_lines(resultset, desc, filename, plotdir):
     plot_args = desc.get("plot_args", {})
     plot_empty = desc.get("plotempty", True)
     empty = True
-    xvals = sorted(desc["xvals"])
+    # xvals = sorted(desc["xvals"])
+    real_xvals = sorted(desc["xvals"])         # Used for filtering and conditions
+    xvals = list(range(len(real_xvals)))  
     for i in range(len(yvals)):
         means = np.zeros(len(xvals))
         err = np.zeros(len(xvals))
         for j in range(len(xvals)):
             condition = Tree(desc["filter"])
-            condition.setval(desc["xparam"], xvals[j])
+            condition.setval(desc["xparam"], real_xvals[j])
             if ycondnames is not None:
                 condition.setval(ycondnames[i], ycondvals[i])
             data = [
@@ -249,7 +251,7 @@ def plot_lines(resultset, desc, filename, plotdir):
             legend_args["loc"] = desc["legend_loc"]
         plt.legend(legend, prop={"size": LEGEND_SIZE}, **legend_args)
     ax1.set_xticks(xvals)
-    ax1.set_xticklabels([str(x) for x in xvals])
+    ax1.set_xticklabels([str(x * 10) for x in real_xvals])
     plt.savefig(os.path.join(plotdir, filename), bbox_inches="tight")
     plt.close(fig)
 
@@ -364,19 +366,20 @@ def plot_bar_chart(resultset, desc, filename, plotdir):
     """
     fig = plt.figure()
     _, ax1 = plt.subplots()
+    fontsize = 24
     plt.grid(which="major", color="k", axis="y", linestyle=":")
     if "title" in desc:
-        plt.title(desc["title"])
+        plt.title(desc["title"], fontsize=fontsize)
     # Set axis below bars
     ax1.set_axisbelow(True)
     if "xlabel" in desc:
-        plt.xlabel(desc["xlabel"])
+        plt.xlabel(desc["xlabel"], fontsize=fontsize)
     if "ylabel" in desc:
-        plt.ylabel(desc["ylabel"])
+        plt.ylabel(desc["ylabel"], fontsize=fontsize)
     if "filter" not in desc or desc["filter"] is None:
         desc["filter"] = {}
     plot_empty = desc.get("plotempty", True)
-
+    ax1.tick_params(axis='both', which='major', labelsize=fontsize)
     ymetrics = desc["ymetrics"]
     ycondnames = desc["ycondnames"] if "ycondnames" in desc else None
     ycondvals = desc["ycondvals"] if "ycondvals" in desc else None
@@ -406,11 +409,16 @@ def plot_bar_chart(resultset, desc, filename, plotdir):
     empty = True
     # Spacing attributes
     # width of a group of bars
-    group_width = desc["group_width"] if "group_width" in desc else 0.4
-    width = group_width / len(placement)  # width of a single bar
-    separation = width / 2  # space between adjacent groups
-    border = 0.6 * separation  # left and right borders
-
+    # group_width = desc["group_width"] if "group_width" in desc else 0.4
+    # width = group_width / len(placement)  # width of a single bar
+    # separation = width / 2  # space between adjacent groups
+    # border = 0.6 * separation  # left and right borders
+    
+    group_width = 0.2  # force thinner bars (lower = thinner)
+    width = group_width / max(len(placement), 1)
+    separation = 0.1   # fixed spacing between groups
+    border = 0.2     # left
+    
     elem = collections.defaultdict(int)  # bar objects (for legend)
     # Select colors and hatches
     if "bar_color" in desc and all(y in desc["bar_color"] for y in yvals):
@@ -453,6 +461,8 @@ def plot_bar_chart(resultset, desc, filename, plotdir):
                     meanval,
                     width,
                     color=color[yvals[l]],
+                    edgecolor="black",
+                    linewidth=0.8,  
                     yerr=yerr,
                     bottom=bottom,
                     ecolor="k",

@@ -17,7 +17,7 @@ from icarus.registry import register_data_collector
 from icarus.tools import cdf
 from icarus.util import Tree, inheritdoc
 
-logger = logging.getLogger("main")
+logger = logging.getLogger("babel")
 
 
 __all__ = [
@@ -27,9 +27,11 @@ __all__ = [
     "LinkLoadCollector",
     "LatencyCollector",
     "CostCollector",
+    "CarbonFootprintCollector",
     "PathStretchCollector",
     "DummyCollector",
     "CHRCPCollector",
+    "LiveReplicaMonitor",
 ]
 
 chrcp = {}
@@ -149,6 +151,9 @@ class DataCollector:
         """
         pass
 
+    def storage_div(self, path, storage_gain, storage_loss, dep, stor, band, trans, pen, min_gain):
+        pass
+
     def results(self):
         """Returns the aggregated results measured by the collector.
 
@@ -182,6 +187,7 @@ class CollectorProxy(DataCollector):
         "server_hit",
         "request_hop",
         "content_hop",
+        "storage_div",
         "results",
     )
 
@@ -236,6 +242,11 @@ class CollectorProxy(DataCollector):
             c.content_hop(u, v, **kwargs)
 
     @inheritdoc(DataCollector)
+    def storage_div(self, path, storage_gain, storage_loss, dep, stor, band, trans, pen, min_gain):
+        for c in self.collectors["storage_div"]:
+            c.storage_div(path, storage_gain, storage_loss, dep, stor, band, trans, pen, min_gain)
+
+    @inheritdoc(DataCollector)
     def end_session(self, success=True):
         for c in self.collectors["end_session"]:
             c.end_session(success)
@@ -243,7 +254,6 @@ class CollectorProxy(DataCollector):
     @inheritdoc(DataCollector)
     def results(self):
         return Tree(**{c.name: c.results() for c in self.collectors["results"]})
-
 
 @register_data_collector("LINK_LOAD")
 class LinkLoadCollector(DataCollector):
@@ -326,7 +336,6 @@ class LinkLoadCollector(DataCollector):
             }
         )
 
-
 @register_data_collector("LATENCY")
 class LatencyCollector(DataCollector):
     """Data collector measuring latency, i.e. the delay taken to delivery a
@@ -375,6 +384,8 @@ class LatencyCollector(DataCollector):
         if self.cdf:
             self.latency_data.append(self.sess_latency)
         self.latency += self.sess_latency
+        
+        # logger.info(f"LatencyCollector latency:{self.sess_latency}")
 
     @inheritdoc(DataCollector)
     def results(self):
@@ -382,7 +393,6 @@ class LatencyCollector(DataCollector):
         if self.cdf:
             results["CDF"] = cdf(self.latency_data)
         return results
-
 
 @register_data_collector("COST")
 class CostCollector(DataCollector):
@@ -400,10 +410,11 @@ class CostCollector(DataCollector):
         params : cost model and tiers info
         """
         
+        self.request_size = 150 * 8
         self.sess_depreciation_cost = 0.0
         self.sess_bandwidth_cost = 0.0
-        self.sess_get_storage_energy_cost = 0.0
-        self.sess_put_storage_energy_cost = 0.0
+        self.sess_read_cost = 0.0
+        self.sess_write_cost = 0.0
         self.sess_routers_energy_cost = 0.0
         self.sess_links_energy_cost = 0.0
         self.sess_penalty_cost = 0.0
@@ -411,112 +422,99 @@ class CostCollector(DataCollector):
 
         self.depreciation_cost = 0.0
         self.bandwidth_cost = 0.0
-        self.get_storage_energy_cost = 0.0
-        self.put_storage_energy_cost = 0.0
+        self.read_cost = 0.0
+        self.write_cost = 0.0
         self.routers_energy_cost = 0.0
         self.links_energy_cost = 0.0
         self.penalty_cost = 0.0
         self.cost = 0.0
 
         self.view = view
+        self.sess_count = 0
 
         self.cost_params = params['cost_params']
-        self.tiers = params['tiers']
 
         self.penalty_table = self.cost_params ['penalty_table']
         self.cost_per_joule = self.cost_params ['cost_per_joule']
         self.cost_per_bit = self.cost_params ['cost_per_bit']
         self.router_energy_density = self.cost_params ['router_energy_density']
         self.link_energy_density = self.cost_params ['link_energy_density']
-        
+
+        self.log_file_path = 'path_log.csv'
+
     @inheritdoc(DataCollector)
     def start_session(self, timestamp, receiver, content, priority):
-        logger.info(f"start session {timestamp}")
+        self.sess_count += 1
+        self.sess_latency = 0.0
         self.content = content
         self.receiver = receiver
         self.priority = priority
-        self.sess_latency = 0.0
         self.sess_depreciation_cost = 0.0
         self.sess_bandwidth_cost = 0.0
-        self.sess_get_storage_energy_cost = 0.0
-        self.sess_put_storage_energy_cost = 0.0
+        self.sess_read_cost = 0.0
+        self.sess_write_cost = 0.0
         self.sess_routers_energy_cost = 0.0
         self.sess_links_energy_cost = 0.0
         self.sess_penalty_cost = 0.0
         self.sess_cost = 0.0
 
+    def _resolve_cache_tiers(self, node, cache_tiers_kw):
+        # Prefer the list passed in the event kwargs
+        if isinstance(cache_tiers_kw, list):
+            return cache_tiers_kw
+        # Fallback to the view (per-node tiers built in NetworkModel)
+        try:
+            return self.view.cache_tiers().get(node, [])
+        except Exception:
+            return getattr(self.view, "model", None) and getattr(self.view.model, "node_tiers", {}).get(node, []) or []
+
     @inheritdoc(DataCollector)
     def request_hop(self, u, v, **kwargs):
         main_path = kwargs.get("main_path") or True
         if main_path:
-            request_size = 150
             self.sess_latency += self.view.link_delay(u, v)
-
-            self.sess_routers_energy_cost += request_size * self.router_energy_density * self.cost_per_joule
-            self.sess_links_energy_cost += request_size * self.link_energy_density * self.cost_per_joule
-            # self.sess_bandwidth_cost += request_size * self.cost_per_bit
-            logger.info(f"in request_hop cost collector. node {u} to node {v},sess_routers_energy_cost : {self.sess_routers_energy_cost}, sess_links_energy_cost:{self.sess_links_energy_cost}")
-
-
+            self.sess_routers_energy_cost += self.request_size * self.router_energy_density * self.cost_per_joule
+            self.sess_links_energy_cost += self.request_size * self.link_energy_density * self.cost_per_joule
+            self.sess_bandwidth_cost += self.request_size * self.cost_per_bit
+            
     @inheritdoc(DataCollector)
     def content_hop(self, u, v, **kwargs):
         main_path = kwargs.get("main_path") or True
         if main_path:
+            content_size = kwargs["size"] * 8
             self.sess_latency += self.view.link_delay(u, v)
-            content_size = kwargs["size"]
             self.sess_routers_energy_cost += content_size * self.router_energy_density * self.cost_per_joule
             self.sess_links_energy_cost += content_size * self.link_energy_density * self.cost_per_joule
-            # self.sess_bandwidth_cost += content_size * self.cost_per_bit
-            logger.info(f"in content_hop cost collector. node {u} to node {v},sess_routers_energy_cost : {self.sess_routers_energy_cost}, sess_links_energy_cost:{self.sess_links_energy_cost}")
-
+            self.sess_bandwidth_cost += content_size * self.cost_per_bit
+            
     @inheritdoc(DataCollector)
     def cache_hit(self, node, **kwargs):
-        tier_index = kwargs.get("tier_index") or 0
-        cache_size = kwargs.get("cache_size") or None
-        for tier in self.tiers:
-            tier['actual_size'] = round(tier['size_factor'] * cache_size)
-            
-        # Ensure the first tier does not end up with zero size
-        if self.tiers[0]['actual_size'] == 0:
-            self.tiers[0]['actual_size'] = 1
-            for i in range(1, len(self.tiers)):
-                if self.tiers[i]['actual_size'] > 0:
-                    self.tiers[i]['actual_size'] -= 1
-                    break
-        # Filter out tiers with zero actual size
-        self.tiers = [tier for tier in self.tiers if tier['actual_size'] > 0]
+        # read cost
         content_size = kwargs["size"]
+        tier_index = kwargs.get("tier_index")
+        cache_tiers = self._resolve_cache_tiers(node, kwargs.get("cache_tiers"))
+        if not cache_tiers:
+            return
         
-        tiers_last_access = self.view.get_last_access(node)
-        
-        tier = self.tiers[tier_index]
+        if tier_index is None or not (0 <= tier_index < len(cache_tiers)):
+            tier_index = 0
+            
+        tier = cache_tiers[tier_index]
         tier_active_power_density  = tier['active_caching_power_density']
         tier_idle_power_density = tier['idle_power_density']
+
+        tiers_last_access = self.view.get_last_access(node)
         
         idle_time = 0.0 if tiers_last_access[tier_index]==0 else time.time() - tiers_last_access[tier_index]
-
         read_time = tier['latency'] + content_size / tier['read_throughput']
-        tier_max_capacity = tier['actual_size']
-        tier_purchase_cost = tier['purchase_cost']
-        tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
+        self.sess_read_cost += ((tier_idle_power_density * idle_time) + (tier_active_power_density * content_size * 8 * read_time)) * self.cost_per_joule
         
-        # self.sess_depreciation_cost += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity)
-        self.sess_get_storage_energy_cost += ((tier_idle_power_density * idle_time) + (tier_active_power_density * read_time * content_size)) * self.cost_per_joule
-        
-        for i, tier in enumerate(self.tiers[tier_index:], start=tier_index):
-            tier_active_power_density  = tier['active_caching_power_density']
-            tier_idle_power_density = tier['idle_power_density']
-            
-            idle_time = 0.0 if tiers_last_access[i]==0 else time.time() - tiers_last_access[i]
-
-            write_time = tier['latency'] + content_size / tier['write_throughput']
-            tier_max_capacity = tier['actual_size']
+        # depreciation cost
+        if tier_index != 0:
+            tier_max_capacity = tier['actual_size_bytes']
             tier_purchase_cost = tier['purchase_cost']
             tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
-
-            # self.sess_depreciation_cost += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity)
-            self.sess_get_storage_energy_cost += ((tier_idle_power_density * idle_time) + (tier_active_power_density * write_time * content_size)) * self.cost_per_joule
-        logger.info(f"cache_hit in node {node}. sess_get_storage_energy_cost : {self.sess_get_storage_energy_cost}")
+            self.sess_depreciation_cost += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity)
 
     @inheritdoc(DataCollector)
     def server_hit(self, node, **kwargs):
@@ -525,92 +523,86 @@ class CostCollector(DataCollector):
         server_read_throughput = 4e+10
         server_active_power_density = 10**-9
         read_time = server_latency + content_size / server_read_throughput
-        self.sess_get_storage_energy_cost +=  server_active_power_density * read_time * content_size * self.cost_per_joule
+        self.sess_read_cost +=  server_active_power_density * read_time * content_size * 8 * self.cost_per_joule
         
-        server_idle_power_density =10**-12
-        server_size = kwargs.get("server_size") or None
+        server_size = kwargs.get("server_size")
         server_purchase_cost = 200
         server_lifespan = 5 * 365 * 24 * 60 * 60
-
-        # self.sess_depreciation_cost += (content_size * server_purchase_cost) / (server_lifespan * server_size)
-        logger.info(f"server_hit in server {node}. sess_get_storage_energy_cost : {self.sess_get_storage_energy_cost}")
+        self.sess_depreciation_cost += (content_size * server_purchase_cost) / (server_lifespan * server_size)
         
     @inheritdoc(DataCollector)
     def write_content(self, node, **kwargs):
-        cache_size = kwargs.get("cache_size")
-        for tier in self.tiers:
-            tier['actual_size'] = round(tier['size_factor'] * cache_size)
-        # Ensure the first tier does not end up with zero size
-        if self.tiers[0]['actual_size'] == 0:
-            self.tiers[0]['actual_size'] = 1
-            for i in range(1, len(self.tiers)):
-                if self.tiers[i]['actual_size'] > 0:
-                    self.tiers[i]['actual_size'] -= 1
-                    break
-        # Filter out tiers with zero actual size
-        self.tiers = [tier for tier in self.tiers if tier['actual_size'] > 0]
-        tier_index = kwargs.get("tier_index") or 0
         content_size = kwargs["size"]
+        tier_index = kwargs.get("tier_index")
+        
+        cache_tiers = self._resolve_cache_tiers(node, kwargs.get("cache_tiers"))
+        if not cache_tiers:
+            return
 
+        if tier_index is None or not (0 <= tier_index < len(cache_tiers)):
+            tier_index = 0
         tiers_last_access = self.view.get_last_access(node)
-        for i, tier in enumerate(self.tiers[tier_index:], start=tier_index):
+        for i, tier in enumerate(cache_tiers[tier_index:], start=tier_index):
             tier_active_power_density  = tier['active_caching_power_density']
             tier_idle_power_density = tier['idle_power_density']
             
             idle_time = 0.0 if tiers_last_access[i]==0 else time.time() - tiers_last_access[i]
-            
             write_time = tier['latency'] + content_size / tier['write_throughput']
-            tier_max_capacity = tier['actual_size']
+            self.sess_write_cost += ((tier_idle_power_density * idle_time) + (tier_active_power_density * write_time * content_size * 8)) * self.cost_per_joule
+            
+            tier_max_capacity = tier['actual_size_bytes']
             tier_purchase_cost = tier['purchase_cost']
             tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
-
-            # self.sess_depreciation_cost += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity)
-            self.sess_put_storage_energy_cost += ((tier_idle_power_density * idle_time) + (tier_active_power_density * write_time * content_size)) * self.cost_per_joule
-            logger.info(f"i:{i}, time.time():{time.time()}, tiers_last_access[i]:{tiers_last_access[i]}")
-            logger.info(f"idle_time:{idle_time},tier_active_power_density:{tier_active_power_density}, write_time:{write_time}")
-        logger.info(f"write_content in node {node}. sess_put_storage_energy_cost : {self.sess_put_storage_energy_cost}")
+            self.sess_depreciation_cost += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity)
 
     @inheritdoc(DataCollector)
     def end_session(self, success=True):
         if not success:
             logger.info(f"end failed session")
             return
-        # self.depreciation_cost += self.sess_depreciation_cost
-        # self.bandwidth_cost += self.sess_bandwidth_cost
-        self.get_storage_energy_cost += self.sess_get_storage_energy_cost
-        self.put_storage_energy_cost += self.sess_put_storage_energy_cost
+        self.depreciation_cost += self.sess_depreciation_cost
+        self.bandwidth_cost += self.sess_bandwidth_cost
+        self.read_cost += self.sess_read_cost
+        self.write_cost += self.sess_write_cost
         self.routers_energy_cost += self.sess_routers_energy_cost
         self.links_energy_cost += self.sess_links_energy_cost
-        # logger.info(f"REAL latency:{self.sess_latency}")
-        # for entry in self.penalty_table:
-        #     if self.sess_latency <= entry["delay"]:
-        #         if self.priority == "high":
-        #             self.sess_penalty_cost += entry["P0"] * 1e-8
-        #             self.penalty_cost += self.sess_penalty_cost
-        #         elif self.priority == "low":
-        #             self.sess_penalty_cost += entry["P1"] * 1e-8
-        #             self.penalty_cost += self.sess_penalty_cost
-        # logger.info(f"end_session. sess_penalty_cost : {self.sess_penalty_cost}")  
-        self.sess_cost += self.sess_get_storage_energy_cost + self.sess_put_storage_energy_cost + self.sess_routers_energy_cost + self.sess_links_energy_cost
-        logger.info(f"end_session. sess_cost : {self.sess_cost}")
+        for entry in self.penalty_table:
+            if self.sess_latency <= entry["delay"]:
+                if self.priority == "high":
+                    self.sess_penalty_cost += entry["P0"] * 1e-8
+                    self.penalty_cost += self.sess_penalty_cost
+                    break
+                elif self.priority == "low":
+                    self.sess_penalty_cost += entry["P1"] * 1e-8
+                    self.penalty_cost += self.sess_penalty_cost
+                    break
+        self.sess_cost += self.sess_bandwidth_cost + self.sess_routers_energy_cost + self.sess_links_energy_cost + self.sess_penalty_cost + self.sess_depreciation_cost + self.sess_read_cost + self.sess_write_cost
         self.cost += self.sess_cost
-        logger.info(f"end_session. cost : {self.cost}")
-        # logger.info("Cost Collector: content:%s, receiver:%s, depreciation:%s, get storage:%s, put storage:%s, bandwidth:%s, routers:%s, links:%s, penalty:%s, total:%s"%
-        #             (self.content, self.receiver, self.sess_depreciation_cost, self.sess_get_storage_energy_cost, self.sess_put_storage_energy_cost, self.sess_bandwidth_cost, self.sess_routers_energy_cost, self.sess_links_energy_cost,self.sess_penalty_cost, self.sess_cost))
+        # logger.info(f"end_session. cost : {self.cost}")
+        # logger.info(f"end_session. sess_cost : {self.sess_cost}")
+        # logger.info(f"end_session. sess_penalty_cost : {self.sess_penalty_cost}") 
+        # logger.info(f"end_session. bandwidth_cost:{self.bandwidth_cost}, read_cost : {self.read_cost}, write_cost:{self.write_cost}, routers_energy_cost:{self.routers_energy_cost}, links_energy_cost:{self.links_energy_cost}")
+        logger.info(f"REAL {self.sess_count}, {self.receiver}, {self.content}, {self.sess_bandwidth_cost}, {self.sess_routers_energy_cost + self.sess_links_energy_cost}, {self.sess_penalty_cost}, {self.sess_depreciation_cost}, {self.sess_read_cost+ self.sess_write_cost}")
+        # Log the session costs to a file
+                 # Log the session costs to a CSV file
+        # with open(self.log_file_path, 'a', newline='') as file:
+        #     writer = csv.writer(file)
+        #     writer.writerow([self.sess_count, self.receiver, self.content, self.sess_bandwidth_cost,
+        #                      self.sess_routers_energy_cost+ self.sess_links_energy_cost, self.sess_penalty_cost,
+        #                      self.sess_depreciation_cost, self.sess_read_cost+ self.sess_write_cost])
 
-        
     @inheritdoc(DataCollector)
     def results(self):
         results = Tree(
             {
-            "MEAN": round(self.cost, 3),
-            "DEPRECIATION": round(self.depreciation_cost, 3),
-            "BANDWIDTH": round(self.bandwidth_cost,3),
-            "READ_STORAGE": round(self.get_storage_energy_cost, 3),
-            "WRITE_STORAGE": round(self.put_storage_energy_cost, 3),
-            "ROUTERS": round(self.routers_energy_cost, 3),
-            "LINKS": round(self.links_energy_cost, 3),
-            "PENALTY": round(self.penalty_cost, 3)
+            "MEAN": self.cost / self.sess_count,
+            "DEPRECIATION": self.depreciation_cost / self.sess_count,
+            "BANDWIDTH": self.bandwidth_cost / self.sess_count,
+            "READ_STORAGE": self.read_cost / self.sess_count,
+            "WRITE_STORAGE": self.write_cost / self.sess_count,
+            "ROUTERS": self.routers_energy_cost / self.sess_count,
+            "LINKS": self.links_energy_cost / self.sess_count,
+            "PENALTY": self.penalty_cost / self.sess_count
             })
         chrcp["cost"] = round(self.cost, 3)
         return results
@@ -639,7 +631,240 @@ class CHRCPCollector(DataCollector):
             "MEAN": chrcp["cost"]/chrcp["chr"] if chrcp["chr"] != 0 else 0
             })
         return results
+
+@register_data_collector("CARBONFOOTPRINT")
+class CarbonFootprintCollector(DataCollector):
+    """Data collector measuring Carbon footprint
+    """
+
+    def __init__(self, view, **params):
+        """Constructor
+
+        Parameters
+        ----------
+        view : NetworkView
+        The network view instance
+        params : carbon footprint model and tiers info
+        """
+        
+        self.request_size = 150 * 8 # bytes -> bits
+        self.sess_depreciation_cf = 0.0
+        self.sess_read_cf = 0.0
+        self.sess_write_cf = 0.0
+        self.sess_idle_cf = 0.0
+        self.sess_routers_energy_cf = 0.0
+        self.sess_links_energy_cf = 0.0
+        self.sess_cf = 0.0
+        self.sess_embodied_cf = 0.0
+
+        self.depreciation_cf = 0.0
+        self.read_cf = 0.0
+        self.write_cf = 0.0
+        self.idle_cf = 0.0
+        self.routers_energy_cf = 0.0
+        self.links_energy_cf = 0.0
+        self.cf = 0.0
+        self.embodied_cf = 0.0
+
+        self.view = view
+        self.sess_count = 0
+
+        self.cost_params = params['cost_params']
+        self.router_energy_density = self.cost_params ['router_energy_density'] # j/bit
+        self.link_energy_density = self.cost_params ['link_energy_density'] # j/bit
+
+    @inheritdoc(DataCollector)
+    def start_session(self, timestamp, receiver, content, priority):
+        self.sess_count += 1
+        self.content = content
+        self.receiver = receiver
+        self.priority = priority
+        self.timestamp = timestamp
+
+        self.sess_depreciation_cf = 0.0
+        self.sess_read_cf = 0.0
+        self.sess_write_cf = 0.0
+        self.sess_routers_energy_cf = 0.0
+        self.sess_links_energy_cf = 0.0
+        self.sess_idle_cf = 0.0
+        self.sess_cf = 0.0
+        self.sess_embodied_cf = 0.0
+
+    def _resolve_cache_tiers(self, node, cache_tiers_kw):
+        if isinstance(cache_tiers_kw, list):
+            return cache_tiers_kw
+        try:
+            return self.view.cache_tiers().get(node, [])
+        except Exception:
+            return getattr(self.view, "model", None) and getattr(self.view.model, "node_tiers", {}).get(node, []) or []
+
+    def _ci(self, node_hint=None, ci_kw=None):
+        if ci_kw is not None:
+            return ci_kw
+        # fallback: use node carbon intensity if available, else 0.3
+        model = getattr(self.view, "model", None)
+        if model is not None and hasattr(model, "node_carbon_intensity") and node_hint is not None:
+            return model.node_carbon_intensity.get(node_hint, 0.3)
+        return 0.3
     
+    @inheritdoc(DataCollector)
+    def request_hop(self, u, v, **kwargs):
+        main_path = kwargs.get("main_path") or True
+        if main_path:
+            ci = kwargs.get("carbon_intensity")
+            if ci is None:  # fallback: approximate with source node CI
+                ci = self._ci(node_hint=u)
+            self.sess_routers_energy_cf += self.request_size * self.router_energy_density * ci / 3.6e6
+            self.sess_links_energy_cf += self.request_size * self.link_energy_density * ci / 3.6e6
+            
+    @inheritdoc(DataCollector)
+    def content_hop(self, u, v, **kwargs):
+        main_path = kwargs.get("main_path") or True
+        if main_path:
+            ci = kwargs.get("carbon_intensity")
+            if ci is None:
+                ci = self._ci(node_hint=u)  # Kg CO2 eq/KwH
+            content_size = kwargs["size"] * 8  # bytes -> bit
+            self.sess_routers_energy_cf += content_size * self.router_energy_density * ci / 3.6e6   # Kg CO2 eq
+            self.sess_links_energy_cf += content_size * self.link_energy_density * ci / 3.6e6   # Kg CO2 eq
+            
+    @inheritdoc(DataCollector)
+    def cache_hit(self, node, **kwargs):
+        # read cf
+        content_size = kwargs["size"]  # Byte
+        tier_index = kwargs.get("tier_index") or 0
+        cache_tiers = self._resolve_cache_tiers(node, kwargs.get("cache_tiers"))
+        if not cache_tiers:
+            return
+        if tier_index is None or not (0 <= tier_index < len(cache_tiers)):
+            tier_index = 0
+            
+        ci = self._ci(node_hint=node, ci_kw=kwargs.get("carbon_intensity")) # Kg CO2 eq/KwH
+        tier  = cache_tiers[0]
+        
+        tier_idle_power_density = tier['idle_power_density']    # w
+        tiers_last_access = self.view.get_last_access(node)
+        idle_time = 0.0 if tiers_last_access[tier_index]==0 else time.time() - tiers_last_access[tier_index]    # s
+        self.sess_idle_cf += tier_idle_power_density * idle_time * ci / 3.6e6
+        
+        tier_active_power_density  = tier['active_caching_power_density']   # w/bit
+        read_time = tier['latency'] + content_size / tier['read_throughput']    # s
+        self.sess_read_cf += tier_active_power_density * content_size * 8 * read_time * ci / 3.6e6
+        
+        tier_max_capacity_bytes = tier['actual_size_bytes']
+        
+        # depreciation cf
+        if tier_index != 0:
+            tier_purchase_cost = tier['purchase_cost']
+            tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
+            self.sess_depreciation_cf += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity_bytes)
+            
+        # Embodied CF amortization
+        TE = tier["embodied_kgco2e_per_gb"] * tier_max_capacity_bytes / (8 * 1024**3)
+        EL = tier["lifespan"] * 365 * 24 * 60 * 60  # lifespan in seconds
+        RR = content_size / (8 * 1024**3)  # content size in GB
+        TR = tier_max_capacity_bytes
+        ecf = TE * (read_time / EL) * (RR / TR)
+        self.sess_embodied_cf += ecf
+
+    @inheritdoc(DataCollector)
+    def server_hit(self, node, **kwargs):
+        ci = self._ci(node_hint=node, ci_kw=kwargs.get("carbon_intensity"))
+        content_size = kwargs["size"]
+        server_latency = 1e-7
+        server_read_throughput = 4e+10
+        server_active_power_density = 10**-9
+        read_time = server_latency + content_size / server_read_throughput
+        self.sess_read_cf +=  server_active_power_density * read_time * content_size * 8 * ci
+        
+        server_size = kwargs.get("server_size")
+        server_purchase_cost = 200
+        server_lifespan = 5 * 365 * 24 * 60 * 60
+        self.sess_depreciation_cf += (content_size * server_purchase_cost) / (server_lifespan * server_size)
+        server_capacity_gb = server_size / (8 * 1024**3)
+        TE = 0.2 * server_capacity_gb
+        RR = content_size / (8 * 1024**3)
+        ecf = TE * (read_time / server_lifespan) * (RR / server_capacity_gb)
+        self.sess_embodied_cf += ecf
+        
+    @inheritdoc(DataCollector)
+    def write_content(self, node, **kwargs):
+        content_size = kwargs["size"]
+        tier_index = kwargs.get("tier_index") or 0
+        cache_tiers = self._resolve_cache_tiers(node, kwargs.get("cache_tiers"))
+        if not cache_tiers:
+            return
+        if tier_index is None or not (0 <= tier_index < len(cache_tiers)):
+            tier_index = 0
+
+        ci = self._ci(node_hint=node, ci_kw=kwargs.get("carbon_intensity"))
+
+        for i, tier in enumerate(cache_tiers[tier_index:], start=tier_index):
+            tier_idle_power_density = tier['idle_power_density']
+            tiers_last_access = self.view.get_last_access(node)
+            idle_time = 0.0 if tiers_last_access[i]==0 else time.time() - tiers_last_access[i]
+            self.sess_idle_cf += tier_idle_power_density * idle_time  * ci / 3.6e6
+            
+            tier_active_power_density  = tier['active_caching_power_density']
+            write_time = tier['latency'] + content_size / tier['write_throughput']
+            self.sess_write_cf += tier_active_power_density * write_time * content_size * 8 * ci / 3.6e6
+            
+            tier_max_capacity = tier['actual_size_bytes']
+            tier_purchase_cost = tier['purchase_cost']
+            tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
+            self.sess_depreciation_cf += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity)
+            
+            # --- Embodied CF calculation ---
+            tier_capacity_gb = tier_max_capacity / (8 * 1024**3)
+            TE = tier["embodied_kgco2e_per_gb"] * tier_capacity_gb
+            RR = content_size / (8 * 1024**3)
+            TR = tier_capacity_gb
+            ecf = TE * (write_time / tier_lifespan) * (RR / TR)
+            self.sess_embodied_cf += ecf
+
+    @inheritdoc(DataCollector)
+    def end_session(self, success=True):
+        if not success:
+            logger.info(f"end failed session")
+            return
+        self.depreciation_cf += self.sess_depreciation_cf
+        self.read_cf += self.sess_read_cf
+        self.write_cf += self.sess_write_cf
+        self.routers_energy_cf += self.sess_routers_energy_cf
+        self.links_energy_cf += self.sess_links_energy_cf
+        self.idle_cf += self.sess_idle_cf
+        self.sess_cf += self.sess_idle_cf + self.sess_depreciation_cf + self.sess_read_cf + self.sess_write_cf
+        self.cf += self.sess_cf
+        self.embodied_cf += self.sess_embodied_cf
+        # logger.info(f"end_session. carbon footprint : {self.cf}")
+        # logger.info(f"end_session. sess_cf : {self.sess_cf}")
+        # logger.info(f"end_session. read_cf : {self.read_cf}, write_cf:{self.write_cf}, routers_energy_cf:{self.routers_energy_cf}, links_energy_cf:{self.links_energy_cf}")
+        logger.info(f"REAL {self.sess_count}, {self.receiver}, {self.content}, {self.sess_routers_energy_cf + self.sess_links_energy_cf}, {self.sess_depreciation_cf}, {self.sess_read_cf+ self.sess_write_cf}")
+        # Log the session cfs to a file
+                 # Log the session cfs to a CSV file
+        # with open(self.log_file_path, 'a', newline='') as file:
+        #     writer = csv.writer(file)
+        #     writer.writerow([self.sess_count, self.receiver, self.content,
+        #                      self.sess_routers_energy_cf+ self.sess_links_energy_cf,
+        #                      self.sess_depreciation_cf, self.sess_read_cf+ self.sess_write_cf])
+
+    @inheritdoc(DataCollector)
+    def results(self):
+        results = Tree(
+            {
+            "MEAN": self.cf / self.sess_count,
+            "TOTAL_OPEX": self.cf,
+            "TOTAL_CAPEX": self.embodied_cf,
+            "IDLE_CF": self.idle_cf,
+            "DEPRECIATION_CF": self.depreciation_cf / self.sess_count,
+            "READ_CF": self.read_cf / self.sess_count,
+            "WRITE_CF": self.write_cf / self.sess_count,
+            "ROUTERS_CF": self.routers_energy_cf / self.sess_count,
+            "LINKS_CF": self.links_energy_cf / self.sess_count,
+            "EMBODIED_CF": self.embodied_cf / self.sess_count,
+            })
+        return results
+
 @register_data_collector("CACHE_HIT_RATIO")
 class CacheHitRatioCollector(DataCollector):
     """Collector measuring the cache hit ratio, i.e. the portion of content
@@ -688,7 +913,6 @@ class CacheHitRatioCollector(DataCollector):
 
     @inheritdoc(DataCollector)
     def cache_hit(self, node, **kwargs):
-        logger.info("cache hit")
         self.cache_hits += 1
         if self.off_path_hits and node not in self.curr_path:
             self.off_path_hit_count += 1
@@ -734,7 +958,6 @@ class CacheHitRatioCollector(DataCollector):
             results["PER_NODE_CACHE_HIT_RATIO"] = self.per_node_cache_hits
             results["PER_NODE_SERVER_HIT_RATIO"] = self.per_node_server_hits
         return results
-
 
 @register_data_collector("PATH_STRETCH")
 class PathStretchCollector(DataCollector):
@@ -813,6 +1036,126 @@ class PathStretchCollector(DataCollector):
             results["CDF_CONTENT"] = cdf(self.cont_stretch_data)
         return results
 
+@register_data_collector("ESTIMATED_COSTS")
+class EstimatedCostsCollector:
+    """Object collecting notifications about simulation events and measuring
+    relevant metrics.
+    """
+
+    def __init__(self, view, **params):
+        self.view = view
+        self.sess_count = 0
+        self.estimated_sess_cost_gain = 0.0
+        self.estimated_sess_cost_loss = 0.0
+        self.estimated_sess_dep = 0.0
+        self.estimated_sess_stor = 0.0
+        self.estimated_sess_band = 0.0
+        self.estimated_sess_trans = 0.0
+        self.estimated_sess_pen = 0.0
+        self.estimated_sess_min_gain = 0.0
+
+        self.estimated_cost_gain = 0.0
+        self.estimated_cost_loss = 0.0
+        self.estimated_dep = 0.0
+        self.estimated_stor = 0.0
+        self.estimated_band = 0.0
+        self.estimated_trans = 0.0
+        self.estimated_pen = 0.0
+        self.estimated_min_gain = 0.0
+        # Define a path to store the cost data
+        self.log_file_path = 'estimated_path_log.csv'
+
+    def start_session(self, timestamp, receiver, content, priority):
+        self.receiver = receiver
+        self.content = content
+        self.priority = priority
+        self.estimated_sess_cost_gain = 0.0
+        self.estimated_sess_cost_loss = 0.0
+        self.estimated_sess_dep = 0.0
+        self.estimated_sess_stor = 0.0
+        self.estimated_sess_band = 0.0
+        self.estimated_sess_trans = 0.0
+        self.estimated_sess_pen = 0.0
+        self.estimated_sess_min_gain = 0.0
+        self.sess_count += 1
+
+    def storage_div(self, path, storage_gain, storage_loss, dep, stor, band, trans, pen, min_gain):
+        self.estimated_sess_cost_gain += storage_gain
+        self.estimated_sess_cost_loss += storage_loss
+        self.estimated_sess_dep += dep
+        self.estimated_sess_stor += stor
+        self.estimated_sess_band += band
+        self.estimated_sess_trans += trans
+        self.estimated_sess_pen += pen
+        self.estimated_sess_min_gain += min_gain
+        # with open(self.log_file_path, 'a', newline='') as file:
+        #     writer = csv.writer(file)
+        #     writer.writerow('/')
+        #     writer.writerow([path])
+        
+    def end_session(self, success=True):
+        if not success:
+            logger.info(f"end failed session")
+            return
+        self.estimated_cost_gain += self.estimated_sess_cost_gain
+        self.estimated_cost_loss += self.estimated_sess_cost_loss
+        self.estimated_dep += self.estimated_sess_dep
+        self.estimated_stor += self.estimated_sess_stor
+        self.estimated_band += self.estimated_sess_band
+        self.estimated_trans += self.estimated_sess_trans
+        self.estimated_pen += self.estimated_sess_pen
+        self.estimated_min_gain +=  self.estimated_sess_min_gain
+        # print(f"ESTIMATED bandwidth:{self.estimated_sess_band}")
+         # Log the session costs to a CSV file
+        # with open(self.log_file_path, 'a', newline='') as file:
+        #     writer = csv.writer(file)
+        #     writer.writerow([self.sess_count, self.receiver, self.content, self.estimated_sess_band,
+        #                      self.estimated_sess_trans, self.estimated_sess_pen,
+        #                      self.estimated_sess_dep, self.estimated_sess_stor])
+        logger.info(f"ESTIMATED {self.sess_count}, {self.receiver}, {self.content}, {self.estimated_sess_band}, {self.estimated_sess_trans}, {self.estimated_sess_pen}, {self.estimated_sess_dep}, {self.estimated_sess_stor}")
+        
+
+    def results(self):
+        results = Tree(
+            {
+            "STORAGE_GAIN": self.estimated_cost_gain,
+            "STORAGE_LOSS": self.estimated_cost_loss,
+            "DEPRECIATION":  self.estimated_dep,
+            "BANDWIDTH":self.estimated_band,
+            "STORAGE": self.estimated_stor,
+            "TRANSMISSION":self.estimated_trans,
+            "PENALTY": self.estimated_pen,
+            "MIN_GAIN": self.estimated_min_gain,
+            })
+        return results
+
+@register_data_collector("REPLICA_MONITOR")
+class LiveReplicaMonitor(DataCollector):
+    def __init__(self, view, **params):
+        super().__init__(view, **params)
+        self.replicas = collections.defaultdict(dict)  # session_id -> {content: count}
+
+    @inheritdoc(DataCollector)
+    def start_session(self, timestamp, receiver, content, priority):
+        self.content = content
+
+    @inheritdoc(DataCollector)
+    def end_session(self, success=True):
+        if not success:
+            logger.info(f"end failed session")
+            return
+        """Record replica counts when a session ends"""
+        for v in self.view.content_locations(self.content):
+            self.replicas[self.content] = len(
+                self.view.content_locations(self.content)
+            )
+    
+    def results(self): 
+        results = Tree(
+            {
+            "REPLICAS": self.replicas,
+            })
+        return results
 
 @register_data_collector("DUMMY")
 class DummyCollector(DataCollector):
