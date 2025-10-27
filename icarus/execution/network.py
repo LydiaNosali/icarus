@@ -643,7 +643,8 @@ class NetworkController:
             The evicted object or *None* if no contents were evicted.
         """
         if node in self.model.cache:
-            logger.info(f"put content: {self.session["content"]} in node {node}")
+            content = self.session["content"]
+            logger.info(f"put content: {content} in node {node}")
             res = self.model.cache[node].put(self.session["content"], self.session["priority"], **kwargs)
             if (res is None or type(res) is int) and self.collector is not None and self.session["log"]:
                 self.collector.write_content(node, cache_tiers=self.model.per_node_tiers[node], carbon_intensity=self.model.node_carbon_intensity[node],**kwargs)
@@ -664,7 +665,8 @@ class NetworkController:
         """
         if node in self.model.cache:
             cache_hit = self.model.cache[node].get(self.session["content"], self.session["priority"])
-            logger.info(f"is content:{self.session["content"]} in cache {node} : {cache_hit}")
+            content = self.session["content"]
+            logger.info(f"is content:{content} in cache {node} : {cache_hit}")
             if cache_hit:
                 if self.session["log"]:
                     tier_index = self.get_tier_index(node, self.session["content"], self.session['priority'])

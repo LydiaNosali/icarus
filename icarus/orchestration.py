@@ -314,7 +314,8 @@ def run_scenario(settings, params, curr_exp, n_exp):
         logger.info(
             "Experiment %d/%d | Preparing scenario: %s", curr_exp, n_exp, scenario
         )
-        print(f"Experiment {curr_exp}/{n_exp} | Preparing scenario: {scenario}, total nb items:{cachepl_spec["cache_budget"]}")
+        cache_budget = cachepl_spec["cache_budget"]
+        print(f"Experiment {curr_exp}/{n_exp} | Preparing scenario: {scenario}, total nb items:{cache_budget}")
 
         if any(m not in DATA_COLLECTOR for m in metrics):
             logger.error(

@@ -469,13 +469,13 @@ class CacheLessToSaveMore(Strategy):
         self.router_energy_density = kwargs['router_energy_density']
         self.link_energy_density = kwargs['link_energy_density']
         
-        self.clf, self.feature_names, self.label_encoder_content = self.loadmodel("/home/lydia/icarus/examples/lce-vs-probcache/model")
-        self.predictions = defaultdict(list)
+        # self.clf, self.feature_names, self.label_encoder_content = self.loadmodel("../../examples/lce-vs-probcache/model")
+        # self.predictions = defaultdict(list)
         self.cost_ratio_threshold = 1.0
 
         self.gain_per_data = {}
         self.request_counter = {}
-        self.log_file_path = '/home/lydia/icarus/examples/lce-vs-probcache/path_log.csv'
+        self.log_file_path = '../../examples/lce-vs-probcache/path_log.csv'
         
     def _tiers(self, node):
         try:
