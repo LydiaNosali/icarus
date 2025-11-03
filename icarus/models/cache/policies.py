@@ -2080,7 +2080,7 @@ class ARCCache():
         endif
         """
 
-        if self.t1 and ((args in self.b2 and len(self.t1) == self.p) or (len(self.t1) > self.p)):
+        if self.t1 and ((args in self.b2 and len(self.t1) == int(self.p)) or (len(self.t1) > self.p)):
             old = self.t1.pop()
             self.b1.append_left(old)
         else:
@@ -2242,7 +2242,6 @@ class QMARCCache(Cache):
             self.t1 = Deque()
             self.t2 = Deque()
             self._maxlen = maxlen
-            self.last_access = 0.0
 
         def put_t1(self, k, *args):
             a, b = (None, None)
@@ -2265,8 +2264,7 @@ class QMARCCache(Cache):
                     old = self.t1.get_without_pop()
                     self.t1.pop()
                     a, b = (old, "t1")
-                
-            self.last_access = time.time()
+
             return (a, b)
         
         def put_t2(self, k, *args):
@@ -2292,7 +2290,6 @@ class QMARCCache(Cache):
                     self.t1.pop()
                     a, b = (old, "t1")
 
-            self.last_access = time.time()
             return (a, b)
 
     def initialize_caches(self):
@@ -2313,7 +2310,7 @@ class QMARCCache(Cache):
     
     @inheritdoc(Cache)
     def dump(self, k=None):
-        if self.t1 and ((k in self.b2 and len(self.t1) == self.p) or (len(self.t1) > self.p)):
+        if self.t1 and ((k in self.b2 and len(self.t1) == int(self.p)) or (len(self.t1) > self.p)):
             return {key: self._cache[key] for key in list(self.t1)[::-1] if key in self._cache}
         else:
             return {key: self._cache[key] for key in list(self.t2)[::-1] if key in self._cache}
@@ -2346,7 +2343,7 @@ class QMARCCache(Cache):
             del self._cache[min_content]
             return min_content
         else:
-            if self.t1 and ((k in self.b2 and len(self.t1) == self.p) or (len(self.t1) > self.p)):
+            if self.t1 and ((k in self.b2 and len(self.t1) == int(self.p)) or (len(self.t1) > self.p)):
                 old = self.t1.get_without_pop()
                 # logger.info("remove %s from t1", old.__str__())
                 self.t1_pop(old)
@@ -2769,8 +2766,3 @@ class QMARCCache(Cache):
             global_pos = round(len(self.t1) * self._alpha)
             return self.t1_get_index_tier(global_pos)
 
-    def get_tiers_last_access(self):
-        tiers_last_access = {}
-        for i in range(self._n_caches):
-            tiers_last_access[i] = self._tier_m_caches[i].last_access
-        return tiers_last_access

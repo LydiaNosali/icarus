@@ -232,7 +232,7 @@ def write_results_pickle(results, path):
         # Assuming ResultSet has an attribute 'results'
         results = loaded_data._results
         # print(results)
-        with open('../../examples/lce-vs-probcache/results.txt', 'w') as txt_file:
+        with open('/Users/lydia/Desktop/icarus/examples/lce-vs-probcache/results.txt', 'w') as txt_file:
             for result in results:
                 txt_file.write(str(result) + '\n')
 

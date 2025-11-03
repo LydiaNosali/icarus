@@ -463,18 +463,18 @@ class CacheLessToSaveMore(Strategy):
         self.req_size = 150
         self.cache_size = view.cache_nodes(size=True)
 
-        self.penalty_table = kwargs['penalty_table']
+        self.penalty_table = sorted(kwargs['penalty_table'], key=lambda e: e["delay"])
         self.cost_per_joule = kwargs['cost_per_joule']
         self.cost_per_bit = kwargs['cost_per_bit']
         self.router_energy_density = kwargs['router_energy_density']
         self.link_energy_density = kwargs['link_energy_density']
         
-        # self.clf, self.feature_names, self.label_encoder_content = self.loadmodel("../../examples/lce-vs-probcache/model")
-        # self.predictions = defaultdict(list)
         self.cost_ratio_threshold = 1.0
 
         self.gain_per_data = {}
         self.request_counter = {}
+        self.last_access_time = defaultdict(lambda: defaultdict(float))
+        self.time = 0
         self.log_file_path = '../../examples/lce-vs-probcache/path_log.csv'
         
     def _tiers(self, node):
@@ -490,10 +490,13 @@ class CacheLessToSaveMore(Strategy):
     @inheritdoc(Strategy)
     def process_event(self, time, receiver, content, size, priority, log):
         # get all required data
+        self.time = time
         source = self.view.content_source(content)
         path = self.view.shortest_path(receiver, source)
          # Route requests to original source and queries caches on the path
         self.controller.start_session(time, receiver, content, log, priority)
+        serving_node = source
+        hit = False
         for u, v in path_links(path):
             if v not in self.gain_per_data:
                 self.gain_per_data[v] = {}
@@ -501,74 +504,61 @@ class CacheLessToSaveMore(Strategy):
                 self.request_counter[v] = {}
             self.controller.forward_request_hop(u, v)
             if self.view.has_cache(v):
-                if self.controller.get_content(v, size=size, priority=priority):
+                if self.controller.get_content(v, size=size, priority=priority, time=time):
                     serving_node = v
+                    tier_index = self.controller.get_tier_index(v, content, priority)
+                    self.last_access_time[v][tier_index] = time
+                    hit = True
                     break
-        else:
+        if not hit:
             # No cache hits, get content from source
-            self.controller.get_content(v, tier_index=0, size=size, priority=priority)
-            serving_node = v
+            self.controller.get_content(source, tier_index=0, size=size, priority=priority, time=time)
+            tier_index = self.controller.get_tier_index(v, content, priority)
+            self.last_access_time[v][tier_index] = time
         # Return content
-        path = list(reversed(self.view.shortest_path(receiver, serving_node)))
-        for u, v in path_links(path):
+        ret_path = self.view.shortest_path(serving_node, receiver)
+        for u, v in path_links(ret_path):
             self.controller.forward_content_hop(u, v, main_path=True, size=size, priority=priority)
             if not self.view.has_cache(v):
                 continue
-            # if content in self.predictions:
-            #     is_reaccessed = self.predictions[content]
-            # else:
-            #     is_reaccessed = self._predict_event(time, content, size, priority)
+            
             tiers = self._tiers(v)
             if not tiers:
-                # nothing to do if node has no tiers configured
                 continue
-            new_value = self.request_counter[v].get(content) + 1 if self.request_counter[v].get(content) else 1
-            self.request_counter[v].update({content: new_value})
+            
+            self.request_counter[v][content] = self.request_counter[v].get(content, 0) + 1
             reaccess_prob = self.get_probability_estimate(content, self.request_counter[v]) 
-            # print(f"is_reaccessed probability for content {content} at node {v}: {is_reaccessed}")
-            # print(f"reaccess_prob for content {content} at node {v}: {reaccess_prob}")
-            # print(f"is_reaccessed:{is_reaccessed}")
-            # if is_reaccessed:
             cache_dump = self.view.cache_dump(v, k=content)
-            if len(cache_dump) == self.cache_size[v]:
+            tier_index = self.controller.get_tier_index(v, content, priority)
+
+            # compute gain for this hop
+            hop_path = self.view.shortest_path(v, serving_node)
+            sgain, band, trans, pen = self.storage_gain(hop_path, size, priority)
+            adjusted_gain = sgain * reaccess_prob
+            self.gain_per_data[v][content] = adjusted_gain
+            if len(cache_dump) >= self.cache_size[v]:
                 paths = {}
-                for c in list(cache_dump.keys())[:max(2, round(0.1 * len(cache_dump)))]:
-                    # paths[c] = self.gain_per_data[v].get(c) * np.exp(-self.rate * self.sess_count)
-                    # self.gain_per_data[v].update({c: paths[c]})
-                    paths[c] = self.gain_per_data[v].get(c)
-                if paths:
+                sample_keys = list(cache_dump.keys())[:max(2, round(0.1 * len(cache_dump)))]
+                candidates = {c: self.gain_per_data[v].get(c, 0.0) for c in sample_keys}
+
+                if candidates:
                     # we choose the data with the least retrieval time to evict
-                    min_content, min_gain = min(paths.items(), key=lambda x: x[1])
+                    min_content, min_gain = min(candidates.items(), key=lambda x: x[1])
                     # calculate storage loss
-                    storage_loss, dep, stor = self.storage_loss(v, tiers, content, size, priority) 
-                    # calculate storage gain
-                    new_path = list(reversed(self.view.shortest_path(v, serving_node)))
-                    storage_gain, band, trans, pen = self.storage_gain(new_path, size, priority)
-                    adjusted_gain = storage_gain * reaccess_prob
-                    self.gain_per_data[v].update({content: adjusted_gain})
-                    
-                    if self.gain_per_data[v].get(content) >= storage_loss + self.gain_per_data[v].get(min_content):
-                        logger.info("storage_gain > storage_loss")
-                        tier_index = self.controller.get_tier_index(v, content, priority)
-                        self.controller.put_content(v, min_content=min_content, tier_index=tier_index, size=size, priority=priority)
+                    sloss, dep, stor = self.storage_loss(v, tiers, content, size, priority)
+                    if adjusted_gain >= sloss + min_gain:
+                        self.controller.put_content(v, min_content=min_content, tier_index=tier_index, size=size, priority=priority, time=time)
+                        self.last_access_time[v][tier_index] = time
                     else:
-                        logger.info("cost is not for it")
-                
+                        logger.info("Not worth caching at node %s", v)
                 else:
                     logger.info("no paths")
-                    tier_index = self.controller.get_tier_index(v, content, priority)
-                    new_path = list(reversed(self.view.shortest_path(v, serving_node)))
-                    storage_gain, band, trans, pen = self.storage_gain(new_path, size, priority) 
-                    adjusted_gain = storage_gain * reaccess_prob
-                    self.gain_per_data[v].update({content: adjusted_gain})   
-                    self.controller.put_content(v, tier_index=tier_index, size=size, priority=priority)
+                    self.controller.put_content(v, tier_index=tier_index, size=size, priority=priority, time=time)
+                    self.last_access_time[v][tier_index] = time 
             else:
-                tier_index = self.controller.get_tier_index(v, content, priority)
-                new_path = list(reversed(self.view.shortest_path(v, serving_node)))
-                storage_gain, band, trans, pen = self.storage_gain(new_path, size, priority)
-                adjusted_gain = storage_gain * reaccess_prob
-                self.gain_per_data[v].update({content: adjusted_gain})
-                self.controller.put_content(v, tier_index=tier_index, size=size, priority=priority)
+                self.controller.put_content(v, tier_index=tier_index, size=size, priority=priority, time=time)
+                self.last_access_time[v][tier_index] = time 
+        
         self.controller.end_session()
 
     def get_probability_estimate(self, content, request_count):
@@ -615,7 +605,7 @@ class CacheLessToSaveMore(Strategy):
             tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
             depreciation_cost += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity)
         
-        if tier_index != 0 & len(tiers) > 1:
+        if tier_index != 0 and len(tiers) > 1:
             tier = tiers[tier_index]
             tier_max_capacity = tier['actual_size_bytes']
             tier_purchase_cost = tier['purchase_cost']
@@ -631,16 +621,20 @@ class CacheLessToSaveMore(Strategy):
         tier_active_power_density  = tier['active_caching_power_density']
         tier_idle_power_density = tier['idle_power_density']
         
-        tiers_last_access = self.view.get_last_access(receiver)
-
-        idle_time = 0.0 if tiers_last_access[tier_index]==0 else time.time() - tiers_last_access[tier_index]
+        tiers_last_access = self.last_access_time[receiver]
+        last_read_time = tiers_last_access.get(tier_index, 0.0)
+        idle_time = 0.0 if last_read_time == 0 else self.time - last_read_time
+        
+        # idle_time = 0.0 if tiers_last_access[tier_index]==0 else time.time() - tiers_last_access[tier_index]
         read_time = tier['latency'] + content_size / tier['read_throughput']
         read_cost = ((tier_idle_power_density * idle_time) + (tier_active_power_density * read_time * content_size)) * self.cost_per_joule
         
         for i, tier in enumerate(tiers[tier_index:], start=tier_index):
             tier_active_power_density  = tier['active_caching_power_density']
             tier_idle_power_density = tier['idle_power_density']
-            idle_time = 0.0 if tiers_last_access[i]==0 else time.time() - tiers_last_access[i]
+            last_write_time = tiers_last_access.get(i, 0.0)
+            idle_time = 0.0 if last_write_time == 0 else self.time - last_write_time
+            # idle_time = 0.0 if tiers_last_access[i]==0 else time.time() - tiers_last_access[i]
             write_time = tier['latency'] + content_size / tier['write_throughput']
             write_cost += ((tier_idle_power_density * idle_time) + (tier_active_power_density * write_time * content_size)) * self.cost_per_joule
         return read_cost + write_cost

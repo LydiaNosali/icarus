@@ -11,8 +11,7 @@ inheriting from the `DataCollector` class and override all required methods.
 """
 import collections
 import logging
-import time
-
+from collections import defaultdict
 from icarus.registry import register_data_collector
 from icarus.tools import cdf
 from icarus.util import Tree, inheritdoc
@@ -411,66 +410,69 @@ class CostCollector(DataCollector):
         """
         
         self.request_size = 150 * 8
-        self.sess_depreciation_cost = 0.0
-        self.sess_bandwidth_cost = 0.0
-        self.sess_read_cost = 0.0
-        self.sess_write_cost = 0.0
-        self.sess_routers_energy_cost = 0.0
-        self.sess_links_energy_cost = 0.0
-        self.sess_penalty_cost = 0.0
-        self.sess_cost = 0.0
-
-        self.depreciation_cost = 0.0
-        self.bandwidth_cost = 0.0
-        self.read_cost = 0.0
-        self.write_cost = 0.0
-        self.routers_energy_cost = 0.0
-        self.links_energy_cost = 0.0
-        self.penalty_cost = 0.0
-        self.cost = 0.0
-
-        self.view = view
         self.sess_count = 0
-
+        self.view = view
+        
         self.cost_params = params['cost_params']
-
-        self.penalty_table = self.cost_params ['penalty_table']
+        self.penalty_table = sorted(self.cost_params['penalty_table'], key=lambda e: e["delay"])
         self.cost_per_joule = self.cost_params ['cost_per_joule']
         self.cost_per_bit = self.cost_params ['cost_per_bit']
         self.router_energy_density = self.cost_params ['router_energy_density']
         self.link_energy_density = self.cost_params ['link_energy_density']
 
+        self.depreciation_cost = 0.0
+        self.bandwidth_cost = 0.0
+        self.read_cost = self.write_cost = 0.0
+        self.routers_energy_cost = self.links_energy_cost = 0.0
+        self.penalty_cost = 0.0
+        self.cost = 0.0
+
+        # Per-session
+        self._reset_session_vars()
+
+        self.last_access = {}
         self.log_file_path = 'path_log.csv'
 
     @inheritdoc(DataCollector)
     def start_session(self, timestamp, receiver, content, priority):
         self.sess_count += 1
-        self.sess_latency = 0.0
+        self._reset_session_vars()
         self.content = content
         self.receiver = receiver
         self.priority = priority
+        self.timestamp = timestamp
+
+    def _reset_session_vars(self):
+        """Reset per-session cost components."""
         self.sess_depreciation_cost = 0.0
         self.sess_bandwidth_cost = 0.0
-        self.sess_read_cost = 0.0
-        self.sess_write_cost = 0.0
-        self.sess_routers_energy_cost = 0.0
-        self.sess_links_energy_cost = 0.0
+        self.sess_read_cost = self.sess_write_cost = 0.0
+        self.sess_routers_energy_cost = self.sess_links_energy_cost = 0.0
         self.sess_penalty_cost = 0.0
+        self.sess_latency = 0.0
         self.sess_cost = 0.0
 
-    def _resolve_cache_tiers(self, node, cache_tiers_kw):
-        # Prefer the list passed in the event kwargs
-        if isinstance(cache_tiers_kw, list):
-            return cache_tiers_kw
-        # Fallback to the view (per-node tiers built in NetworkModel)
+    def _resolve_cache_tiers(self, node):
         try:
-            return self.view.cache_tiers().get(node, [])
+            return self.view.cache_tiers(node)
         except Exception:
-            return getattr(self.view, "model", None) and getattr(self.view.model, "node_tiers", {}).get(node, []) or []
+            model = getattr(self.view, "model", None)
+            return (getattr(model, "node_tiers", {}) or {}).get(node, []) if model else []
+    
+    def _get_last_access(self, node):
+        if node not in self.last_access:
+            num_tiers = len(self._resolve_cache_tiers(node))
+            self.last_access[node] = [0.0] * max(1, num_tiers)
+        return self.last_access[node]
+
+    def _set_last_access(self, node, tier_index, end_time):
+        last = self._get_last_access(node)
+        last[tier_index] = end_time
+        self.last_access[node] = last
 
     @inheritdoc(DataCollector)
     def request_hop(self, u, v, **kwargs):
-        main_path = kwargs.get("main_path") or True
+        main_path = kwargs.get("main_path", True)
         if main_path:
             self.sess_latency += self.view.link_delay(u, v)
             self.sess_routers_energy_cost += self.request_size * self.router_energy_density * self.cost_per_joule
@@ -479,7 +481,7 @@ class CostCollector(DataCollector):
             
     @inheritdoc(DataCollector)
     def content_hop(self, u, v, **kwargs):
-        main_path = kwargs.get("main_path") or True
+        main_path = kwargs.get("main_path", True)
         if main_path:
             content_size = kwargs["size"] * 8
             self.sess_latency += self.view.link_delay(u, v)
@@ -492,29 +494,33 @@ class CostCollector(DataCollector):
         # read cost
         content_size = kwargs["size"]
         tier_index = kwargs.get("tier_index")
-        cache_tiers = self._resolve_cache_tiers(node, kwargs.get("cache_tiers"))
-        if not cache_tiers:
+        
+        tiers = self._resolve_cache_tiers(node)
+        if not tiers:
             return
         
-        if tier_index is None or not (0 <= tier_index < len(cache_tiers)):
+        if tier_index is None or not (0 <= tier_index < len(tiers)):
             tier_index = 0
             
-        tier = cache_tiers[tier_index]
-        tier_active_power_density  = tier['active_caching_power_density']
-        tier_idle_power_density = tier['idle_power_density']
-
-        tiers_last_access = self.view.get_last_access(node)
+        tier = tiers[tier_index]
+        curr_time = kwargs.get("time")
+        tiers_last_access = self._get_last_access(node)
+        last_end_time = tiers_last_access[tier_index]
         
-        idle_time = 0.0 if tiers_last_access[tier_index]==0 else time.time() - tiers_last_access[tier_index]
+        idle_time = max(0.0, min(curr_time - last_end_time, 0.01)) if last_end_time != 0 else 0.0
+        
         read_time = tier['latency'] + content_size / tier['read_throughput']
-        self.sess_read_cost += ((tier_idle_power_density * idle_time) + (tier_active_power_density * content_size * 8 * read_time)) * self.cost_per_joule
+        tier_max_capacity = tier['actual_size_bytes']
+        tier_active_power_density  = tier['active_caching_power_density']
+        tier_idle_power_density = tier['idle_power_density_per_bit']
+        
+        self.sess_read_cost += (tier_idle_power_density * idle_time * tier_max_capacity * 8 + tier_active_power_density * read_time * content_size * 8) * self.cost_per_joule
         
         # depreciation cost
-        if tier_index != 0:
-            tier_max_capacity = tier['actual_size_bytes']
-            tier_purchase_cost = tier['purchase_cost']
-            tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
-            self.sess_depreciation_cost += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity)
+        tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
+        self.sess_depreciation_cost += (content_size * tier['purchase_cost']) / (tier_lifespan * tier_max_capacity)
+        
+        self._set_last_access(node, tier_index, curr_time + read_time)
 
     @inheritdoc(DataCollector)
     def server_hit(self, node, **kwargs):
@@ -534,26 +540,32 @@ class CostCollector(DataCollector):
     def write_content(self, node, **kwargs):
         content_size = kwargs["size"]
         tier_index = kwargs.get("tier_index")
-        
-        cache_tiers = self._resolve_cache_tiers(node, kwargs.get("cache_tiers"))
-        if not cache_tiers:
+        tiers = self._resolve_cache_tiers(node)
+        if not tiers:
             return
 
-        if tier_index is None or not (0 <= tier_index < len(cache_tiers)):
+        if tier_index is None or not (0 <= tier_index < len(tiers)):
             tier_index = 0
-        tiers_last_access = self.view.get_last_access(node)
-        for i, tier in enumerate(cache_tiers[tier_index:], start=tier_index):
-            tier_active_power_density  = tier['active_caching_power_density']
-            tier_idle_power_density = tier['idle_power_density']
-            
-            idle_time = 0.0 if tiers_last_access[i]==0 else time.time() - tiers_last_access[i]
-            write_time = tier['latency'] + content_size / tier['write_throughput']
-            self.sess_write_cost += ((tier_idle_power_density * idle_time) + (tier_active_power_density * write_time * content_size * 8)) * self.cost_per_joule
-            
+        
+        curr_time = kwargs.get("time")
+        tiers_last_access = self._get_last_access(node)
+        
+        for i, tier in enumerate(tiers[tier_index:], start=tier_index):
             tier_max_capacity = tier['actual_size_bytes']
-            tier_purchase_cost = tier['purchase_cost']
+            
+            last_end_time = tiers_last_access[i]
+            idle_time = max(0.0, min(curr_time - last_end_time, 0.01)) if last_end_time != 0 else 0.0
+
+            write_time = tier['latency'] + content_size / tier['write_throughput']
+            
+            tier_active_power_density  = tier['active_caching_power_density']
+            tier_idle_power_density = tier['idle_power_density_per_bit']
+            self.sess_write_cost += (tier_idle_power_density * idle_time * tier_max_capacity * 8 + tier_active_power_density * write_time * content_size * 8) * self.cost_per_joule
+            
             tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
-            self.sess_depreciation_cost += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity)
+            self.sess_depreciation_cost += (content_size * tier['purchase_cost']) / (tier_lifespan * tier_max_capacity)
+            
+            self._set_last_access(node, i, curr_time + write_time)
 
     @inheritdoc(DataCollector)
     def end_session(self, success=True):
@@ -566,6 +578,7 @@ class CostCollector(DataCollector):
         self.write_cost += self.sess_write_cost
         self.routers_energy_cost += self.sess_routers_energy_cost
         self.links_energy_cost += self.sess_links_energy_cost
+        self.penalty_table = sorted(self.penalty_table, key=lambda e: e["delay"])
         for entry in self.penalty_table:
             if self.sess_latency <= entry["delay"]:
                 if self.priority == "high":
@@ -576,20 +589,8 @@ class CostCollector(DataCollector):
                     self.sess_penalty_cost += entry["P1"] * 1e-8
                     self.penalty_cost += self.sess_penalty_cost
                     break
-        self.sess_cost += self.sess_bandwidth_cost + self.sess_routers_energy_cost + self.sess_links_energy_cost + self.sess_penalty_cost + self.sess_depreciation_cost + self.sess_read_cost + self.sess_write_cost
+        self.sess_cost = self.sess_bandwidth_cost + self.sess_routers_energy_cost + self.sess_links_energy_cost + self.sess_penalty_cost + self.sess_depreciation_cost + self.sess_read_cost + self.sess_write_cost
         self.cost += self.sess_cost
-        # logger.info(f"end_session. cost : {self.cost}")
-        # logger.info(f"end_session. sess_cost : {self.sess_cost}")
-        # logger.info(f"end_session. sess_penalty_cost : {self.sess_penalty_cost}") 
-        # logger.info(f"end_session. bandwidth_cost:{self.bandwidth_cost}, read_cost : {self.read_cost}, write_cost:{self.write_cost}, routers_energy_cost:{self.routers_energy_cost}, links_energy_cost:{self.links_energy_cost}")
-        logger.info(f"REAL {self.sess_count}, {self.receiver}, {self.content}, {self.sess_bandwidth_cost}, {self.sess_routers_energy_cost + self.sess_links_energy_cost}, {self.sess_penalty_cost}, {self.sess_depreciation_cost}, {self.sess_read_cost+ self.sess_write_cost}")
-        # Log the session costs to a file
-                 # Log the session costs to a CSV file
-        # with open(self.log_file_path, 'a', newline='') as file:
-        #     writer = csv.writer(file)
-        #     writer.writerow([self.sess_count, self.receiver, self.content, self.sess_bandwidth_cost,
-        #                      self.sess_routers_energy_cost+ self.sess_links_energy_cost, self.sess_penalty_cost,
-        #                      self.sess_depreciation_cost, self.sess_read_cost+ self.sess_write_cost])
 
     @inheritdoc(DataCollector)
     def results(self):
@@ -646,33 +647,27 @@ class CarbonFootprintCollector(DataCollector):
         The network view instance
         params : carbon footprint model and tiers info
         """
-        
-        self.request_size = 150 * 8 # bytes -> bits
-        self.sess_depreciation_cf = 0.0
-        self.sess_read_cf = 0.0
-        self.sess_write_cf = 0.0
-        self.sess_idle_cf = 0.0
-        self.sess_routers_energy_cf = 0.0
-        self.sess_links_energy_cf = 0.0
-        self.sess_cf = 0.0
-        self.sess_embodied_cf = 0.0
-
-        self.depreciation_cf = 0.0
-        self.read_cf = 0.0
-        self.write_cf = 0.0
-        self.idle_cf = 0.0
-        self.routers_energy_cf = 0.0
-        self.links_energy_cf = 0.0
-        self.cf = 0.0
-        self.embodied_cf = 0.0
-
         self.view = view
+        self.start_time = 0
+        self.request_size = 150 * 8 # bytes -> bits
         self.sess_count = 0
-
+        
         self.cost_params = params['cost_params']
         self.router_energy_density = self.cost_params ['router_energy_density'] # j/bit
         self.link_energy_density = self.cost_params ['link_energy_density'] # j/bit
 
+        # Global totals
+        self.routers_opex = self.links_opex = 0.0
+        self.server_opex = self.server_capex = 0.0
+        self.opex = self.capex = 0.0
+
+        # Per-tier totals
+        self.tier_opex = defaultdict(float)
+        self.tier_capex = defaultdict(float)
+        self.device_times = defaultdict(lambda: {"idle": 0.0, "active": 0.0})
+        self.last_access = {}
+        self.log_file_path = 'carbonfootprint_log.csv'
+    
     @inheritdoc(DataCollector)
     def start_session(self, timestamp, receiver, content, priority):
         self.sess_count += 1
@@ -681,188 +676,219 @@ class CarbonFootprintCollector(DataCollector):
         self.priority = priority
         self.timestamp = timestamp
 
-        self.sess_depreciation_cf = 0.0
-        self.sess_read_cf = 0.0
-        self.sess_write_cf = 0.0
-        self.sess_routers_energy_cf = 0.0
-        self.sess_links_energy_cf = 0.0
-        self.sess_idle_cf = 0.0
-        self.sess_cf = 0.0
-        self.sess_embodied_cf = 0.0
+        self.sess_routers_opex = self.sess_links_opex = 0.0
+        self.sess_server_opex = self.sess_server_capex = 0.0
+        self.sess_opex = self.sess_capex = 0.0
 
-    def _resolve_cache_tiers(self, node, cache_tiers_kw):
-        if isinstance(cache_tiers_kw, list):
-            return cache_tiers_kw
+    def _resolve_cache_tiers(self, node):
         try:
-            return self.view.cache_tiers().get(node, [])
+            return self.view.cache_tiers(node)
         except Exception:
-            return getattr(self.view, "model", None) and getattr(self.view.model, "node_tiers", {}).get(node, []) or []
+            model = getattr(self.view, "model", None)
+            return (getattr(model, "node_tiers", {}) or {}).get(node, []) if model else []
 
     def _ci(self, node_hint=None, ci_kw=None):
         if ci_kw is not None:
             return ci_kw
-        # fallback: use node carbon intensity if available, else 0.3
+        # fallback: use node carbon intensity if available, else 0.4
         model = getattr(self.view, "model", None)
         if model is not None and hasattr(model, "node_carbon_intensity") and node_hint is not None:
-            return model.node_carbon_intensity.get(node_hint, 0.3)
-        return 0.3
+            return model.node_carbon_intensity.get(node_hint, 0.4)
+        return 0.4
     
+    def _get_last_access(self, node):
+        if node not in self.last_access:
+            num_tiers = len(self._resolve_cache_tiers(node))
+            self.last_access[node] = [0.0] * num_tiers
+        return self.last_access[node]
+
+    def _set_last_access(self, node, tier_index, end_time):
+        last = self._get_last_access(node)
+        last[tier_index] = end_time
+        self.last_access[node] = last
+
     @inheritdoc(DataCollector)
     def request_hop(self, u, v, **kwargs):
-        main_path = kwargs.get("main_path") or True
+        main_path = kwargs.get("main_path", True)
         if main_path:
-            ci = kwargs.get("carbon_intensity")
-            if ci is None:  # fallback: approximate with source node CI
+            ci = kwargs.get("carbon_intensity") 
+            if ci is None: 
                 ci = self._ci(node_hint=u)
-            self.sess_routers_energy_cf += self.request_size * self.router_energy_density * ci / 3.6e6
-            self.sess_links_energy_cf += self.request_size * self.link_energy_density * ci / 3.6e6
+            self.sess_routers_opex += ci * self.request_size * self.router_energy_density / 3.6e6
+            self.sess_links_opex += ci * self.request_size * self.link_energy_density / 3.6e6
             
     @inheritdoc(DataCollector)
     def content_hop(self, u, v, **kwargs):
-        main_path = kwargs.get("main_path") or True
+        main_path = kwargs.get("main_path", True)
         if main_path:
-            ci = kwargs.get("carbon_intensity")
-            if ci is None:
-                ci = self._ci(node_hint=u)  # Kg CO2 eq/KwH
+            ci = kwargs.get("carbon_intensity") 
+            if ci is None: 
+                ci = self._ci(node_hint=u)
             content_size = kwargs["size"] * 8  # bytes -> bit
-            self.sess_routers_energy_cf += content_size * self.router_energy_density * ci / 3.6e6   # Kg CO2 eq
-            self.sess_links_energy_cf += content_size * self.link_energy_density * ci / 3.6e6   # Kg CO2 eq
+            self.sess_routers_opex += ci * content_size * self.router_energy_density  / 3.6e6   # Kg CO2
+            self.sess_links_opex += ci * content_size * self.link_energy_density / 3.6e6   # Kg CO2
             
     @inheritdoc(DataCollector)
     def cache_hit(self, node, **kwargs):
         # read cf
         content_size = kwargs["size"]  # Byte
-        tier_index = kwargs.get("tier_index") or 0
-        cache_tiers = self._resolve_cache_tiers(node, kwargs.get("cache_tiers"))
-        if not cache_tiers:
+        tier_index = kwargs.get("tier_index")
+        
+        tiers = self._resolve_cache_tiers(node)
+        if not tiers:
             return
-        if tier_index is None or not (0 <= tier_index < len(cache_tiers)):
+        
+        if tier_index is None or not (0 <= tier_index < len(tiers)):
             tier_index = 0
             
+        tier  = tiers[tier_index]
+        tier_name = tier["name"]
+        
+        curr_time = kwargs.get("time")
+
+        tiers_last_access = self._get_last_access(node)
+        last_end_time = tiers_last_access[tier_index]
+        
+        idle_time = max(0.0, min(curr_time - last_end_time, 0.01)) if last_end_time != 0 else 0.0
+
+        read_time = tier['latency'] + content_size / tier['read_throughput'] 
+        
         ci = self._ci(node_hint=node, ci_kw=kwargs.get("carbon_intensity")) # Kg CO2 eq/KwH
-        tier  = cache_tiers[0]
+        tier_max_capacity = tier['actual_size_bytes']
+        tier_idle_power_density = tier['idle_power_density_per_bit'] 
+        tier_active_power_density  = tier['active_caching_power_density'] 
+
+        idle_opex = ci * tier_idle_power_density * idle_time * tier_max_capacity * 8 / 3.6e6
+        read_opex = ci * tier_active_power_density * read_time * content_size * 8 / 3.6e6
         
-        tier_idle_power_density = tier['idle_power_density']    # w
-        tiers_last_access = self.view.get_last_access(node)
-        idle_time = 0.0 if tiers_last_access[tier_index]==0 else time.time() - tiers_last_access[tier_index]    # s
-        self.sess_idle_cf += tier_idle_power_density * idle_time * ci / 3.6e6
+        self.tier_opex[tier_name] += read_opex + idle_opex 
+        self.sess_opex += read_opex + idle_opex 
         
-        tier_active_power_density  = tier['active_caching_power_density']   # w/bit
-        read_time = tier['latency'] + content_size / tier['read_throughput']    # s
-        self.sess_read_cf += tier_active_power_density * content_size * 8 * read_time * ci / 3.6e6
-        
-        tier_max_capacity_bytes = tier['actual_size_bytes']
-        
-        # depreciation cf
-        if tier_index != 0:
-            tier_purchase_cost = tier['purchase_cost']
-            tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
-            self.sess_depreciation_cf += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity_bytes)
-            
-        # Embodied CF amortization
-        TE = tier["embodied_kgco2e_per_gb"] * tier_max_capacity_bytes / (8 * 1024**3)
-        EL = tier["lifespan"] * 365 * 24 * 60 * 60  # lifespan in seconds
-        RR = content_size / (8 * 1024**3)  # content size in GB
-        TR = tier_max_capacity_bytes
-        ecf = TE * (read_time / EL) * (RR / TR)
-        self.sess_embodied_cf += ecf
+        self.device_times[tier_name]["idle"] += idle_time
+        self.device_times[tier_name]["active"] += read_time
+        # print(f"[{tier_name}] last_end:{last_end_time:.6f}, curr:{curr_time:.6f}, idle:{idle_time:.6f}, active:{read_time}")
+
+        # CAPEX
+        TE = tier["embodied_kgco2e_per_gb"] * tier_max_capacity / (8 * 1024**3)
+        tier_capex = TE * (content_size / tier_max_capacity)
+        self.sess_capex += tier_capex
+        self.tier_capex[tier_name] += tier_capex
+
+        self._set_last_access(node, tier_index, curr_time + read_time)
 
     @inheritdoc(DataCollector)
     def server_hit(self, node, **kwargs):
         ci = self._ci(node_hint=node, ci_kw=kwargs.get("carbon_intensity"))
-        content_size = kwargs["size"]
         server_latency = 1e-7
         server_read_throughput = 4e+10
-        server_active_power_density = 10**-9
+        server_active_power_density = 1e-9
+        content_size = kwargs["size"]
         read_time = server_latency + content_size / server_read_throughput
-        self.sess_read_cf +=  server_active_power_density * read_time * content_size * 8 * ci
-        
+        server_opex = ci * server_active_power_density * read_time * content_size * 8 / 3.6e6
+        self.sess_server_opex +=  server_opex
+
         server_size = kwargs.get("server_size")
-        server_purchase_cost = 200
-        server_lifespan = 5 * 365 * 24 * 60 * 60
-        self.sess_depreciation_cf += (content_size * server_purchase_cost) / (server_lifespan * server_size)
-        server_capacity_gb = server_size / (8 * 1024**3)
-        TE = 0.2 * server_capacity_gb
-        RR = content_size / (8 * 1024**3)
-        ecf = TE * (read_time / server_lifespan) * (RR / server_capacity_gb)
-        self.sess_embodied_cf += ecf
-        
+        TE = 0.2 * (server_size / (8 * 1024**3))
+        # server_capex = TE * (read_time / server_lifespan) * (RR / server_capacity_gb)
+        server_capex = TE * read_time * (content_size / server_size)
+        self.sess_server_capex += server_capex
+
     @inheritdoc(DataCollector)
     def write_content(self, node, **kwargs):
         content_size = kwargs["size"]
-        tier_index = kwargs.get("tier_index") or 0
-        cache_tiers = self._resolve_cache_tiers(node, kwargs.get("cache_tiers"))
-        if not cache_tiers:
+        tier_index = kwargs.get("tier_index")
+        tiers = self._resolve_cache_tiers(node)
+        if not tiers:
             return
-        if tier_index is None or not (0 <= tier_index < len(cache_tiers)):
+
+        if tier_index is None or not (0 <= tier_index < len(tiers)):
             tier_index = 0
-
+        
         ci = self._ci(node_hint=node, ci_kw=kwargs.get("carbon_intensity"))
-
-        for i, tier in enumerate(cache_tiers[tier_index:], start=tier_index):
-            tier_idle_power_density = tier['idle_power_density']
-            tiers_last_access = self.view.get_last_access(node)
-            idle_time = 0.0 if tiers_last_access[i]==0 else time.time() - tiers_last_access[i]
-            self.sess_idle_cf += tier_idle_power_density * idle_time  * ci / 3.6e6
-            
-            tier_active_power_density  = tier['active_caching_power_density']
-            write_time = tier['latency'] + content_size / tier['write_throughput']
-            self.sess_write_cf += tier_active_power_density * write_time * content_size * 8 * ci / 3.6e6
-            
+        
+        curr_time = kwargs.get("time")
+        tiers_last_access = self._get_last_access(node)
+        for i, tier in enumerate(tiers[tier_index:], start=tier_index):
+            tier_name = tier["name"]
             tier_max_capacity = tier['actual_size_bytes']
-            tier_purchase_cost = tier['purchase_cost']
-            tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
-            self.sess_depreciation_cf += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity)
             
-            # --- Embodied CF calculation ---
-            tier_capacity_gb = tier_max_capacity / (8 * 1024**3)
-            TE = tier["embodied_kgco2e_per_gb"] * tier_capacity_gb
-            RR = content_size / (8 * 1024**3)
-            TR = tier_capacity_gb
-            ecf = TE * (write_time / tier_lifespan) * (RR / TR)
-            self.sess_embodied_cf += ecf
+            last_end_time = tiers_last_access[i]
+            idle_time = max(0.0, min(curr_time - last_end_time, 0.01)) if last_end_time != 0 else 0.0
+            write_time = tier['latency'] + content_size / tier['write_throughput']
+
+            self.device_times[tier_name]["idle"] += idle_time
+            self.device_times[tier_name]["active"] += write_time
+
+            # print(f"[{tier_name}] last_end:{last_end_time:.6f}, curr:{curr_time:.6f}, idle:{idle_time:.6f}, active:{write_time}")
+            tier_idle_power_density = tier['idle_power_density_per_bit']
+            tier_active_power_density  = tier['active_caching_power_density']
+           
+            idle_opex = ci * tier_idle_power_density * idle_time * tier_max_capacity * 8 / 3.6e6
+            write_opex = ci * tier_active_power_density * write_time * content_size * 8 / 3.6e6
+
+            self.tier_opex[tier_name] += write_opex + idle_opex
+            self.sess_opex += write_opex + idle_opex
+
+            # CAPEX
+            TE = tier["embodied_kgco2e_per_gb"] * (tier_max_capacity / (8 * 1024**3))
+            tier_capex = TE * (content_size / tier_max_capacity)
+            self.sess_capex += tier_capex
+            self.tier_capex[tier_name] += tier_capex
+            
+            self._set_last_access(node, i, curr_time + write_time)
 
     @inheritdoc(DataCollector)
     def end_session(self, success=True):
         if not success:
             logger.info(f"end failed session")
             return
-        self.depreciation_cf += self.sess_depreciation_cf
-        self.read_cf += self.sess_read_cf
-        self.write_cf += self.sess_write_cf
-        self.routers_energy_cf += self.sess_routers_energy_cf
-        self.links_energy_cf += self.sess_links_energy_cf
-        self.idle_cf += self.sess_idle_cf
-        self.sess_cf += self.sess_idle_cf + self.sess_depreciation_cf + self.sess_read_cf + self.sess_write_cf
-        self.cf += self.sess_cf
-        self.embodied_cf += self.sess_embodied_cf
-        # logger.info(f"end_session. carbon footprint : {self.cf}")
-        # logger.info(f"end_session. sess_cf : {self.sess_cf}")
-        # logger.info(f"end_session. read_cf : {self.read_cf}, write_cf:{self.write_cf}, routers_energy_cf:{self.routers_energy_cf}, links_energy_cf:{self.links_energy_cf}")
-        logger.info(f"REAL {self.sess_count}, {self.receiver}, {self.content}, {self.sess_routers_energy_cf + self.sess_links_energy_cf}, {self.sess_depreciation_cf}, {self.sess_read_cf+ self.sess_write_cf}")
-        # Log the session cfs to a file
-                 # Log the session cfs to a CSV file
-        # with open(self.log_file_path, 'a', newline='') as file:
-        #     writer = csv.writer(file)
-        #     writer.writerow([self.sess_count, self.receiver, self.content,
-        #                      self.sess_routers_energy_cf+ self.sess_links_energy_cf,
-        #                      self.sess_depreciation_cf, self.sess_read_cf+ self.sess_write_cf])
+        self.routers_opex += self.sess_routers_opex
+        self.links_opex += self.sess_links_opex
+        self.server_opex += self.sess_server_opex
+        self.server_capex += self.sess_server_capex
+        self.opex += self.sess_opex
+        self.capex += self.sess_capex
 
     @inheritdoc(DataCollector)
     def results(self):
+        """Aggregate per-tier and overall results at the end of the simulation."""
+        per_tier_results = {}
+        total_opex = total_capex =0
+        tiers_stats = self.view.get_tier_stats()
+        for tier, times in self.device_times.items():
+            active_time = times["active"]
+            idle_time = times["idle"]
+            total_time = active_time + idle_time
+
+            # Compute utilization density
+            use_density = active_time / total_time if total_time > 0 else 0.0
+
+            # Scale CAPEX by actual device utilization (if exists)
+            self.tier_capex[tier] *= use_density
+            
+            per_tier_results[tier] = {
+                "OPEX": self.tier_opex[tier] / tiers_stats[tier],
+                "CAPEX": self.tier_capex[tier] / tiers_stats[tier],
+                "ACTIVE_TIME": active_time,
+                "IDLE_TIME": idle_time,
+                "UTILIZATION": use_density,
+            }
+            total_opex += self.tier_opex[tier]
+            total_capex += self.tier_capex[tier]
+        # --------------- BUILD RESULTS TREE -----------------
         results = Tree(
             {
-            "MEAN": self.cf / self.sess_count,
-            "TOTAL_OPEX": self.cf,
-            "TOTAL_CAPEX": self.embodied_cf,
-            "IDLE_CF": self.idle_cf,
-            "DEPRECIATION_CF": self.depreciation_cf / self.sess_count,
-            "READ_CF": self.read_cf / self.sess_count,
-            "WRITE_CF": self.write_cf / self.sess_count,
-            "ROUTERS_CF": self.routers_energy_cf / self.sess_count,
-            "LINKS_CF": self.links_energy_cf / self.sess_count,
-            "EMBODIED_CF": self.embodied_cf / self.sess_count,
-            })
+                "TOTAL": total_opex + total_capex,
+                "TOTAL_OPEX": total_opex,
+                "TOTAL_CAPEX": total_capex,
+                "SERVER_OPEX": self.server_opex,
+                "SERVER_CAPEX": self.server_capex,
+                "ROUTERS_OPEX": self.routers_opex,
+                "LINKS_OPEX": self.links_opex,
+                "PER_TIER": per_tier_results,
+                "TIER_STATS": self.view.get_tier_stats(),
+            }
+        )
         return results
 
 @register_data_collector("CACHE_HIT_RATIO")

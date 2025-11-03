@@ -343,11 +343,9 @@ class NetworkView:
         """
         if node in self.model.cache:
             return self.model.cache[node].dump2(k)
-
-    def get_last_access(self, node):
-        if node in self.model.cache:
-            return self.model.cache[node].get_tiers_last_access()
-    
+ 
+    def get_tier_stats(self):
+        return self.model.tier_statistics
 
 class NetworkModel:
     """Models the internal state of the network.
@@ -405,8 +403,8 @@ class NetworkModel:
         self.per_node_tiers = cache_policy.get("tiers_per_node", {})
 
         for node, data in topology.nodes(data=True):
-            # Carbon intensity (default to 300 if not present)
-            self.node_carbon_intensity[node] = data.get("carbon_intensity", 300) / 1000
+            # Carbon intensity (default to 400 if not present)
+            self.node_carbon_intensity[node] = data.get("carbon_intensity", 400) / 1000
 
             stack_name, stack_props = fnss.get_stack(topology, node)
 
@@ -454,7 +452,6 @@ class NetworkModel:
                 self.source_node[node] = contents
                 for content in contents:
                     self.content_source[content] = node
-
         # --- NEW: compute tier statistics ---
         self.tier_statistics = {}
         self.tier_sizes_mb = {}

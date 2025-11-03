@@ -492,7 +492,7 @@ def topology_garr(**kwargs):
         The topology object
     """
     topology = fnss.parse_topology_zoo(
-        path.join(TOPOLOGY_RESOURCES_DIR, "Garr201201.graphml")
+        path.join(TOPOLOGY_RESOURCES_DIR, "Garr201201_with_carbon.graphml")
     ).to_undirected()
     # sources are nodes representing neighbouring AS's
     sources = [0, 2, 3, 5, 13, 16, 23, 24, 25, 27, 51, 52, 54]
@@ -568,7 +568,7 @@ def topology_garr2(**kwargs):
         The topology object
     """
     topology = fnss.parse_topology_zoo(
-        path.join(TOPOLOGY_RESOURCES_DIR, "Garr201201.graphml")
+        path.join(TOPOLOGY_RESOURCES_DIR, "Garr201201_with_carbon.graphml")
     ).to_undirected()
 
     # sources are nodes representing neighbouring AS's
