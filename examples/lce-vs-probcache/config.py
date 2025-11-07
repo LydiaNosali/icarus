@@ -8,33 +8,46 @@ CACHING_GRANULARITY = "OBJECT"
 RESULTS_FORMAT = "PICKLE"
 PARALLEL_EXECUTION = False
 N_REPLICATIONS = 1
+N_PERIODS = 3
 
-TIERS = [
-    {"name":"DRAM",
-    "size_factor": 1/5,
-    "purchase_cost" : 150, # in $
-    "lifespan" : 5, # in years
-    "read_throughput" : 4e+10,  # 40GBPS
-    "write_throughput" : 2e+10, # 20GBPS
-    "latency"  : 1e-7,  #100ns
-    "active_caching_power_density" : 10**-9,  # w/bit
-    "idle_power_density_per_bit" : 10**-12,  # w/bit
-    "idle_power_density" : 0.1,  # w
-    "embodied_kgco2e_per_gb":0.109, #kg CO2e per GB,
-    },
-    {"name":"SSD",
-    "size_factor": 4/5,
-    "purchase_cost" : 100, # in $
-    "lifespan" : 3, # in years (SSD generally has a shorter lifespan compared to DRAM)
-    "read_throughput" : 5e+9,  # 5GBPS (typically slower than DRAM)
-    "write_throughput" : 2.5e+9, # 2.5GBPS (writing to SSD is slower than reading)
-    "latency"  : 1e-5,  # 10 microseconds (latency is higher than DRAM)
-    "active_caching_power_density" : 5e-7,  # 0.5 microwatts/bit (active power)
-    "idle_power_density_per_bit" : 5e-9,  # 5 nanowatts/bit (idle power)
-    "idle_power_density" : 0.2,  # w (idle power)
-    "embodied_kgco2e_per_gb":0.6, #kg CO2e per GB,
-    }
-]
+TIERS = [ 
+    {
+        "name":"DRAM", 
+        "size_factor": 0.2, 
+        "purchase_cost" : 150, # in $ 
+        "lifespan" : 3, # in years 
+        "read_throughput" : 4e+10, # 40GBPS 
+        "write_throughput" : 2e+10, # 20GBPS 
+        "latency" : 1e-7, #100ns 
+        "active_caching_power_density" : 1e-6, # w/bit 
+        "idle_power_density_per_bit" : 1e-8, # w/bit 
+        "embodied_kgco2e_per_gb":0.4, #kg CO2e per GB 
+    }, 
+    {
+        "name":"SSD", 
+        "size_factor": 0.3, 
+        "purchase_cost" : 100, # in $ 
+        "lifespan" : 2, # in years (SSD generally has a shorter lifespan compared to DRAM) 
+        "read_throughput" : 5e+9, # 5GBPS (typically slower than DRAM)
+        "write_throughput" : 2.5e+9, # 2.5GBPS (writing to SSD is slower than reading) 
+        "latency" : 1e-5, # 10 microseconds (latency is higher than DRAM) 
+        "active_caching_power_density" : 2e-7, # 0.5 microwatts/bit (active power) 
+        "idle_power_density_per_bit" : 1e-9, # 5 nanowatts/bit (idle power) 
+        "embodied_kgco2e_per_gb":0.8, #kg CO2e per GB
+        },
+    {
+        "name": "HDD",
+        "size_factor": 0.5,                  # 💾 Largest tier (~60%)
+        "purchase_cost": 50,
+        "lifespan": 5,                       # years
+        "read_throughput": 2e8,              # 200 MB/s
+        "write_throughput": 1.5e8,           # 150 MB/s
+        "latency": 5e-3,                     # 5 ms
+        "active_caching_power_density": 5e-8,   # W/bit  (~0.4 W/GB)
+        "idle_power_density_per_bit": 8e-9,     # W/bit  (~0.06 W/GB)
+        "embodied_kgco2e_per_gb": 0.25,      # low embodied carbon per GB
+        }
+    ]
 
 PENALTY_TABLE = [
     {"delay": 50, "P0": 0.0, "P1": 0.0},        # Delay < 20 ms
@@ -62,9 +75,7 @@ DATA_COLLECTORS = {
     "CHRCP" : {},
     "CARBONFOOTPRINT":{
         "cost_params": strategy_params["CL2SM"],
-        "cf_params": {
-            "carbon_intensity" : {}
-        }
+        "tiers": TIERS,
     },
     # "LINK_LOAD":{}
     # "REPLICA_MONITOR":{}
@@ -74,10 +85,10 @@ default = Tree()
 
 default["workload"] = {
     "name": "STATIONARY",
-    "n_contents": 10000,
-    "n_warmup": 60000,
-    "n_measured": 60000,
-    "rate": 1,
+    "n_contents": 100000,
+    "n_warmup": 500000,
+    "n_measured": 500000,
+    "rate": 5000,
     "high_priority_rate" :0.2,
     "priority_values": ["low", "high"],
     "data_size_range" : [1000, 8000],
@@ -90,16 +101,16 @@ default["cache_policy"]["name"] = "QMARC"
 default["cache_policy"]["alpha"] = 0.3
 default["cache_policy"]["tiers"] = TIERS
 
-# CACHE_PLACEMENT = [ "HYBRID_GREEN_CENTRALITY","GREEN", "BETWEENNESS_CENTRALITY", "CONSOLIDATED", "UNIFORM", "DEGREE", "RANDOM","OPTIMAL_MEDIAN", "OPTIMAL_HASHROUTING"]
-CACHE_PLACEMENT = ["ALLOCATED", "GREEN", "UNIFORM", "BETWEENNESS_CENTRALITY"]
-# CACHE_PLACEMENT = ["UNIFORM"]
+# CACHE_PLACEMENT = ["ALLOCATED", "HYBRID_GREEN_CENTRALITY","GREEN", "BETWEENNESS_CENTRALITY", "CONSOLIDATED", "UNIFORM", "DEGREE", "RANDOM","OPTIMAL_MEDIAN", "OPTIMAL_HASHROUTING"]
+# CACHE_PLACEMENT = ["ALLOCATED", "GREEN", "UNIFORM", "BETWEENNESS_CENTRALITY"]
+CACHE_PLACEMENT = ["UNIFORM"]
 # STRATEGIES = ["CL2SM", "LCE", "LCD", "PROB_CACHE", "CL4M", "CPCache"]
 STRATEGIES = ["CL2SM"]
 # ALPHA = [0.8, 1.2, 2.0]
 ALPHA = [1.2]
 
-NETWORK_CACHE = [0.005, 0.01, 0.015, 0.02, 0.025, 0.03] # which is 5% and 10%
-# NETWORK_CACHE = [0.015] # which is 5% and 10%
+# NETWORK_CACHE = [0.01, 0.015, 0.02] # which is 5% and 10%
+NETWORK_CACHE = [0.015] # which is 5% and 10%
 print(NETWORK_CACHE)
 
 TOPOLOGIES = [

@@ -38,7 +38,7 @@ __all__ = [
     "QMARCCache",
 ]
 
-logger = logging.getLogger("babel")
+logger = logging.getLogger("main")
 
 class LinkedSet:
     """A doubly-linked set, i.e., a set whose entries are ordered and stored
@@ -1994,10 +1994,12 @@ def ttl_keyval_cache():
 
 
 class Deque(object):
-    'Fast searchable queue'
-
-    def __init__(self):
+    """Fast searchable queue"""
+    def __init__(self, iterable=None):
         self.od = OrderedDict()
+        if iterable is not None:
+            for k in iterable:
+                self.od[k] = None
 
     def append_left(self, k):
         if k in self.od:
@@ -2233,7 +2235,23 @@ class QMARCCache(Cache):
         
         for i in range(self._n_caches):
             self._beta[i] = self._sizes[i] / self._sizes[0]
-        
+                
+        # cold_start = kwargs.get("cold_start", True)
+        # if not cold_start and "saved_tiers" in kwargs:
+        #     try:
+        #         saved_tiers = kwargs["saved_tiers"]
+        #         for i, tier_cache in self._tier_m_caches.items():
+        #             name = tier_cache.name
+        #             if name in saved_tiers:
+        #                 stored = saved_tiers[name]
+        #                 if isinstance(stored, dict):
+        #                     if "t1" in stored:
+        #                         tier_cache.t1 = Deque(stored["t1"])
+        #                     if "t2" in stored:
+        #                         tier_cache.t2 = Deque(stored["t2"])
+        #         print(f"[♻️] Restored QMARC tiers from saved state ({len(saved_tiers)} tiers).")
+        #     except Exception as e:
+        #         print(f"[⚠️] QMARC restore failed: {e}")
 
     class TierMCache:
         def __init__(self, name, maxlen):
@@ -2242,6 +2260,7 @@ class QMARCCache(Cache):
             self.t1 = Deque()
             self.t2 = Deque()
             self._maxlen = maxlen
+            self.last_access = 0.0
 
         def put_t1(self, k, *args):
             a, b = (None, None)
@@ -2264,7 +2283,8 @@ class QMARCCache(Cache):
                     old = self.t1.get_without_pop()
                     self.t1.pop()
                     a, b = (old, "t1")
-
+                
+            self.last_access = time.time()
             return (a, b)
         
         def put_t2(self, k, *args):
@@ -2290,6 +2310,7 @@ class QMARCCache(Cache):
                     self.t1.pop()
                     a, b = (old, "t1")
 
+            self.last_access = time.time()
             return (a, b)
 
     def initialize_caches(self):
@@ -2318,6 +2339,82 @@ class QMARCCache(Cache):
     def dump2(self, k=None):
         return self._cache
     
+    def node_state(self):
+        """
+        Return a complete snapshot of the entire QMARC cache state:
+        • Per-tier queues (t1, t2, p, last_access)
+        • Global ARC queues (t1, t2, b1, b2, p)
+        • Full key/value cache mapping (_cache)
+        This makes the state fully serializable and restorable.
+
+        Returns
+        -------
+        dict
+            Structured dictionary containing all QMARC internal state.
+        """
+        # --- Per-tier details ---
+        tier_dump = {}
+        for tier in self._tier_m_caches.values():
+            tier_dump[tier.name] = {
+                "name": tier.name,
+                "maxlen": getattr(tier, "_maxlen", None),
+                "t1": list(tier.t1),
+                "t2": list(tier.t2),
+                "p": getattr(tier, "p", 0),
+                "last_access": getattr(tier, "last_access", None),
+            }
+
+        # --- Global ARC-level state ---
+        global_state = {
+            "t1": list(self.t1),
+            "t2": list(self.t2),
+            "b1": list(self.b1),
+            "b2": list(self.b2),
+            "p": self.p,
+            "_cache": {k: v for k, v in self._cache.items()},  # Safe shallow copy
+        }
+
+        # --- Return combined structure ---
+        return {
+            "tiers": tier_dump,
+            "global": global_state,
+        }
+
+    def restore_from_dump(self, dump):
+        """
+        Restore the QMARC cache state from a dump created by node_state().
+        """
+        try:
+            # Restore per-tier queues
+            tiers = dump.get("tiers", {})
+            for i, tier_cache in self._tier_m_caches.items():
+                name = tier_cache.name
+                if name in tiers:
+                    tdata = tiers[name]
+                    tier_cache.t1 = Deque()
+                    tier_cache.t2 = Deque()
+                    for item in tdata.get("t1", []):
+                        tier_cache.t1.append_left(item)
+                    for item in tdata.get("t2", []):
+                        tier_cache.t2.append_left(item)
+                    tier_cache.p = tdata.get("p", 0)
+                    tier_cache.last_access = tdata.get("last_access", 0.0)
+
+            # Restore global ARC state
+            global_state = dump.get("global", {})
+            for queue_name in ["t1", "t2", "b1", "b2"]:
+                q = Deque()
+                for item in global_state.get(queue_name, []):
+                    q.append_left(item)
+                setattr(self, queue_name, q)
+            self.p = global_state.get("p", 0)
+            self._cache = dict(global_state.get("_cache", {}))
+
+            print(f"[♻️] QMARC restored successfully (tiers: {len(tiers)})")
+
+        except Exception as e:
+            print(f"[⚠️] Failed to restore QMARC cache: {e}")
+
     @inheritdoc(Cache)
     def has(self, k, *args, **kwargs):
         return k in self._cache
@@ -2766,3 +2863,8 @@ class QMARCCache(Cache):
             global_pos = round(len(self.t1) * self._alpha)
             return self.t1_get_index_tier(global_pos)
 
+    def get_tiers_last_access(self):
+        tiers_last_access = {}
+        for i in range(self._n_caches):
+            tiers_last_access[i] = self._tier_m_caches[i].last_access
+        return tiers_last_access

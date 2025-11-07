@@ -6,6 +6,8 @@ the experiment by iterating through the event provided by an event generator
 and providing them to a strategy instance.
 """
 import csv
+import pickle, json
+from pathlib import Path
 import logging
 from icarus.execution import (
     NetworkModel,
@@ -18,9 +20,9 @@ from icarus.registry import DATA_COLLECTOR, STRATEGY
 
 __all__ = ["exec_experiment"]
 
-logger = logging.getLogger("babel")
+logger = logging.getLogger("main")
 
-def exec_experiment(topology, workload, netconf, strategy, cache_policy, collectors):
+def exec_experiment(topology, workload, netconf, strategy, cache_policy, collectors, collector=None, period=None):
     """Execute the simulation of a specific scenario.
 
     Parameters
@@ -55,30 +57,55 @@ def exec_experiment(topology, workload, netconf, strategy, cache_policy, collect
     view = NetworkView(model)
     controller = NetworkController(model)
 
-    collectors_inst = [
-        DATA_COLLECTOR[name](view, **params) for name, params in collectors.items()
-    ]
-    collector = CollectorProxy(view, collectors_inst)
+    if collector is None:
+        collectors_inst = [
+            DATA_COLLECTOR[name](view, **params) for name, params in collectors.items()
+        ]
+        collector = CollectorProxy(view, collectors_inst)
     controller.attach_collector(collector)
 
-    strategy_name = strategy["name"]
+    strategy_name = strategy["name"]  # "CL2SM"
     strategy_args = {k: v for k, v in strategy.items() if k != "name"}
+    strategy_args["strategy_name"] = strategy_name  # ✅ add this
     strategy_inst = STRATEGY[strategy_name](view, controller, **strategy_args)
     
+    # === RESTORE STRATEGY STATE (if previous period exists) ===
+    strategy_inst.restore_strategy_state(strategy_name=strategy_name, period=period-1)
+
+    # === RESUME HANDLING FOR NETWORK ===
+    saved_state_file = netconf.get("saved_state_file")
+    resuming = saved_state_file and Path(saved_state_file).exists()
+
+    if resuming:
+        if hasattr(workload, "n_warmup"):
+            try:
+                workload.n_warmup = 0
+                print("[⏭️] Warmup skipped (resuming from saved network state)")
+            except Exception as e:
+                print(f"[⚠️] Could not modify workload.n_warmup: {e}")
+
     # Specify the headers
-    # headers = ['timestamp', 'content', 'size', 'priority']
-    # with open('events.csv', mode='w', newline='') as file:
-    #     writer = csv.DictWriter(file, fieldnames=headers)
-    #     writer.writeheader()
-    # with open('events.csv', mode='a', newline='') as file:
-    #     writer = csv.DictWriter(file, fieldnames=headers)
     for i, (time, event) in enumerate(workload):
         logger.info("i: %s, time: %s, event: %s"%(i, time, event))
         strategy_inst.process_event(time, **event)
-            # writer.writerow({
-            #     'timestamp': time,
-            #     'content': event['content'],
-            #     'size': event['size'],
-            #     'priority': event['priority']
-            # })
-    return collector.results()
+    
+    state = {
+        "gain_per_data": strategy_inst.gain_per_data,
+        "request_counter": strategy_inst.request_counter,
+    }
+
+    try:
+        saved_dir = Path("strategy_states")
+        filepath = saved_dir / f"{strategy_name}_p{period}.pkl"
+        with open(filepath, "wb") as f:
+            pickle.dump(state, f)
+        print(f"[💾] Saved {strategy_name} state to {filepath}")
+
+        jsonpath = filepath.with_suffix(".json")
+        with open(jsonpath, "w") as jf:
+            json.dump(state, jf, indent=2)
+        print(f"[📄] JSON copy saved to {jsonpath}")
+    except Exception as e:
+        print(f"[⚠️] Failed to save {strategy_name} state (period {period}): {e}")
+
+    return collector, model

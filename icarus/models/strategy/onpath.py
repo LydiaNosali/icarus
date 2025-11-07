@@ -1,8 +1,10 @@
 """Implementations of all on-path strategies"""
 from collections import defaultdict
 import csv
+import json
 import logging
 import os
+from pathlib import Path
 import pickle
 import math
 import random
@@ -33,7 +35,7 @@ __all__ = [
     "CPCacheCooperativeCaching",
 ]
 
-logger = logging.getLogger("babel")
+logger = logging.getLogger("main")
 
 @register_strategy("PARTITION")
 class Partition(Strategy):
@@ -468,15 +470,83 @@ class CacheLessToSaveMore(Strategy):
         self.cost_per_bit = kwargs['cost_per_bit']
         self.router_energy_density = kwargs['router_energy_density']
         self.link_energy_density = kwargs['link_energy_density']
-        
-        self.cost_ratio_threshold = 1.0
 
         self.gain_per_data = {}
         self.request_counter = {}
-        self.last_access_time = defaultdict(lambda: defaultdict(float))
-        self.time = 0
         self.log_file_path = '../../examples/lce-vs-probcache/path_log.csv'
-        
+
+    def restore_strategy_state(self, strategy_name=None, period=None):
+        """
+        Restore the saved state (gain_per_data, request_counter) for this strategy.
+        Supports period-specific resumes (e.g. CL2SM_p2.pkl).
+        """
+        strategy_name = strategy_name or self.__class__.__name__
+        saved_dir = Path("strategy_states")
+
+        # Choose filename based on period number if provided
+        filename = f"{strategy_name}_p{period}.pkl"
+        saved_state_path = saved_dir / filename
+        saved_json_path = saved_state_path.with_suffix(".json")
+
+        restored = False
+        if saved_state_path.exists():
+            try:
+                with open(saved_state_path, "rb") as f:
+                    state = pickle.load(f)
+                self.gain_per_data = state.get("gain_per_data", {})
+                self.request_counter = state.get("request_counter", {})
+                print(f"[♻️] Restored {strategy_name} (period={period or 'latest'}) from {saved_state_path}")
+                restored = True
+            except Exception as e:
+                print(f"[⚠️] Failed to restore {strategy_name} (pkl): {e}")
+
+        elif saved_json_path.exists():
+            try:
+                with open(saved_json_path, "r") as jf:
+                    state = json.load(jf)
+                self.gain_per_data = state.get("gain_per_data", {})
+                self.request_counter = state.get("request_counter", {})
+                print(f"[♻️] Restored {strategy_name} (period={period or 'latest'}) from {saved_json_path}")
+                restored = True
+            except Exception as e:
+                print(f"[⚠️] Failed to restore {strategy_name} (json): {e}")
+
+        if not restored:
+            print(f"[ℹ️] No previous strategy state found for {strategy_name} (cold start).")
+
+    def save_strategy_state(self, strategy_name=None, period=None):
+        """
+        Save the current strategy state to disk, using period-specific filenames.
+        """
+        strategy_name = strategy_name or self.__class__.__name__
+        saved_dir = Path("strategy_states")
+        saved_dir.mkdir(exist_ok=True)
+
+        filename = f"{strategy_name}_p{period}.pkl" if period else f"{strategy_name}_state.pkl"
+        filepath = saved_dir / filename
+
+        state = {
+            "gain_per_data": getattr(self, "gain_per_data", {}),
+            "request_counter": getattr(self, "request_counter", {}),
+        }
+
+        # Save as pickle
+        try:
+            with open(filepath, "wb") as f:
+                pickle.dump(state, f)
+            print(f"[💾] Saved strategy state to {filepath}")
+        except Exception as e:
+            print(f"[⚠️] Failed to save {strategy_name} state (pkl): {e}")
+
+        # Also save JSON copy
+        jsonpath = filepath.with_suffix(".json")
+        try:
+            with open(jsonpath, "w") as jf:
+                json.dump(state, jf, indent=2)
+            print(f"[📄] JSON copy saved to {jsonpath}")
+        except Exception as e:
+            print(f"[⚠️] Failed to save {strategy_name} state (json): {e}")
+
     def _tiers(self, node):
         try:
             # New API: view.cache_tiers(node) -> list[tiers] for that node
@@ -490,13 +560,11 @@ class CacheLessToSaveMore(Strategy):
     @inheritdoc(Strategy)
     def process_event(self, time, receiver, content, size, priority, log):
         # get all required data
-        self.time = time
         source = self.view.content_source(content)
         path = self.view.shortest_path(receiver, source)
          # Route requests to original source and queries caches on the path
         self.controller.start_session(time, receiver, content, log, priority)
-        serving_node = source
-        hit = False
+        serving_node = None
         for u, v in path_links(path):
             if v not in self.gain_per_data:
                 self.gain_per_data[v] = {}
@@ -504,21 +572,18 @@ class CacheLessToSaveMore(Strategy):
                 self.request_counter[v] = {}
             self.controller.forward_request_hop(u, v)
             if self.view.has_cache(v):
-                if self.controller.get_content(v, size=size, priority=priority, time=time):
+                if self.controller.get_content(v, size=size, priority=priority):
                     serving_node = v
-                    tier_index = self.controller.get_tier_index(v, content, priority)
-                    self.last_access_time[v][tier_index] = time
-                    hit = True
                     break
-        if not hit:
+        if serving_node is None:
             # No cache hits, get content from source
             self.controller.get_content(source, tier_index=0, size=size, priority=priority, time=time)
-            tier_index = self.controller.get_tier_index(v, content, priority)
-            self.last_access_time[v][tier_index] = time
+            serving_node = source
         # Return content
-        ret_path = self.view.shortest_path(serving_node, receiver)
-        for u, v in path_links(ret_path):
+        path = list(reversed(self.view.shortest_path(receiver, serving_node)))
+        for u, v in path_links(path):
             self.controller.forward_content_hop(u, v, main_path=True, size=size, priority=priority)
+            
             if not self.view.has_cache(v):
                 continue
             
@@ -526,38 +591,48 @@ class CacheLessToSaveMore(Strategy):
             if not tiers:
                 continue
             
-            self.request_counter[v][content] = self.request_counter[v].get(content, 0) + 1
+            new_value = self.request_counter[v].get(content) + 1 if self.request_counter[v].get(content) else 1
+            self.request_counter[v].update({content: new_value})
             reaccess_prob = self.get_probability_estimate(content, self.request_counter[v]) 
+            # print(f"is_reaccessed probability for content {content} at node {v}: {is_reaccessed}")
+            # print(f"reaccess_prob for content {content} at node {v}: {reaccess_prob}")
+            # print(f"is_reaccessed:{is_reaccessed}")
+            # if is_reaccessed:
+            new_path = list(reversed(self.view.shortest_path(v, serving_node)))
+            storage_gain, band, trans, pen = self.storage_gain(new_path, size, priority)
+            adjusted_gain = storage_gain * reaccess_prob
+            self.gain_per_data[v].update({content: adjusted_gain})
+            
             cache_dump = self.view.cache_dump(v, k=content)
-            tier_index = self.controller.get_tier_index(v, content, priority)
-
-            # compute gain for this hop
-            hop_path = self.view.shortest_path(v, serving_node)
-            sgain, band, trans, pen = self.storage_gain(hop_path, size, priority)
-            adjusted_gain = sgain * reaccess_prob
-            self.gain_per_data[v][content] = adjusted_gain
-            if len(cache_dump) >= self.cache_size[v]:
+            # print(f"cache_dump:{cache_dump}")
+            if len(cache_dump) == self.cache_size[v]:
                 paths = {}
-                sample_keys = list(cache_dump.keys())[:max(2, round(0.1 * len(cache_dump)))]
-                candidates = {c: self.gain_per_data[v].get(c, 0.0) for c in sample_keys}
-
-                if candidates:
+                for c in list(cache_dump.keys())[:max(2, round(0.1 * len(cache_dump)))]:
+                    # paths[c] = self.gain_per_data[v].get(c) * np.exp(-self.rate * self.sess_count)
+                    # self.gain_per_data[v].update({c: paths[c]})
+                    paths[c] = self.gain_per_data[v].get(c)
+                if paths:
                     # we choose the data with the least retrieval time to evict
-                    min_content, min_gain = min(candidates.items(), key=lambda x: x[1])
+                    min_content, min_gain = min(paths.items(), key=lambda x: x[1])
                     # calculate storage loss
-                    sloss, dep, stor = self.storage_loss(v, tiers, content, size, priority)
-                    if adjusted_gain >= sloss + min_gain:
-                        self.controller.put_content(v, min_content=min_content, tier_index=tier_index, size=size, priority=priority, time=time)
-                        self.last_access_time[v][tier_index] = time
+                    storage_loss, dep, stor = self.storage_loss(v, tiers, content, size, priority) 
+                    baseline_min_gain = self.gain_per_data[v].get(min_content, 0.0) if min_content else 0.0
+                    
+                    if adjusted_gain >= storage_loss + baseline_min_gain:
+                        logger.info("storage_gain > storage_loss")
+                        tier_index = self.controller.get_tier_index(v, content, priority)
+                        self.controller.put_content(v, min_content=min_content, tier_index=tier_index, size=size, priority=priority)
                     else:
-                        logger.info("Not worth caching at node %s", v)
+                        logger.info("cost is not for it")
+                        for node, value in self.gain_per_data.items():
+                            logger.info(f"node:{node}, value:{value}")
                 else:
                     logger.info("no paths")
-                    self.controller.put_content(v, tier_index=tier_index, size=size, priority=priority, time=time)
-                    self.last_access_time[v][tier_index] = time 
+                    tier_index = self.controller.get_tier_index(v, content, priority)
+                    self.controller.put_content(v, tier_index=tier_index, size=size, priority=priority)
             else:
-                self.controller.put_content(v, tier_index=tier_index, size=size, priority=priority, time=time)
-                self.last_access_time[v][tier_index] = time 
+                tier_index = self.controller.get_tier_index(v, content, priority)
+                self.controller.put_content(v, tier_index=tier_index, size=size, priority=priority) 
         
         self.controller.end_session()
 
@@ -586,7 +661,7 @@ class CacheLessToSaveMore(Strategy):
         trans = self.transmission_energy_cost(path, content_size)
         pen = self.penalty_cost(path, priority)  
         storage_gain = band + trans + pen
-        logger.info(f"ESTIMATED cost_bandwidth:{band},cost_penalty:{pen}, cost_transmission:{trans} = storage_gain {storage_gain}") 
+        # logger.info(f"ESTIMATED cost_bandwidth:{band},cost_penalty:{pen}, cost_transmission:{trans} = storage_gain {storage_gain}") 
         return storage_gain, band, trans, pen
     
     def storage_loss(self, receiver, tiers, content, content_size, content_priority) -> float:
@@ -594,7 +669,7 @@ class CacheLessToSaveMore(Strategy):
         dep = self.depreciation_cost(tiers, tier_index, content_size)
         stor = self.storage_energy_cost(tiers, tier_index, receiver, content_size)
         storage_loss = dep + stor
-        logger.info(f"ESTIMATED cost_depreciation:{dep}, cost_storage:{stor} = storage_loss {storage_loss}") 
+        # logger.info(f"ESTIMATED cost_depreciation:{dep}, cost_storage:{stor} = storage_loss {storage_loss}") 
         return storage_loss, dep, stor
         
     def depreciation_cost(self, tiers, tier_index, content_size) -> float: 
@@ -618,25 +693,22 @@ class CacheLessToSaveMore(Strategy):
         read_cost = 0.0
         write_cost = 0.0
         tier = tiers[tier_index]
+        tier_max_capacity = tier['actual_size_bytes']
         tier_active_power_density  = tier['active_caching_power_density']
-        tier_idle_power_density = tier['idle_power_density']
+        tier_idle_power_density = tier['idle_power_density_per_bit']
         
-        tiers_last_access = self.last_access_time[receiver]
-        last_read_time = tiers_last_access.get(tier_index, 0.0)
-        idle_time = 0.0 if last_read_time == 0 else self.time - last_read_time
-        
-        # idle_time = 0.0 if tiers_last_access[tier_index]==0 else time.time() - tiers_last_access[tier_index]
+        tiers_last_access = self.view.get_tiers_last_access(receiver)
+        idle_time = 0.0 if tiers_last_access[tier_index]==0 else time.time() - tiers_last_access[tier_index]
         read_time = tier['latency'] + content_size / tier['read_throughput']
-        read_cost = ((tier_idle_power_density * idle_time) + (tier_active_power_density * read_time * content_size)) * self.cost_per_joule
+        read_cost = ((tier_idle_power_density * idle_time * tier_max_capacity * 8) + (tier_active_power_density * read_time * content_size * 8)) * self.cost_per_joule
         
         for i, tier in enumerate(tiers[tier_index:], start=tier_index):
+            tier_max_capacity = tier['actual_size_bytes']
             tier_active_power_density  = tier['active_caching_power_density']
-            tier_idle_power_density = tier['idle_power_density']
-            last_write_time = tiers_last_access.get(i, 0.0)
-            idle_time = 0.0 if last_write_time == 0 else self.time - last_write_time
-            # idle_time = 0.0 if tiers_last_access[i]==0 else time.time() - tiers_last_access[i]
+            tier_idle_power_density = tier['idle_power_density_per_bit']
+            idle_time = 0.0 if tiers_last_access[i]==0 else time.time() - tiers_last_access[i]
             write_time = tier['latency'] + content_size / tier['write_throughput']
-            write_cost += ((tier_idle_power_density * idle_time) + (tier_active_power_density * write_time * content_size)) * self.cost_per_joule
+            write_cost += ((tier_idle_power_density * idle_time * tier_max_capacity * 8) + (tier_active_power_density * write_time * content_size * 8)) * self.cost_per_joule
         return read_cost + write_cost
 
     def bandwidth_cost(self, path, content_size) -> float:

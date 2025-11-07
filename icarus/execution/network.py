@@ -12,13 +12,19 @@ about the network status by calling methods of the `NetworkView` instance.
 The `NetworkController` is also responsible to notify a `DataCollectorProxy`
 of all relevant events.
 """
+import copy
 import logging
+import random
 
 import networkx as nx
 import fnss
 
+from icarus.models.cache.policies import Deque
 from icarus.registry import CACHE_POLICY
 from icarus.util import iround, path_links
+import pickle
+import json
+from pathlib import Path
 
 __all__ = ["NetworkModel", "NetworkView", "NetworkController"]
 
@@ -344,8 +350,15 @@ class NetworkView:
         if node in self.model.cache:
             return self.model.cache[node].dump2(k)
  
+    def node_state(self, node):
+        return self.model.cache[node].node_state()
+    
     def get_tier_stats(self):
         return self.model.tier_statistics
+
+    def get_tiers_last_access(self, node):
+        if node in self.model.cache:
+            return self.model.cache[node].get_tiers_last_access()
 
 class NetworkModel:
     """Models the internal state of the network.
@@ -401,18 +414,17 @@ class NetworkModel:
         policy_args = {k: v for k, v in cache_policy.items() if k != "name"}
         base_tiers = cache_policy.get("tiers", [])
         self.per_node_tiers = cache_policy.get("tiers_per_node", {})
-
+        
+        saved_state_path = kwargs.get("saved_state_file")
         for node, data in topology.nodes(data=True):
             # Carbon intensity (default to 400 if not present)
             self.node_carbon_intensity[node] = data.get("carbon_intensity", 400) / 1000
-
             stack_name, stack_props = fnss.get_stack(topology, node)
 
             if stack_name == "router":
                 if "cache_size" in stack_props:
                     size = max(1, stack_props["cache_size"])
                     self.cache_size[node] = size
-                    # print(f"cache_size:{size}")
                     
                     node_policy_args = {k: v for k, v in policy_args.items() if k != "tiers"}
                     if node in self.per_node_tiers:
@@ -445,7 +457,12 @@ class NetworkModel:
                         node_policy_args["tiers"] = node_tier_list
 
                     if size > 0:
+                        node_policy_args["cold_start"] = not bool(saved_state_path)
+                        if saved_state_path:
+                            node_policy_args["saved_tiers"] = saved_state_path
+
                         self.cache[node] = CACHE_POLICY[policy_name](size, **node_policy_args)
+                        print(f"[✅] Cache initialized for node {node} | cold_start={node_policy_args['cold_start']}")
 
             elif stack_name == "source":
                 contents = stack_props.get("contents", [])
@@ -483,6 +500,119 @@ class NetworkModel:
         self.removed_caches = {}
         self.removed_local_caches = {}
 
+        # ==========================================================
+        # ✅ AUTOLOAD PREVIOUS STATE (optional)
+        # ==========================================================
+        
+        if saved_state_path and Path(saved_state_path).exists():
+            try:
+                print(f"[♻️] Loading saved network state from {saved_state_path} ...")
+                with open(saved_state_path, "rb") as f:
+                    state = pickle.load(f)
+
+                # Restore per-node tiers and capacities
+                if "per_node_tiers" in state:
+                    for node, cache_state in state["per_node_tiers"].items():
+                        if node in self.cache and hasattr(self.cache[node], "restore_from_dump"):
+                            self.cache[node].restore_from_dump(cache_state)
+
+                # Restore node carbon intensity and tier stats
+                self.node_carbon_intensity = state.get("node_carbon_intensity", self.node_carbon_intensity)
+                self.tier_statistics = state.get("tier_statistics", self.tier_statistics)
+                self.tier_sizes_mb = state.get("tier_sizes_mb", self.tier_sizes_mb)
+
+                print(f"[✅] NetworkModel restored from {saved_state_path}")
+            except Exception as e:
+                print(f"[⚠️] Failed to load saved network state: {e}")
+ 
+    def save_state(self, filename_prefix="network_state", directory="network_states"):
+        Path(directory).mkdir(exist_ok=True)
+        filepath = Path(directory) / f"{filename_prefix}.pkl"
+        old_ci = copy.deepcopy(self.node_carbon_intensity)
+        new_ci = {}
+
+         # Simple evolution rule: ±5% random variation, clipped to [0.05, 1.0]
+        for node, val in old_ci.items():
+            delta = random.uniform(-0.05, 0.05)
+            new_val = max(0.05, min(1.0, val + delta))
+            new_ci[node] = round(new_val, 3)
+
+        state = {
+            "old_node_carbon_intensity": self.node_carbon_intensity,
+            "old_node_carbon_intensity_total": sum(self.node_carbon_intensity.values()),
+            "node_carbon_intensity": new_ci,
+            "node_carbon_intensity_total": sum(new_ci.values()),
+            "tier_statistics": self.tier_statistics,
+            "tier_sizes_mb": self.tier_sizes_mb,
+            "per_node_tiers": {},
+            "cache_size": self.cache_size,
+        }
+
+        for node, cache_obj in self.cache.items():
+            if hasattr(cache_obj, "node_state"):
+                try:
+                    state["per_node_tiers"][node] = cache_obj.node_state()
+                except Exception as e:
+                    print(f"[⚠️] Failed to dump cache for node {node}: {e}")
+
+        # Save as pickle
+        with open(filepath, "wb") as f:
+            pickle.dump(state, f)
+        print(f"[💾] Saved network model state to {filepath}")
+
+        # Optional readable JSON copy
+        jsonpath = filepath.with_suffix(".json")
+        with open(jsonpath, "w") as jf:
+            json.dump(state, jf, indent=2)
+        print(f"[📄] JSON copy saved to {jsonpath}")
+
+        return str(filepath)
+
+    def load_state(self, filepath):
+        """
+        Load a saved network model state and restore caches, tiers, and carbon intensities.
+        
+        Parameters
+        ----------
+        filepath : str
+            Path to the saved .pkl file
+        """
+        if not Path(filepath).exists():
+            print(f"[⚠️] Saved state not found: {filepath}")
+            return False
+
+        with open(filepath, "rb") as f:
+            saved = pickle.load(f)
+
+        # Restore carbon intensities
+        if "node_carbon_intensity" in saved:
+            self.node_carbon_intensity = saved["node_carbon_intensity"]
+
+        # Restore per-node tiers and sizes
+        if "per_node_tiers" in saved:
+            for node, tiers_saved in saved["per_node_tiers"].items():
+                if node not in self.per_node_tiers:
+                    continue
+                for tier, tier_saved in zip(self.per_node_tiers[node], tiers_saved):
+                    tier.update({
+                        "actual_size": tier_saved.get("actual_size"),
+                        "actual_size_bytes": tier_saved.get("actual_size_bytes"),
+                    })
+                    # Restore tier contents if available
+                    if node in self.cache and "stored_contents" in tier_saved:
+                        cache_obj = self.cache[node]
+                        if hasattr(cache_obj, "_caches"):
+                            tcache = cache_obj._caches[self.per_node_tiers[node].index(tier)]
+                            if hasattr(tcache, "contents"):
+                                tcache.contents = set(tier_saved["stored_contents"])
+                            if "occupancy" in tier_saved:
+                                setattr(tcache, "occupancy", tier_saved["occupancy"])
+        
+        # Restore tier stats
+        self.tier_statistics = saved.get("tier_statistics", self.tier_statistics)
+        self.tier_sizes_mb = saved.get("tier_sizes_mb", self.tier_sizes_mb)
+        print(f"[♻️] Restored network model state from {filepath}")
+        return True
 
 class NetworkController:
     """Network controller

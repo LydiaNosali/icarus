@@ -3,6 +3,7 @@
 The orchestrator is responsible for scheduling experiments specified in the
 user-provided settings.
 """
+from pathlib import Path
 import time
 import collections
 import multiprocessing as mp
@@ -229,9 +230,8 @@ def run_scenario(settings, params, curr_exp, n_exp):
 
         # Get list of metrics required
         metrics = settings.DATA_COLLECTORS
-
-        # Copy parameters so that they can be manipulated
         tree = copy.deepcopy(params)
+
         # Set topology
         topology_spec = tree["topology"]
         topology_name = topology_spec.pop("name")
@@ -249,7 +249,6 @@ def run_scenario(settings, params, curr_exp, n_exp):
                 "No workload implementation named %s was found." % workload_name
             )
             return None
-        
         workload = WORKLOAD[workload_name](topology, **workload_spec)
 
         # Assign caches to nodes
@@ -260,22 +259,17 @@ def run_scenario(settings, params, curr_exp, n_exp):
                 logger.error("No cache placement named %s was found." % cachepl_name)
                 return None
             network_cache = cachepl_spec.pop("network_cache")
-            # Cache budget is the cumulative number of cache entries across
-            # the whole network
             cachepl_spec["cache_budget"] = workload.n_contents * network_cache
             logger.info("total cache_budget:%s"%cachepl_spec["cache_budget"])
             CACHE_PLACEMENT[cachepl_name](topology, **cachepl_spec)
+        
         allocs = {}
         for v in topology.nodes():
             stack = topology.node[v].get("stack", [])
             if len(stack) > 1 and "cache_size" in stack[1]:
                 allocs[v] = stack[1]["cache_size"]
-        # attach to results
         results = {"allocations": allocs}
-        # Assign contents to sources
-        # If there are many contents, after doing this, performing operations
-        # requiring a topology deep copy, i.e. to_directed/undirected, will
-        # take long.
+
         contpl_spec = tree["content_placement"]
         contpl_name = contpl_spec.pop("name")
         if contpl_name not in CONTENT_PLACEMENT:
@@ -303,14 +297,10 @@ def run_scenario(settings, params, curr_exp, n_exp):
 
         avg_content_size = getattr(workload, "avg_content_size", None)
         if avg_content_size is not None:
-            # Inject average content size into netconf so it flows to NetworkModel
             tree.setdefault("netconf", {})["avg_content_size"] = avg_content_size
         
-        # Configuration parameters of network model
         netconf = tree["netconf"]
-        # Text description of the scenario run to print on screen
         scenario = tree["desc"] if "desc" in tree else "Description N/A"
-
         logger.info(
             "Experiment %d/%d | Preparing scenario: %s", curr_exp, n_exp, scenario
         )
@@ -324,11 +314,37 @@ def run_scenario(settings, params, curr_exp, n_exp):
             return None
         
         collectors = metrics
-        
         logger.info("Experiment %d/%d | Start simulation", curr_exp, n_exp)
-        results = exec_experiment(
-            topology, workload, netconf, strategy, cache_policy, collectors
-        )
+        
+        N_PERIODS = getattr(settings, "N_PERIODS", 3)
+        collector = None
+        prev_state_path = None
+        for period in range(N_PERIODS):
+            print(f"\n🚀 Running period {period + 1}/{N_PERIODS}")
+
+            # Load previous saved state (skip for first period)
+            if period > 0:
+                netconf["saved_state_file"] = prev_state_path
+                # Skip warmup for subsequent periods
+                if "n_warmup" in workload_spec:
+                    workload_spec["n_warmup"] = 0
+
+            collector, model = exec_experiment(
+                topology, workload, netconf, strategy, cache_policy, collectors, collector=collector, period=period + 1
+            )
+
+            try:
+                if hasattr(model, "save_state"):
+                    state_prefix = f"exp{curr_exp}_{topology_name}"
+                    prev_state_path = model.save_state(state_prefix)
+                    print(f"[💾] Saved network model state after Experiment {curr_exp} -> {prev_state_path}")
+                else:
+                    print(f"[⚠️] NetworkModel has no save_state() method.")
+            except Exception as e:
+                print(f"[❌] Failed to save network state: {e}")
+            collector.new_period()
+
+        results = collector.results()
         allocs = {}
         for v in topology.nodes():
             stack = topology.node[v].get("stack", [])
