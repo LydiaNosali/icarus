@@ -528,32 +528,170 @@ class NetworkModel:
     def save_state(self, filename_prefix="network_state", directory="network_states"):
         Path(directory).mkdir(exist_ok=True)
         filepath = Path(directory) / f"{filename_prefix}.pkl"
+        
+        # --- Helper to remove an entry consistently ---
+        def _evict_from_tier(node_state, tinfo, qname):
+            q = tinfo[qname]
+            if not q:
+                return None
+            removed = q.pop()  # LRU
+            # remove from global queues if present
+            for gq in ["t1", "t2", "b1", "b2"]:
+                try:
+                    node_state["global"][gq].remove(removed)
+                except ValueError:
+                    pass
+            # remove from _cache
+            node_state["global"]["_cache"].pop(str(removed), None)
+            tinfo[qname] = q
+            return removed
+        
+        # --- Carbon Intensity Evolution (±5%) ---
         old_ci = copy.deepcopy(self.node_carbon_intensity)
         new_ci = {}
-
-         # Simple evolution rule: ±5% random variation, clipped to [0.05, 1.0]
         for node, val in old_ci.items():
             delta = random.uniform(-0.05, 0.05)
             new_val = max(0.05, min(1.0, val + delta))
             new_ci[node] = round(new_val, 3)
-
-        state = {
-            "old_node_carbon_intensity": self.node_carbon_intensity,
-            "old_node_carbon_intensity_total": sum(self.node_carbon_intensity.values()),
-            "node_carbon_intensity": new_ci,
-            "node_carbon_intensity_total": sum(new_ci.values()),
-            "tier_statistics": self.tier_statistics,
-            "tier_sizes_mb": self.tier_sizes_mb,
-            "per_node_tiers": {},
-            "cache_size": self.cache_size,
-        }
-
+        
+        # --- Cache Size Evolution (±10%) ---
+        old_cache_sizes = copy.deepcopy(self.cache_size)
+        new_cache_sizes = {}
+        for node, size in old_cache_sizes.items():
+            delta_factor = random.uniform(-0.1, 0.1)  # ±10%
+            new_size = max(1, round(size * (1 + delta_factor)))
+            new_cache_sizes[node] = new_size
+        
+        old_per_node_tiers = {}  
+        new_per_node_tiers = {}
         for node, cache_obj in self.cache.items():
-            if hasattr(cache_obj, "node_state"):
-                try:
-                    state["per_node_tiers"][node] = cache_obj.node_state()
-                except Exception as e:
-                    print(f"[⚠️] Failed to dump cache for node {node}: {e}")
+            try:
+                node_state = cache_obj.node_state()  # e.g. {"tiers": {...}, "global": {...}}
+                old_per_node_tiers[node] = copy.deepcopy(node_state)
+
+                # ✅ Adjust each tier’s capacity / size according to new cache size
+                total_new_size = new_cache_sizes.get(node, 1)
+                tier_configs = sorted(self.per_node_tiers[node], key=lambda t: float(t.get("latency", 1.0)))
+                tiers_sorted = list(node_state["tiers"].keys())
+
+                # --- Step 1: compute new vs old maxlen ---
+                prev_tier_maxlen = {name: node_state["tiers"][name]["maxlen"] for name in node_state["tiers"]}
+                new_tier_sizes = {}
+                for tier in tier_configs:
+                    name = tier["name"]
+                    new_maxlen = max(1, round(tier["size_factor"] * total_new_size))
+                    new_tier_sizes[name] = new_maxlen
+                    node_state["tiers"][name]["maxlen"] = new_maxlen
+
+                same_maxlens = all(
+                    prev_tier_maxlen.get(t) == new_tier_sizes.get(t)
+                    for t in tiers_sorted if t in node_state["tiers"]
+                )
+
+                old_total = old_cache_sizes.get(node, 1)
+                new_total = new_cache_sizes.get(node, 1)
+                diff = old_total - new_total  # positive if shrinking, negative if growing
+    
+                # --- Step 2: reconcile tiers if size or layout changed ---
+                curr = {t: len(node_state["tiers"][t]["t1"]) + len(node_state["tiers"][t]["t2"]) for t in tiers_sorted}
+                tgt  = {t: new_tier_sizes[t] for t in tiers_sorted}
+
+                if not same_maxlens or diff != 0:
+                    # --- Shrinking case ---
+                    if diff > 0:
+                        to_remove = diff
+                        for tier_name in reversed(tiers_sorted):  # start with slowest
+                            if to_remove <= 0:
+                                break
+                            tinfo = node_state["tiers"][tier_name]
+                            for qname in ["t2", "t1"]:
+                                while to_remove > 0 and tinfo[qname]:
+                                    _ = _evict_from_tier(node_state, tinfo, qname)
+                                    curr[tier_name] -= 1
+                                    to_remove -= 1
+                    # Tier reconciliation: push surplus → slower tiers; evict if still over
+                    changed = True
+                    while changed:
+                        changed = False
+                        # --- Cascading rebalance after shrink ---
+                        # Fill underfull tiers from faster ones until all tiers <= maxlen
+                        # Push surplus down
+                        for i, fast_name in enumerate(tiers_sorted[:-1]):  # fast → slow
+                            slow_name = tiers_sorted[i + 1]
+                            fast = node_state["tiers"][fast_name]
+                            slow = node_state["tiers"][slow_name]
+                            fast_surplus = max(0, curr[fast_name] - tgt[fast_name])
+                            slow_deficit = max(0, tgt[slow_name] - curr[slow_name])
+                            if fast_surplus and slow_deficit:
+                                moved_cnt = 0
+                                for qname in ["t2", "t1"]:
+                                    fq = fast[qname]
+                                    while fq and (curr[slow_name] < tgt[slow_name]) and fast_surplus > 0:
+                                        moved = fq.pop()
+                                        slow[qname].insert(0, moved)
+                                        curr[fast_name] -= 1
+                                        curr[slow_name] += 1
+                                        fast_surplus -= 1
+                                        moved_cnt += 1
+                                    fast[qname] = fq
+                                if moved_cnt:
+                                    changed = True
+
+                        # Evict from slowest if still over
+                        slowest = tiers_sorted[-1]
+                        over = max(0, curr[slowest] - tgt[slowest])
+                        if over:
+                            slow = node_state["tiers"][slowest]
+                            for qname in ["t2", "t1"]:
+                                while over > 0 and slow[qname]:
+                                    _ = _evict_from_tier(node_state, slow, qname)
+                                    curr[slowest] -= 1
+                                    over -= 1
+                                    changed = True
+
+                    # Final guard: trim each tier to maxlen
+                    for tname in tiers_sorted:
+                        tinfo = node_state["tiers"][tname]
+                        for qname in ["t1", "t2"]:
+                            over = len(tinfo[qname]) - tinfo["maxlen"]
+                            while over > 0:
+                                _ = _evict_from_tier(node_state, tinfo, qname)
+                                curr[tname] -= 1
+                                over -= 1
+
+                new_per_node_tiers[node] = node_state
+
+            except Exception as e:
+                print(f"[⚠️] Failed to dump cache for node {node}: {e}")
+
+        # --- Tier-level statistics ---
+        new_tier_statistics = {}
+        new_tier_sizes_mb = {}
+        for node, node_state in new_per_node_tiers.items():
+            for tier_name, tier_state in node_state.get("tiers", {}).items():
+                new_tier_statistics[tier_name] = new_tier_statistics.get(tier_name, 0) + 1
+                size_mb = tier_state.get("maxlen", 0) * (self.avg_content_size / (1024 * 1024))
+                new_tier_sizes_mb[tier_name] = new_tier_sizes_mb.get(tier_name, 0) + size_mb
+    
+        state = {
+            # "old_node_carbon_intensity": self.node_carbon_intensity,
+            # "old_node_carbon_intensity_total": sum(self.node_carbon_intensity.values()),
+
+            "node_carbon_intensity": new_ci,
+            # "node_carbon_intensity_total": sum(new_ci.values()),
+
+            "old_cache_size": old_cache_sizes,
+            "cache_size": new_cache_sizes,
+
+            # "old_tier_statistics": self.tier_statistics,
+            "tier_statistics": new_tier_statistics,
+
+            # "old_tier_sizes_mb": self.tier_sizes_mb,
+            "tier_sizes_mb": new_tier_sizes_mb,
+            
+            "old_per_node_tiers": old_per_node_tiers,
+            "per_node_tiers": new_per_node_tiers,
+        }
 
         # Save as pickle
         with open(filepath, "wb") as f:

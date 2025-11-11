@@ -404,7 +404,7 @@ def plot_network_cf_components_vs_cache_size(resultset, topology, alpha, cache_s
 
     # --- Style and labels ---
     ax.set_xlabel("Cache Proportion and Placement", fontsize=13)
-    ax.set_ylabel("Network Carbon Footprint (kgCO₂e)", fontsize=13)
+    ax.set_ylabel("Network Carbon Footprint (gCO₂e)", fontsize=13)
     ax.set_xticks(x_positions)
     ax.set_xticklabels(xtick_labels, rotation=45, ha="right", fontsize=10)
     ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.7)
@@ -472,7 +472,7 @@ def plot_opex_vs_capex_cache_size(resultset, topology, alpha, cache_size_range, 
 
     # Labels and layout
     ax.set_xlabel('Cache Proportion and Placement', fontsize=13)
-    ax.set_ylabel('Carbon Footprint (kgCO₂e)', fontsize=13)
+    ax.set_ylabel('Carbon Footprint (gCO₂e)', fontsize=13)
     ax.set_xticks(x_positions)
     ax.set_xticklabels(xtick_labels, fontsize=10, rotation=45, ha="right")
     ax.grid(True, linestyle='--', linewidth=0.5, alpha=0.7)
@@ -551,7 +551,7 @@ def plot_server_opex_vs_capex_cache_size(resultset, topology, alpha, cache_size_
     # Axis and layout
     # -----------------------------
     ax.set_xlabel('Cache Proportion and Placement', fontsize=13)
-    ax.set_ylabel('Carbon Footprint (kgCO₂e)', fontsize=13)
+    ax.set_ylabel('Carbon Footprint (gCO₂e)', fontsize=13)
     ax.set_xticks(x_positions + bar_width / 2)
     ax.set_xticklabels(xtick_labels, rotation=45, ha="right", fontsize=10)
     ax.legend(title="Server CF Component", fontsize=10)
@@ -568,7 +568,7 @@ def plot_cf_vs_cache_size(
 ):
     desc = {}
     desc["xlabel"] = "Cache Proportion (%)"
-    desc["ylabel"] = "Carbon Footprint Kg.CO2"
+    desc["ylabel"] = "Carbon Footprint g.CO2"
     desc["xparam"] = ("cache_placement", "network_cache")
     desc["xvals"] = cache_size_range
     desc["filter"] = {
@@ -596,7 +596,7 @@ def plot_capex_vs_cache_size(
 ):
     desc = {}
     desc["xlabel"] = "Cache Proportion (%)"
-    desc["ylabel"] = "Embodied Carbon Footprint Kg.CO2"
+    desc["ylabel"] = "CAPEX g.CO2"
     desc["xparam"] = ("cache_placement", "network_cache")
     desc["xvals"] = cache_size_range
     desc["filter"] = {
@@ -624,7 +624,7 @@ def plot_opex_vs_cache_size(
 ):
     desc = {}
     desc["xlabel"] = "Cache Proportion (%)"
-    desc["ylabel"] = "Embodied Carbon Footprint Kg.CO2"
+    desc["ylabel"] = "OPEX g.CO2"
     desc["xparam"] = ("cache_placement", "network_cache")
     desc["xvals"] = cache_size_range
     desc["filter"] = {
@@ -1275,7 +1275,7 @@ def plot_cf_vs_cache_placement(
 
     desc = {
         "xlabel": "Cache Placement",
-        "ylabel": "Total Carbon Footprint (kgCO₂e)",
+        "ylabel": "Total Carbon Footprint (gCO₂e)",
         "xparam": ("cache_placement", "network_cache"),
         "xvals": cache_size_range,
         "filter": {
@@ -1307,7 +1307,7 @@ def plot_capex_vs_cache_placement(
     """
     desc = {
         "xlabel": "Cache Placement",
-        "ylabel": "Embodied Carbon Footprint (kgCO₂e)",
+        "ylabel": "CAPEX (gCO₂e)",
         "xparam": ("cache_placement", "network_cache"),
         "xvals": cache_size_range,
         "filter": {
@@ -1339,7 +1339,7 @@ def plot_opex_vs_cache_placement(
     """
     desc = {
         "xlabel": "Cache Placement",
-        "ylabel": "Operational Carbon Footprint (kgCO₂e)",
+        "ylabel": "OPEX (gCO₂e)",
         "xparam": ("cache_placement", "network_cache"),
         "xvals": cache_size_range,
         "filter": {
@@ -1618,7 +1618,7 @@ def plot_link_load_vs_cache_placement(
 
 #     # Labels and legend
 #     ax.set_xlabel('Cache Proportion and Placement', fontsize=13)
-#     ax.set_ylabel('Carbon Footprint (kgCO₂e)', fontsize=13)
+#     ax.set_ylabel('Carbon Footprint (gCO₂e)', fontsize=13)
 #     ax.legend(title="Component", fontsize=9, loc='upper right', ncol=2)
 #     ax.grid(True, linestyle='--', alpha=0.6)
 
@@ -1633,7 +1633,7 @@ def plot_link_load_vs_cache_placement(
 #     n_contents=10000, data_size_range=(1000, 8000), baseline=("UNIFORM", 0.01)
 # ):
 #     """
-#     Plot normalized (kgCO2e/GB) per-tier OPEX/CAPEX with a secondary y-axis showing
+#     Plot normalized (gCO2e/GB) per-tier OPEX/CAPEX with a secondary y-axis showing
 #     efficiency improvement (%) relative to a chosen baseline configuration.
 #     """
 
@@ -1706,7 +1706,7 @@ def plot_link_load_vs_cache_placement(
 #                 bottom += val
 
 #     # ----- Left Y-axis -----
-#     ax1.set_ylabel('Carbon Footprint (kg CO₂e / GB)', fontsize=12)
+#     ax1.set_ylabel('Carbon Footprint (g CO₂e / GB)', fontsize=12)
 #     ax1.grid(True, linestyle='--', alpha=0.6)
 
 #     # ----- Compute baseline and improvements -----
@@ -1747,80 +1747,76 @@ def plot_link_load_vs_cache_placement(
 
 def plot_per_tier_opex_vs_capex_all_configs(
     resultset, topology, alpha, cache_size_range, placements, plotdir,
-    n_contents=10000, data_size_range=(1000, 8000), baseline=("UNIFORM", 0.01)
+    n_contents=100000, data_size_range=(1000, 8000), baseline=("UNIFORM", 0.015)
 ):
     """
-    Plot normalized (kgCO2e/GB) per-tier OPEX/CAPEX with two efficiency curves
-    (DRAM and SSD) relative to the baseline configuration.
+    Plot normalized (gCO2e/GB) per-tier OPEX/CAPEX (DRAM, SSD, HDD)
+    with efficiency improvement curves relative to the baseline configuration.
     """
     import numpy as np
     import matplotlib.pyplot as plt
     import os
 
     # ---- Compute total cacheable bytes ----
-    avg_content_size = sum(data_size_range) / 2  # bytes
+    avg_content_size = np.mean(data_size_range)
     total_cacheable_bytes = n_contents * avg_content_size
 
-    colors = ['#1f77b4', '#2ca02c', '#ff7f0e', '#d62728']
-    labels = ['DRAM OPEX', 'SSD OPEX', 'DRAM CAPEX', 'SSD CAPEX']
-    hatches = ['/', '\\', '...', 'xx']
+    colors = ['#1f77b4', '#2ca02c', '#ff7f0e', '#d62728', '#9467BD', '#E377C2']
+    labels = ['DRAM OPEX', 'SSD OPEX', 'HDD OPEX', 'DRAM CAPEX', 'SSD CAPEX', 'HDD CAPEX']
+    hatches = ['/', '\\', '...', 'xx', '||', '--']
 
-    fig, ax1 = plt.subplots(figsize=(12, 6))
+    fig, ax1 = plt.subplots(figsize=(13, 6))
     bar_width = 0.35
     spacing = 0.4
 
     x_positions, xtick_labels = [], []
-    cf_norm_values = {}         # total normalized
-    cf_norm_dram = {}           # DRAM-only
-    cf_norm_ssd = {}            # SSD-only
+    cf_norm_total, cf_norm_dram, cf_norm_ssd, cf_norm_hdd = {}, {}, {}, {}
 
-    # ---- Iterate configs ----
+    # ---- Iterate over configurations ----
     for i, cache_size in enumerate(cache_size_range):
         for k, placement in enumerate(placements):
             filtered = resultset.filter({
                 "topology": {"name": topology},
-                "cache_placement": {"network_cache": cache_size},
-                "cache_placement": {"name": placement},
+                "cache_placement": {"network_cache": cache_size, "name": placement},
                 "workload": {"name": "STATIONARY", "alpha": alpha},
             })
             cf = filtered[0][1].get('CARBONFOOTPRINT', {}) if len(filtered) > 0 else {}
             per_tier = cf.get('PER_TIER', {})
 
-            dram = per_tier.get('DRAM', {})
-            ssd = per_tier.get('SSD', {})
+            dram, ssd, hdd = per_tier.get('DRAM', {}), per_tier.get('SSD', {}), per_tier.get('HDD', {})
 
-            dram_opex = dram.get('OPEX', 0)
-            ssd_opex = ssd.get('OPEX', 0)
-            dram_capex = dram.get('CAPEX', 0)
-            ssd_capex = ssd.get('CAPEX', 0)
+            dram_opex, dram_capex = dram.get('OPEX', 0), dram.get('CAPEX', 0)
+            ssd_opex, ssd_capex = ssd.get('OPEX', 0), ssd.get('CAPEX', 0)
+            hdd_opex, hdd_capex = hdd.get('OPEX', 0), hdd.get('CAPEX', 0)
 
-            # ---- Normalize ----
+            # ---- Normalize by cache capacity (in GB) ----
             cache_bytes = cache_size * total_cacheable_bytes
             cache_gb = cache_bytes / (1024 ** 3)
             if cache_gb == 0:
                 continue
-            norm = 1 / cache_gb
 
-            dram_opex *= norm
-            ssd_opex  *= norm
-            dram_capex *= norm
-            ssd_capex  *= norm
+            norm_factor = 1.0 / cache_gb
+            dram_opex, dram_capex = dram_opex * norm_factor, dram_capex * norm_factor
+            ssd_opex, ssd_capex = ssd_opex * norm_factor, ssd_capex * norm_factor
+            hdd_opex, hdd_capex = hdd_opex * norm_factor, hdd_capex * norm_factor
 
             dram_total = dram_opex + dram_capex
-            ssd_total  = ssd_opex + ssd_capex
-            total_cf   = dram_total + ssd_total
+            ssd_total = ssd_opex + ssd_capex
+            hdd_total = hdd_opex + hdd_capex
+            total_cf = dram_total + ssd_total + hdd_total
 
             cf_norm_dram[(placement, cache_size)] = dram_total
             cf_norm_ssd[(placement, cache_size)] = ssd_total
-            cf_norm_values[(placement, cache_size)] = total_cf
+            cf_norm_hdd[(placement, cache_size)] = hdd_total
+            cf_norm_total[(placement, cache_size)] = total_cf
 
-            # ---- Draw stacked bars ----
+            # ---- Plot stacked bars ----
             x = i * (len(placements) * (bar_width + spacing)) + k * (bar_width + spacing)
             x_positions.append(x)
             xtick_labels.append(f'{placement}\n(Cache {cache_size})')
 
             bottom = 0
-            for j, val in enumerate([dram_opex, ssd_opex, dram_capex, ssd_capex]):
+            for j, val in enumerate([dram_opex, ssd_opex, hdd_opex, dram_capex, ssd_capex, hdd_capex]):
                 ax1.bar(
                     x, val, bar_width, bottom=bottom,
                     color=colors[j], hatch=hatches[j], edgecolor='black',
@@ -1828,80 +1824,90 @@ def plot_per_tier_opex_vs_capex_all_configs(
                 )
                 bottom += val
 
-    # ---- Left axis (bars) ----
-    ax1.set_ylabel('Carbon Footprint (kg CO₂e / GB)', fontsize=12)
+    # ---- Left axis: Carbon footprint ----
+    ax1.set_ylabel('Carbon Footprint (g CO₂e / GB)', fontsize=12)
     ax1.grid(True, linestyle='--', alpha=0.6)
 
-    # ---- Compute baseline ----
-    baseline_val = cf_norm_values.get(baseline)
+    # ---- Retrieve baseline ----
+    baseline_val = cf_norm_total.get(baseline)
     baseline_dram = cf_norm_dram.get(baseline)
-    baseline_ssd  = cf_norm_ssd.get(baseline)
+    baseline_ssd = cf_norm_ssd.get(baseline)
+    baseline_hdd = cf_norm_hdd.get(baseline)
+
     if baseline_val is None:
         print(f"⚠️ Baseline {baseline} not found — skipping efficiency curves.")
         plt.close()
         return
 
-    # ---- Improvements ----
-    improvements_total, improvements_dram, improvements_ssd = [], [], []
-    for key in cf_norm_values.keys():
-        cf_total = cf_norm_values[key]
-        cf_dram  = cf_norm_dram[key]
-        cf_ssd   = cf_norm_ssd[key]
-        imp_total = ((baseline_val - cf_total) / baseline_val) * 100
-        imp_dram  = ((baseline_dram - cf_dram) / baseline_dram) * 100 if baseline_dram > 0 else 0
-        imp_ssd   = ((baseline_ssd  - cf_ssd)  / baseline_ssd)  * 100 if baseline_ssd > 0 else 0
-        improvements_total.append((key, imp_total))
+    # ---- Compute efficiency improvements ----
+    improvements_dram, improvements_ssd, improvements_hdd = [], [], []
+
+    for key in cf_norm_total.keys():
+        cf_dram, cf_ssd, cf_hdd = cf_norm_dram[key], cf_norm_ssd[key], cf_norm_hdd[key]
+        imp_dram = ((baseline_dram - cf_dram) / baseline_dram) * 100 if baseline_dram > 0 else 0
+        imp_ssd = ((baseline_ssd - cf_ssd) / baseline_ssd) * 100 if baseline_ssd > 0 else 0
+        imp_hdd = ((baseline_hdd - cf_hdd) / baseline_hdd) * 100 if baseline_hdd > 0 else 0
         improvements_dram.append((key, imp_dram))
         improvements_ssd.append((key, imp_ssd))
+        improvements_hdd.append((key, imp_hdd))
 
-    # ---- Sort by cache & placement ----
+    # ---- Sort by cache and placement ----
     def sort_key(kv): return (cache_size_range.index(kv[0][1]), placements.index(kv[0][0]))
-    improvements_total = [imp for _, imp in sorted(improvements_total, key=sort_key)]
-    improvements_dram  = [imp for _, imp in sorted(improvements_dram, key=sort_key)]
-    improvements_ssd   = [imp for _, imp in sorted(improvements_ssd, key=sort_key)]
+    improvements_dram = [imp for _, imp in sorted(improvements_dram, key=sort_key)]
+    improvements_ssd = [imp for _, imp in sorted(improvements_ssd, key=sort_key)]
+    improvements_hdd = [imp for _, imp in sorted(improvements_hdd, key=sort_key)]
 
-    # ---- Secondary axis ----
+    # ---- Right axis: Efficiency improvements ----
     ax2 = ax1.twinx()
     ax2.plot(x_positions, improvements_dram, 'b--o', label='DRAM Δ (%)', markersize=4)
     ax2.plot(x_positions, improvements_ssd, 'r--s', label='SSD Δ (%)', markersize=4)
+    ax2.plot(x_positions, improvements_hdd, 'g--^', label='HDD Δ (%)', markersize=4)
     ax2.set_ylabel('Efficiency Improvement (%) vs Baseline', fontsize=12)
     ax2.tick_params(axis='y', labelcolor='black')
 
-    # ---- Axes & legends ----
+    # ---- Axes and legends ----
     ax1.set_xticks(x_positions)
     ax1.set_xticklabels(xtick_labels, rotation=45, ha="right", fontsize=10)
     ax1.set_xlabel('Cache Proportion and Placement', fontsize=13)
     ax1.legend(title="Component", fontsize=9, loc='upper left', ncol=2)
     ax2.legend(loc='upper right')
-    # --- after ax2.plot(...) lines ---
-    best_dram_key = max(cf_norm_dram, key=lambda k: ((baseline_dram - cf_norm_dram[k]) / baseline_dram) if baseline_dram > 0 else 0)
-    best_ssd_key  = max(cf_norm_ssd,  key=lambda k: ((baseline_ssd  - cf_norm_ssd[k])  / baseline_ssd)  if baseline_ssd  > 0 else 0)
-    best_dram_imp = ((baseline_dram - cf_norm_dram[best_dram_key]) / baseline_dram) * 100
-    best_ssd_imp  = ((baseline_ssd  - cf_norm_ssd[best_ssd_key])  / baseline_ssd)  * 100
 
-    # find their x positions
+    # ---- Annotate best tier improvements ----
+    def compute_best(cf_dict, baseline_value):
+        if baseline_value and baseline_value > 0:
+            best_key = max(cf_dict, key=lambda k: ((baseline_value - cf_dict[k]) / baseline_value))
+            best_imp = ((baseline_value - cf_dict[best_key]) / baseline_value) * 100
+            return best_key, best_imp
+        return None, 0
+
+    best_dram_key, best_dram_imp = compute_best(cf_norm_dram, baseline_dram)
+    best_ssd_key, best_ssd_imp = compute_best(cf_norm_ssd, baseline_ssd)
+    best_hdd_key, best_hdd_imp = compute_best(cf_norm_hdd, baseline_hdd)
+
     def key_to_xpos(key):
         return (cache_size_range.index(key[1]) * (len(placements) * (bar_width + spacing))
                 + placements.index(key[0]) * (bar_width + spacing))
 
-    x_dram = key_to_xpos(best_dram_key)
-    x_ssd  = key_to_xpos(best_ssd_key)
+    for tier, key, imp, color, offset in [
+        ('DRAM', best_dram_key, best_dram_imp, 'blue', 50),
+        ('SSD', best_ssd_key, best_ssd_imp, 'red', -100),
+        ('HDD', best_hdd_key, best_hdd_imp, 'green', -50)
+    ]:
+        if key:
+            x_pos = key_to_xpos(key)
+            ax2.annotate(
+                f'Best {tier}\n{key[0]}@{key[1]} ({imp:.1f}%)',
+                xy=(x_pos, imp), xytext=(x_pos, imp + offset),
+                arrowprops=dict(arrowstyle='->', color=color),
+                color=color, fontsize=9, ha='center'
+            )
 
-    # annotate on plot
-    ax2.annotate(f'Best DRAM\n{best_dram_key[0]}@{best_dram_key[1]} ({best_dram_imp:.1f}%)',
-                xy=(x_dram, best_dram_imp), xytext=(x_dram, best_dram_imp + 50),
-                arrowprops=dict(arrowstyle='->', color='blue'), color='blue', fontsize=9, ha='center')
-
-    ax2.annotate(f'Best SSD\n{best_ssd_key[0]}@{best_ssd_key[1]} ({best_ssd_imp:.1f}%)',
-                xy=(x_ssd, best_ssd_imp), xytext=(x_ssd, best_ssd_imp - 150),
-                arrowprops=dict(arrowstyle='->', color='red'), color='red', fontsize=9, ha='center')
-
-
+    # ---- Save plot ----
     plt.tight_layout()
     fname = os.path.join(plotdir, f"NORMALIZED_DUAL_EFFICIENCY_T={topology}@A={alpha}.jpg")
     plt.savefig(fname, bbox_inches='tight')
     plt.close()
-    print(f"✅ Saved dual-efficiency plot: {fname}")
+    print(f"✅ Saved triple-efficiency plot (DRAM, SSD, HDD): {fname}")
 
 # def plot_per_tier_opex_vs_capex_all_configs(
 #     resultset,
@@ -2330,54 +2336,54 @@ def run(config, results, plotdir):
             plot_server_opex_vs_capex_cache_size(
                 resultset, topology, alpha, cache_sizes, cache_placements, plotdir
             )
-            # plot_cache_hits_vs_cache_size(
-            #     resultset, topology, alpha, cache_sizes, strategies, plotdir
-            # )
-            # plot_chrcp_vs_cache_size(
-            #     resultset, topology, alpha, cache_sizes, strategies, plotdir
-            # )
-            # plot_latency_vs_cache_size(
-            #     resultset, topology, alpha, cache_sizes, strategies, plotdir
-            # )
-            # plot_cost_vs_cache_size(
-            #     resultset, topology, alpha, cache_sizes, strategies, plotdir
-            # )
-            # plot_cost_components_vs_cache_size(
-            # resultset, topology, alpha, cache_sizes, strategies, plotdir
-            # )
-        # for cache_size in cache_sizes:
-        #     plot_cache_hits_vs_alpha(
-        #         resultset, topology, cache_size, alphas, strategies, plotdir
-        #     )
-        #     plot_latency_vs_alpha(
-        #         resultset, topology, cache_size, alphas, strategies, plotdir
-        #     )
-        #     plot_cost_vs_alpha(
-        #         resultset, topology, cache_size, alphas, strategies, plotdir
-        #     )
-        #     plot_chrcp_vs_alpha(
-        #         resultset, topology, cache_size, alphas, strategies, plotdir
-        #     )
-        #     plot_cost_components_alpha(
-        #         resultset, topology, cache_size, alphas, strategies, plotdir
-        #     )
+            plot_cache_hits_vs_cache_size(
+                resultset, topology, alpha, cache_sizes, strategies, plotdir
+            )
+            plot_chrcp_vs_cache_size(
+                resultset, topology, alpha, cache_sizes, strategies, plotdir
+            )
+            plot_latency_vs_cache_size(
+                resultset, topology, alpha, cache_sizes, strategies, plotdir
+            )
+            plot_cost_vs_cache_size(
+                resultset, topology, alpha, cache_sizes, strategies, plotdir
+            )
+            plot_cost_components_vs_cache_size(
+            resultset, topology, alpha, cache_sizes, strategies, plotdir
+            )
+        for cache_size in cache_sizes:
+            plot_cache_hits_vs_alpha(
+                resultset, topology, cache_size, alphas, strategies, plotdir
+            )
+            plot_latency_vs_alpha(
+                resultset, topology, cache_size, alphas, strategies, plotdir
+            )
+            plot_cost_vs_alpha(
+                resultset, topology, cache_size, alphas, strategies, plotdir
+            )
+            plot_chrcp_vs_alpha(
+                resultset, topology, cache_size, alphas, strategies, plotdir
+            )
+            plot_cost_components_alpha(
+                resultset, topology, cache_size, alphas, strategies, plotdir
+            )
         
-    # plot_num_contents_vs_replicas(distributions, plotdir="./plots")
+    plot_num_contents_vs_replicas(distributions, plotdir="./plots")
 
-    # for cache_size in cache_sizes:
-    #     for alpha in alphas:
-    #         plot_cache_hits_vs_topology(
-    #             resultset, alpha, cache_size, topologies, strategies, plotdir
-    #         )
-    #         plot_latency_vs_topology(
-    #             resultset, alpha, cache_size, topologies, strategies, plotdir
-    #         )
-    #         plot_chrcp_vs_topology(
-    #             resultset, alpha, cache_size, topologies, strategies, plotdir
-    #         )
-    #         plot_cost_vs_topology(
-    #             resultset, alpha, cache_size, topologies, strategies, plotdir
-    #         )
+    for cache_size in cache_sizes:
+        for alpha in alphas:
+            plot_cache_hits_vs_topology(
+                resultset, alpha, cache_size, topologies, strategies, plotdir
+            )
+            plot_latency_vs_topology(
+                resultset, alpha, cache_size, topologies, strategies, plotdir
+            )
+            plot_chrcp_vs_topology(
+                resultset, alpha, cache_size, topologies, strategies, plotdir
+            )
+            plot_cost_vs_topology(
+                resultset, alpha, cache_size, topologies, strategies, plotdir
+            )
             
             
     logger.info("Exit. Plots were saved in directory %s" % os.path.abspath(plotdir))

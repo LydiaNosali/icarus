@@ -64,7 +64,7 @@
       <data key="d28">0</data>
       <data key="d29">2</data>
       <data key="d30">Global Crossing</data>
-      <data key="d31">400</data>
+      <data key="d31">600</data>
     </node>
     <node id="3">
       <data key="d28">0</data>
@@ -79,7 +79,7 @@
       <data key="d29">4</data>
       <data key="d34">9.13462</data>
       <data key="d30">CA-1</data>
-      <data key="d31">400</data>
+      <data key="d31">600</data>
     </node>
     <node id="5">
       <data key="d28">0</data>
@@ -130,7 +130,7 @@
       <data key="d29">10</data>
       <data key="d34">12.4839</data>
       <data key="d30">RM-1</data>
-      <data key="d31">300</data>
+      <data key="d31">400</data>
     </node>
     <node id="11">
       <data key="d28">1</data>
@@ -139,7 +139,7 @@
       <data key="d29">11</data>
       <data key="d34">12.38286</data>
       <data key="d30">PG</data>
-      <data key="d31">300</data>
+      <data key="d31">400</data>
     </node>
     <node id="12">
       <data key="d28">1</data>
@@ -250,7 +250,7 @@
       <data key="d28">0</data>
       <data key="d29">25</data>
       <data key="d30">Level 3</data>
-      <data key="d31">400</data>
+      <data key="d31">600</data>
     </node>
     <node id="26">
       <data key="d28">1</data>
@@ -427,7 +427,7 @@
       <data key="d29">45</data>
       <data key="d34">13.39954</data>
       <data key="d30">AQ</data>
-      <data key="d31">300</data>
+      <data key="d31">400</data>
     </node>
     <node id="46">
       <data key="d28">1</data>
@@ -445,7 +445,7 @@
       <data key="d29">47</data>
       <data key="d34">16.60158</data>
       <data key="d30">MT</data>
-      <data key="d31">300</data>
+      <data key="d31">400</data>
     </node>
     <node id="48">
       <data key="d28">1</data>
@@ -478,7 +478,7 @@
       <data key="d28">0</data>
       <data key="d29">51</data>
       <data key="d30">Google</data>
-      <data key="d31">350</data>
+      <data key="d31">450</data>
     </node>
     <node id="52">
       <data key="d28">0</data>
@@ -508,7 +508,7 @@
       <data key="d29">55</data>
       <data key="d34">12.4839</data>
       <data key="d30">RM-2</data>
-      <data key="d31">300</data>
+      <data key="d31">400</data>
     </node>
     <node id="56">
       <data key="d28">1</data>

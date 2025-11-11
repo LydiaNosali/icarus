@@ -1,21 +1,15 @@
 """Implementations of all on-path strategies"""
-from collections import defaultdict
+
 import csv
 import json
 import logging
-import os
 from pathlib import Path
 import pickle
 import math
 import random
 import time
 import pandas as pd
-import numpy as np
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 import networkx as nx
-from joblib import Parallel, delayed
-
 
 from icarus.registry import register_strategy
 from icarus.util import inheritdoc, path_links
@@ -246,7 +240,7 @@ class ProbCache(Strategy):
     """
 
     @inheritdoc(Strategy)
-    def __init__(self, view, controller, t_tw=10):
+    def __init__(self, view, controller, t_tw=10, **kwargs):
         super().__init__(view, controller)
         self.t_tw = t_tw
         self.cache_size = view.cache_nodes(size=True)
@@ -624,8 +618,6 @@ class CacheLessToSaveMore(Strategy):
                         self.controller.put_content(v, min_content=min_content, tier_index=tier_index, size=size, priority=priority)
                     else:
                         logger.info("cost is not for it")
-                        for node, value in self.gain_per_data.items():
-                            logger.info(f"node:{node}, value:{value}")
                 else:
                     logger.info("no paths")
                     tier_index = self.controller.get_tier_index(v, content, priority)
@@ -746,9 +738,6 @@ class CacheLessToSaveMore(Strategy):
         return penalty_cost
     
     def _predict_event(self, time, content, size, priority):
-        import numpy as np
-        import pandas as pd
-
         # Map priority to numeric
         priority_map = {'low': 0, 'high': 1}
         priority_num = priority_map.get(priority, 0)  # default to 0 if unknown

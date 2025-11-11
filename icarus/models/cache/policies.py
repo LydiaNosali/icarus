@@ -2203,6 +2203,12 @@ class QMARCCache(Cache):
             )
         if not isinstance(tiers, list) or not tiers:
             raise ValueError("QMARC cache requires a non-empty list in kwargs['tiers'].")
+        # --- ✅ Sort tiers by latency (fastest → slowest) ---
+        try:
+            tiers = sorted(tiers, key=lambda t: float(t.get("latency", 1.0)))
+        except Exception as e:
+            raise ValueError(f"Failed to sort tiers by latency: {e}\nTiers: {tiers}")
+
         self._caches = tiers
         
         self._maxlen = round(maxlen)
