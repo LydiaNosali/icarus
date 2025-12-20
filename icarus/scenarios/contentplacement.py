@@ -55,11 +55,11 @@ def uniform_content_placement(topology, contents, seed=None):
     A deterministic placement of objects (e.g., for reproducing results) can be
     achieved by using a fix seed value
     """
-    random.seed(seed)
+    local_random = random.Random(seed) 
     source_nodes = get_sources(topology)
     content_placement = collections.defaultdict(set)
     for c in contents:
-        content_placement[random.choice(source_nodes)].add(c)
+        content_placement[local_random.choice(source_nodes)].add(c)
     apply_content_placement(content_placement, topology)
 
 

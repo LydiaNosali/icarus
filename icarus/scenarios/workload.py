@@ -111,7 +111,7 @@ class StationaryWorkload:
         self.receivers = [
             v for v in topology.nodes() if topology.node[v]["stack"][0] == "receiver"
         ]
-        self.zipf = TruncatedZipfDist(alpha, n_contents)
+        self.zipf = TruncatedZipfDist(alpha, n_contents, seed=seed)
         self.n_contents = n_contents
         # self.contents = range(1, n_contents + 1)
         
@@ -145,9 +145,9 @@ class StationaryWorkload:
         req_counter = 0
         t_event = 0.0
         while req_counter < self.n_warmup + self.n_measured:
-            t_event += random.expovariate(self.rate)
+            t_event += self.local_random.expovariate(self.rate)
             if self.beta == 0:
-                receiver = random.choice(self.receivers)
+                receiver = self.local_random.choice(self.receivers)
             else:
                 receiver = self.receivers[self.receiver_dist.rv() - 1]
             content = int(self.zipf.rv())

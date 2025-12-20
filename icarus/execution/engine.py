@@ -22,7 +22,7 @@ __all__ = ["exec_experiment"]
 
 logger = logging.getLogger("main")
 
-def exec_experiment(topology, workload, netconf, strategy, cache_policy, collectors, collector=None, period=None):
+def exec_experiment(topology, workload, netconf, strategy, cache_policy, collectors, period=None, save=False, curr_exp=None):
     """Execute the simulation of a specific scenario.
 
     Parameters
@@ -53,15 +53,15 @@ def exec_experiment(topology, workload, netconf, strategy, cache_policy, collect
     results : Tree
         A tree with the aggregated simulation results from all collectors
     """
+
     model = NetworkModel(topology, cache_policy, **netconf)
     view = NetworkView(model)
     controller = NetworkController(model)
 
-    if collector is None:
-        collectors_inst = [
-            DATA_COLLECTOR[name](view, **params) for name, params in collectors.items()
-        ]
-        collector = CollectorProxy(view, collectors_inst)
+    collectors_inst = [
+        DATA_COLLECTOR[name](view, **params) for name, params in collectors.items()
+    ]
+    collector = CollectorProxy(view, collectors_inst)
     controller.attach_collector(collector)
 
     strategy_name = strategy["name"]  # "CL2SM"
@@ -71,26 +71,14 @@ def exec_experiment(topology, workload, netconf, strategy, cache_policy, collect
     
     # === RESTORE STRATEGY STATE (if previous period exists) ===
     if strategy_name == "CL2SM":
-        strategy_inst.restore_strategy_state(strategy_name=strategy_name, period=period-1)
-
-        # === RESUME HANDLING FOR NETWORK ===
-        saved_state_file = netconf.get("saved_state_file")
-        resuming = saved_state_file and Path(saved_state_file).exists()
-
-        if resuming:
-            if hasattr(workload, "n_warmup"):
-                try:
-                    workload.n_warmup = 0
-                    print("[⏭️] Warmup skipped (resuming from saved network state)")
-                except Exception as e:
-                    print(f"[⚠️] Could not modify workload.n_warmup: {e}")
+        strategy_inst.restore_strategy_state(strategy_name=strategy_name, period=period-1, curr_exp=curr_exp)
 
     # Specify the headers
     for i, (time, event) in enumerate(workload):
         logger.info("i: %s, time: %s, event: %s"%(i, time, event))
         strategy_inst.process_event(time, **event)
     
-    if strategy_name == "CL2SM":
+    if save and strategy_name == "CL2SM":
         state = {
             "gain_per_data": strategy_inst.gain_per_data,
             "request_counter": strategy_inst.request_counter,
@@ -98,7 +86,7 @@ def exec_experiment(topology, workload, netconf, strategy, cache_policy, collect
 
         try:
             saved_dir = Path("strategy_states")
-            filepath = saved_dir / f"{strategy_name}_p{period}.pkl"
+            filepath = saved_dir / f"exp_{curr_exp}_{strategy_name}_p{period}.pkl"
             with open(filepath, "wb") as f:
                 pickle.dump(state, f)
             print(f"[💾] Saved {strategy_name} state to {filepath}")
@@ -110,4 +98,6 @@ def exec_experiment(topology, workload, netconf, strategy, cache_policy, collect
         except Exception as e:
             print(f"[⚠️] Failed to save {strategy_name} state (period {period}): {e}")
 
-    return collector, model
+    model.collector_proxy = collector
+    model.period = period
+    return collector.results(), model

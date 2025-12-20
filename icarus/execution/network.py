@@ -14,12 +14,10 @@ of all relevant events.
 """
 import copy
 import logging
-import random
 
 import networkx as nx
 import fnss
 
-from icarus.models.cache.policies import Deque
 from icarus.registry import CACHE_POLICY
 from icarus.util import iround, path_links
 import pickle
@@ -360,6 +358,7 @@ class NetworkView:
         if node in self.model.cache:
             return self.model.cache[node].get_tiers_last_access()
 
+
 class NetworkModel:
     """Models the internal state of the network.
 
@@ -386,11 +385,11 @@ class NetworkModel:
                 "fnss.Topology or any of its subclasses."
             )
 
-        self.shortest_path = (
-            dict(shortest_path)
-            if shortest_path is not None
-            else symmetrify_paths(dict(nx.all_pairs_dijkstra_path(topology)))
-        )
+        # self.shortest_path = (
+        #     dict(shortest_path)
+        #     if shortest_path is not None
+        #     else symmetrify_paths(dict(nx.all_pairs_dijkstra_path(topology)))
+        # )
         self.avg_content_size = avg_content_size
         self.topology = topology
         self.content_source = {}
@@ -414,7 +413,7 @@ class NetworkModel:
         policy_args = {k: v for k, v in cache_policy.items() if k != "name"}
         base_tiers = cache_policy.get("tiers", [])
         self.per_node_tiers = cache_policy.get("tiers_per_node", {})
-        
+
         saved_state_path = kwargs.get("saved_state_file")
         for node, data in topology.nodes(data=True):
             # Carbon intensity (default to 400 if not present)
@@ -443,7 +442,7 @@ class NetworkModel:
                         if node_tier_list and node_tier_list[0]["actual_size"] == 0:
                             node_tier_list[0]["actual_size"] = 1
                             node_tier_list[0]["actual_size_bytes"] = 8000
-                            for i in range(1, len(node_tier_list)):
+                            for i in range(len(node_tier_list) - 1, 0, -1):
                                 if node_tier_list[i]["actual_size"] > 0:
                                     node_tier_list[i]["actual_size"] -= 1
                                     if node_tier_list[i]["actual_size"] == 1:
@@ -462,16 +461,35 @@ class NetworkModel:
                             node_policy_args["saved_tiers"] = saved_state_path
 
                         self.cache[node] = CACHE_POLICY[policy_name](size, **node_policy_args)
-                        print(f"[✅] Cache initialized for node {node} | cold_start={node_policy_args['cold_start']}")
+                        
 
             elif stack_name == "source":
                 contents = stack_props.get("contents", [])
                 self.source_node[node] = contents
                 for content in contents:
                     self.content_source[content] = node
+
         # --- NEW: compute tier statistics ---
+        print(f"[✅] cold_start={not bool(saved_state_path)}")
+        logger.info(f"[✅] cold_start={not bool(saved_state_path)}")
+        # logger.info(f"cache_size:{self.cache_size}")
+        # logger.info(f"node_carbon_intensity:{self.node_carbon_intensity}")
+        self.per_node_tiers = {
+            n: tiers for n, tiers in self.per_node_tiers.items()
+            if n in set(self.cache.keys())
+        }
+        # print(f"self.per_node_tiers:{self.per_node_tiers.keys()}")
+        # for node, tiers in self.per_node_tiers.items():
+            # logger.info(f"node:{node}")
+            # logger.info(f"tiers:{tiers}")
+            # for t in tiers:
+            #     tname = t["name"]
+            #     tsize = t["actual_size"]
+                # logger.info(f"t.name:{tname}, t.size:{tsize}")
         self.tier_statistics = {}
         self.tier_sizes_mb = {}
+
+        
         for node, tiers in self.per_node_tiers.items():
             for tier in tiers:
                 tier_name = tier["name"]
@@ -485,8 +503,8 @@ class NetworkModel:
                 self.tier_sizes_mb[tier_name] += size_bytes / (1024 * 1024)  # convert bytes -> MB
 
         # print example
-        print(f"Tier statistics: {self.tier_statistics}")
-        print(f"Tier sizes (MB): {self.tier_sizes_mb}")
+        # print(f"Tier statistics: {self.tier_statistics}")
+        # print(f"Tier sizes (MB): {self.tier_sizes_mb}")
         # print(f"self.node_carbon_intensity:{self.node_carbon_intensity}")
         # print(f"self.per_node_tiers:{self.per_node_tiers}")
         # Local uncoordinated cache (for edge cache mode)
@@ -503,7 +521,6 @@ class NetworkModel:
         # ==========================================================
         # ✅ AUTOLOAD PREVIOUS STATE (optional)
         # ==========================================================
-        
         if saved_state_path and Path(saved_state_path).exists():
             try:
                 print(f"[♻️] Loading saved network state from {saved_state_path} ...")
@@ -511,246 +528,286 @@ class NetworkModel:
                     state = pickle.load(f)
 
                 # Restore per-node tiers and capacities
-                if "per_node_tiers" in state:
-                    for node, cache_state in state["per_node_tiers"].items():
+                if "old_per_node_tiers" in state:
+                    new_tiers, new_tier_stats, new_tier_sizes_mb = self.rebuild_tiers(state["old_per_node_tiers"], self.cache_size)
+                    # Restore node carbon intensity and tier stats
+                    self.tier_statistics = new_tier_stats
+                    self.tier_sizes_mb = new_tier_sizes_mb
+                    for node, tiers in self.per_node_tiers.items():
+                        if node not in new_tiers.keys():
+                            continue
+                        for t in tiers:
+                            name = t["name"]
+                            if name in new_tiers[node]["tiers"]:
+                                t["actual_size"] = new_tiers[node]["tiers"][name]["maxlen"]
+                                t["actual_size_bytes"] = t["actual_size"] * self.avg_content_size
+
+                    for node, cache_state in new_tiers.items():
                         if node in self.cache and hasattr(self.cache[node], "restore_from_dump"):
                             self.cache[node].restore_from_dump(cache_state)
-
-                # Restore node carbon intensity and tier stats
-                self.node_carbon_intensity = state.get("node_carbon_intensity", self.node_carbon_intensity)
-                self.tier_statistics = state.get("tier_statistics", self.tier_statistics)
-                self.tier_sizes_mb = state.get("tier_sizes_mb", self.tier_sizes_mb)
-
+                            
                 print(f"[✅] NetworkModel restored from {saved_state_path}")
             except Exception as e:
                 print(f"[⚠️] Failed to load saved network state: {e}")
- 
-    def save_state(self, filename_prefix="network_state", directory="network_states"):
-        Path(directory).mkdir(exist_ok=True)
-        filepath = Path(directory) / f"{filename_prefix}.pkl"
-        
-        # --- Helper to remove an entry consistently ---
+    
+        # self.shortest_path = (
+        #     dict(shortest_path)
+        #     if shortest_path is not None
+        #     else symmetrify_paths(dict(nx.all_pairs_dijkstra_path(topology)))
+        # )
+        self.shortest_path = (
+            dict(shortest_path)
+            if shortest_path is not None
+            else self.build_carbon_aware_paths(topology, self.node_carbon_intensity, lam=0.9)
+        )
+
+        # G = topology
+
+        # sp_delay = dict(nx.all_pairs_dijkstra_path(G))  # pure shortest-path
+        # sp_carbon = self.build_carbon_aware_paths(G, self.node_carbon_intensity, lam=1.0)
+
+        # diff_count = 0
+        # total = 0
+
+        # for s in sp_delay:
+        #     for t in sp_delay[s]:
+        #         if s == t or t not in sp_carbon.get(s, {}):
+        #             continue
+        #         p1 = sp_delay[s][t]
+        #         p2 = sp_carbon[s][t]
+        #         total += 1
+        #         if p1 != p2:
+        #             diff_count += 1
+        #             # print(f"{s}->{t}: delay={p1}, carbon={p2}")
+
+        # print(f"Different paths: {diff_count} / {total}")
+
+        # def path_len(path):
+        #     return len(path) - 1
+
+        # def path_ci(path):
+        #     # average node CI along path
+        #     return sum(self.node_carbon_intensity[n] for n in path) / len(path)
+
+        # for s in sp_delay:
+        #     for t in sp_delay[s]:
+        #         if s == t or t not in sp_carbon.get(s, {}):
+        #             continue
+        #         p1 = sp_delay[s][t]
+        #         p2 = sp_carbon[s][t]
+        #         if p1 == p2:
+        #             continue
+        #         print(
+        #             f"{s}->{t}: "
+        #             f"delay_len={path_len(p1)}, carbon_len={path_len(p2)}, "
+        #             f"delay_CI={path_ci(p1):.1f}, carbon_CI={path_ci(p2):.1f}"
+        #         )
+
+
+    def build_carbon_aware_paths(self, topology, node_ci, lam):
+        # router_energy = 2 * 10**-8
+        # link_energy = 1.5 * 10**-9
+        # link_delay = fnss.get_delays(topology)
+
+        # Precompute delay range for normalization
+        # delays = list(link_delay.values())
+        # d_min, d_max = min(delays), max(delays)
+        # c_min, c_max = min(node_ci), max(node_ci)
+
+        def weight(u, v, data):
+            # ---- LATENCY TERM ----
+            # delay = link_delay.get((u, v), data.get("delay", 1.0))
+            ci_edge = node_ci.get(v, 0.0)
+#             if d_max > d_min:
+#                 delay_norm = (delay - d_min) / (d_max - d_min)
+#             else:
+#                 delay_norm = 0  # fallback when topology uniform
+#             if c_max > c_min:
+#                 c_norm = (ci_edge - c_min) / (c_max - c_min)
+#             else:
+#                 c_norm = 0
+#             # ---- Combined Balanced Cost ----`
+            return ci_edge
+
+        return symmetrify_paths(
+            dict(nx.all_pairs_dijkstra_path(topology, weight=weight))
+        )
+
+    def rebuild_tiers(self, old_cache_tiers_per_node, new_cache_sizes):
+        new_per_node_tiers = {}
+        new_tier_stats = {}
+        new_tier_sizes_mb = {}
+
+        # Helper for consistent eviction from a tier
         def _evict_from_tier(node_state, tinfo, qname):
             q = tinfo[qname]
             if not q:
                 return None
-            removed = q.pop()  # LRU
-            # remove from global queues if present
+
+            removed = q.pop(0)  # LRU (right side)
+
+            # Remove from global ARC queues
             for gq in ["t1", "t2", "b1", "b2"]:
                 try:
                     node_state["global"][gq].remove(removed)
                 except ValueError:
                     pass
-            # remove from _cache
-            node_state["global"]["_cache"].pop(str(removed), None)
+
+            # Remove from global cache dict
+            node_state["global"]["_cache"].pop(removed, None)
+
             tinfo[qname] = q
             return removed
-        
-        # --- Carbon Intensity Evolution (±5%) ---
-        old_ci = copy.deepcopy(self.node_carbon_intensity)
-        new_ci = {}
-        for node, val in old_ci.items():
-            delta = random.uniform(-0.05, 0.05)
-            new_val = max(0.05, min(1.0, val + delta))
-            new_ci[node] = round(new_val, 3)
-        
-        # --- Cache Size Evolution (±10%) ---
-        old_cache_sizes = copy.deepcopy(self.cache_size)
-        new_cache_sizes = {}
-        for node, size in old_cache_sizes.items():
-            delta_factor = random.uniform(-0.1, 0.1)  # ±10%
-            new_size = max(1, round(size * (1 + delta_factor)))
-            new_cache_sizes[node] = new_size
-        
-        old_per_node_tiers = {}  
-        new_per_node_tiers = {}
-        for node, cache_obj in self.cache.items():
+
+        for node, node_state in old_cache_tiers_per_node.items():
             try:
-                node_state = cache_obj.node_state()  # e.g. {"tiers": {...}, "global": {...}}
-                old_per_node_tiers[node] = copy.deepcopy(node_state)
+                if node not in new_cache_sizes:
+                    continue 
+                
+                total_new = new_cache_sizes[node]
 
-                # ✅ Adjust each tier’s capacity / size according to new cache size
-                total_new_size = new_cache_sizes.get(node, 1)
-                tier_configs = sorted(self.per_node_tiers[node], key=lambda t: float(t.get("latency", 1.0)))
-                tiers_sorted = list(node_state["tiers"].keys())
+                # Sort tiers fastest → slowest by latency
+                tier_configs = sorted(
+                    self.per_node_tiers[node],
+                    key=lambda t: float(t.get("latency", 1.0)),
+                )
+                tiers_sorted = [
+                    t["name"] for t in tier_configs
+                    if t["name"] in node_state["tiers"]
+                ]
 
-                # --- Step 1: compute new vs old maxlen ---
-                prev_tier_maxlen = {name: node_state["tiers"][name]["maxlen"] for name in node_state["tiers"]}
-                new_tier_sizes = {}
+                if not tiers_sorted:
+                    new_per_node_tiers[node] = node_state
+                    continue
+
+                # ---- 1) Compute and apply new maxlen for ALL tiers on this node ----
+                new_maxlens = {}
                 for tier in tier_configs:
                     name = tier["name"]
-                    new_maxlen = max(1, round(tier["size_factor"] * total_new_size))
-                    new_tier_sizes[name] = new_maxlen
-                    node_state["tiers"][name]["maxlen"] = new_maxlen
+                    if name not in node_state["tiers"]:
+                        continue
+                    new_maxlens[name] = max(1, round(tier["size_factor"] * total_new))
 
-                same_maxlens = all(
-                    prev_tier_maxlen.get(t) == new_tier_sizes.get(t)
-                    for t in tiers_sorted if t in node_state["tiers"]
+                for name, length in new_maxlens.items():
+                    node_state["tiers"][name]["maxlen"] = int(length)
+
+                # ---- 2) Build current sizes and targets ----
+                curr = {}
+                tgt = {}
+                for name in tiers_sorted:
+                    tinfo = node_state["tiers"][name]
+                    curr[name] = len(tinfo["t1"]) + len(tinfo["t2"])
+                    tgt[name] = new_maxlens[name]
+
+                # ---- 3) Strict cascade: fast → immediate slower tier ----
+                for i, fast_name in enumerate(tiers_sorted[:-1]):
+                    t_fast = node_state["tiers"][fast_name]
+
+                    while curr[fast_name] > tgt[fast_name] and (t_fast["t1"] or t_fast["t2"]):
+                        src_qname = "t2" if t_fast["t2"] else "t1"
+                        k = t_fast[src_qname].pop(0)  # LRU from fast tier
+                        curr[fast_name] -= 1
+
+                        slow_name = tiers_sorted[i + 1]
+                        t_slow = node_state["tiers"][slow_name]
+                        dst_qname = src_qname
+                        t_slow[dst_qname].append(k) # MRU in slow tier
+                        curr[slow_name] += 1
+
+                # ---- 4) Evict ONLY from the slowest tier if still over capacity ----
+                slowest = tiers_sorted[-1]
+                tinfo = node_state["tiers"][slowest]
+                over_last = max(0, curr[slowest] - tgt[slowest])
+
+                while over_last > 0 and (tinfo["t2"] or tinfo["t1"]):
+                    if tinfo["t2"]:
+                        _evict_from_tier(node_state, tinfo, "t2")
+                    else:
+                        _evict_from_tier(node_state, tinfo, "t1")
+                    curr[slowest] -= 1
+                    over_last -= 1
+
+                # ---- 5) Safety guard: per-tier enforcement (rounding, etc.) ----
+                for name in tiers_sorted:
+                    tinfo = node_state["tiers"][name]
+                    maxlen = tgt[name]
+                    size_now = len(tinfo["t1"]) + len(tinfo["t2"])
+                    extra = max(0, size_now - maxlen)
+
+                    while extra > 0 and (tinfo["t2"] or tinfo["t1"]):
+                        if tinfo["t2"]:
+                            _evict_from_tier(node_state, tinfo, "t2")
+                        else:
+                            _evict_from_tier(node_state, tinfo, "t1")
+                        curr[name] -= 1
+                        extra -= 1
+                
+                # ---- 6) Enforce |B1| + |B2| ≤ C ----
+                b1 = node_state["global"]["b1"]
+                b2 = node_state["global"]["b2"]
+                
+                ghost_over = max(0, len(b1) + len(b2) - total_new)
+                
+                while ghost_over > 0:
+                    if b1:
+                        b1.pop(0)   # LRU from B1
+                    elif b2:
+                        b2.pop(0)   # LRU from B2
+                    else:
+                        break
+                    ghost_over -= 1
+                
+                # ---- 7) Clamp p ----
+                node_state["global"]["p"] = min(
+                    node_state["global"]["p"], total_new
                 )
-
-                old_total = old_cache_sizes.get(node, 1)
-                new_total = new_cache_sizes.get(node, 1)
-                diff = old_total - new_total  # positive if shrinking, negative if growing
-    
-                # --- Step 2: reconcile tiers if size or layout changed ---
-                curr = {t: len(node_state["tiers"][t]["t1"]) + len(node_state["tiers"][t]["t2"]) for t in tiers_sorted}
-                tgt  = {t: new_tier_sizes[t] for t in tiers_sorted}
-
-                if not same_maxlens or diff != 0:
-                    # --- Shrinking case ---
-                    if diff > 0:
-                        to_remove = diff
-                        for tier_name in reversed(tiers_sorted):  # start with slowest
-                            if to_remove <= 0:
-                                break
-                            tinfo = node_state["tiers"][tier_name]
-                            for qname in ["t2", "t1"]:
-                                while to_remove > 0 and tinfo[qname]:
-                                    _ = _evict_from_tier(node_state, tinfo, qname)
-                                    curr[tier_name] -= 1
-                                    to_remove -= 1
-                    # Tier reconciliation: push surplus → slower tiers; evict if still over
-                    changed = True
-                    while changed:
-                        changed = False
-                        # --- Cascading rebalance after shrink ---
-                        # Fill underfull tiers from faster ones until all tiers <= maxlen
-                        # Push surplus down
-                        for i, fast_name in enumerate(tiers_sorted[:-1]):  # fast → slow
-                            slow_name = tiers_sorted[i + 1]
-                            fast = node_state["tiers"][fast_name]
-                            slow = node_state["tiers"][slow_name]
-                            fast_surplus = max(0, curr[fast_name] - tgt[fast_name])
-                            slow_deficit = max(0, tgt[slow_name] - curr[slow_name])
-                            if fast_surplus and slow_deficit:
-                                moved_cnt = 0
-                                for qname in ["t2", "t1"]:
-                                    fq = fast[qname]
-                                    while fq and (curr[slow_name] < tgt[slow_name]) and fast_surplus > 0:
-                                        moved = fq.pop()
-                                        slow[qname].insert(0, moved)
-                                        curr[fast_name] -= 1
-                                        curr[slow_name] += 1
-                                        fast_surplus -= 1
-                                        moved_cnt += 1
-                                    fast[qname] = fq
-                                if moved_cnt:
-                                    changed = True
-
-                        # Evict from slowest if still over
-                        slowest = tiers_sorted[-1]
-                        over = max(0, curr[slowest] - tgt[slowest])
-                        if over:
-                            slow = node_state["tiers"][slowest]
-                            for qname in ["t2", "t1"]:
-                                while over > 0 and slow[qname]:
-                                    _ = _evict_from_tier(node_state, slow, qname)
-                                    curr[slowest] -= 1
-                                    over -= 1
-                                    changed = True
-
-                    # Final guard: trim each tier to maxlen
-                    for tname in tiers_sorted:
-                        tinfo = node_state["tiers"][tname]
-                        for qname in ["t1", "t2"]:
-                            over = len(tinfo[qname]) - tinfo["maxlen"]
-                            while over > 0:
-                                _ = _evict_from_tier(node_state, tinfo, qname)
-                                curr[tname] -= 1
-                                over -= 1
-
+                
                 new_per_node_tiers[node] = node_state
 
+                # ---- 6) Accumulate tier statistics & sizes (based on maxlen) ----
+                for tname, tinfo in node_state.get("tiers", {}).items():
+                    new_tier_stats[tname] = new_tier_stats.get(tname, 0) + 1
+                    size_mb = tinfo.get("maxlen", 0) * (self.avg_content_size / (1024 * 1024))
+                    new_tier_sizes_mb[tname] = new_tier_sizes_mb.get(tname, 0) + size_mb
+
             except Exception as e:
-                print(f"[⚠️] Failed to dump cache for node {node}: {e}")
+                print(f"[⚠️] Failed to rebuild tiers for node {node}: {e}")
 
-        # --- Tier-level statistics ---
-        new_tier_statistics = {}
-        new_tier_sizes_mb = {}
-        for node, node_state in new_per_node_tiers.items():
-            for tier_name, tier_state in node_state.get("tiers", {}).items():
-                new_tier_statistics[tier_name] = new_tier_statistics.get(tier_name, 0) + 1
-                size_mb = tier_state.get("maxlen", 0) * (self.avg_content_size / (1024 * 1024))
-                new_tier_sizes_mb[tier_name] = new_tier_sizes_mb.get(tier_name, 0) + size_mb
+        return new_per_node_tiers, new_tier_stats, new_tier_sizes_mb
     
+    def save_state(self, filename_prefix="network_state", directory="network_states"):
+        Path(directory).mkdir(exist_ok=True)
+        filepath = Path(directory) / f"{filename_prefix}.pkl"
+        
+        old_cache_sizes = copy.deepcopy(self.cache_size)
+        old_per_node_tiers = {node: cache.node_state() for node, cache in self.cache.items()}
+
+        collector_proxy = getattr(self, "collector_proxy", None)
+        network_cache = getattr(self, "network_cache", None)
+        cache_placement = getattr(self, "cache_placement", None)
+        root = collector_proxy.results()
+
         state = {
-            # "old_node_carbon_intensity": self.node_carbon_intensity,
-            # "old_node_carbon_intensity_total": sum(self.node_carbon_intensity.values()),
-
-            "node_carbon_intensity": new_ci,
-            # "node_carbon_intensity_total": sum(new_ci.values()),
-
+            "network_cache": network_cache,
+            "cache_placement":cache_placement,
             "old_cache_size": old_cache_sizes,
-            "cache_size": new_cache_sizes,
-
-            # "old_tier_statistics": self.tier_statistics,
-            "tier_statistics": new_tier_statistics,
-
-            # "old_tier_sizes_mb": self.tier_sizes_mb,
-            "tier_sizes_mb": new_tier_sizes_mb,
-            
+            "old_cache_size_total": sum(old_cache_sizes.values()),
+            "old_tier_statistics": self.tier_statistics,
+            "old_tier_sizes_mb": self.tier_sizes_mb,
             "old_per_node_tiers": old_per_node_tiers,
-            "per_node_tiers": new_per_node_tiers,
+            "old_results":root,
         }
 
-        # Save as pickle
         with open(filepath, "wb") as f:
             pickle.dump(state, f)
         print(f"[💾] Saved network model state to {filepath}")
-
-        # Optional readable JSON copy
+        
         jsonpath = filepath.with_suffix(".json")
         with open(jsonpath, "w") as jf:
             json.dump(state, jf, indent=2)
         print(f"[📄] JSON copy saved to {jsonpath}")
-
         return str(filepath)
 
-    def load_state(self, filepath):
-        """
-        Load a saved network model state and restore caches, tiers, and carbon intensities.
-        
-        Parameters
-        ----------
-        filepath : str
-            Path to the saved .pkl file
-        """
-        if not Path(filepath).exists():
-            print(f"[⚠️] Saved state not found: {filepath}")
-            return False
-
-        with open(filepath, "rb") as f:
-            saved = pickle.load(f)
-
-        # Restore carbon intensities
-        if "node_carbon_intensity" in saved:
-            self.node_carbon_intensity = saved["node_carbon_intensity"]
-
-        # Restore per-node tiers and sizes
-        if "per_node_tiers" in saved:
-            for node, tiers_saved in saved["per_node_tiers"].items():
-                if node not in self.per_node_tiers:
-                    continue
-                for tier, tier_saved in zip(self.per_node_tiers[node], tiers_saved):
-                    tier.update({
-                        "actual_size": tier_saved.get("actual_size"),
-                        "actual_size_bytes": tier_saved.get("actual_size_bytes"),
-                    })
-                    # Restore tier contents if available
-                    if node in self.cache and "stored_contents" in tier_saved:
-                        cache_obj = self.cache[node]
-                        if hasattr(cache_obj, "_caches"):
-                            tcache = cache_obj._caches[self.per_node_tiers[node].index(tier)]
-                            if hasattr(tcache, "contents"):
-                                tcache.contents = set(tier_saved["stored_contents"])
-                            if "occupancy" in tier_saved:
-                                setattr(tcache, "occupancy", tier_saved["occupancy"])
-        
-        # Restore tier stats
-        self.tier_statistics = saved.get("tier_statistics", self.tier_statistics)
-        self.tier_sizes_mb = saved.get("tier_sizes_mb", self.tier_sizes_mb)
-        print(f"[♻️] Restored network model state from {filepath}")
-        return True
 
 class NetworkController:
     """Network controller
@@ -909,7 +966,7 @@ class NetworkController:
         """
         if node in self.model.cache:
             content = self.session["content"]
-            logger.info(f"put content: {content} in node {node}")
+            logger.info(f"put content: {content} in cache {node}")
             res = self.model.cache[node].put(self.session["content"], self.session["priority"], **kwargs)
             if (res is None or type(res) is int) and self.collector is not None and self.session["log"]:
                 self.collector.write_content(node, cache_tiers=self.model.per_node_tiers[node], carbon_intensity=self.model.node_carbon_intensity[node],**kwargs)
@@ -928,10 +985,11 @@ class NetworkController:
         content : bool
             True if the content is available, False otherwise
         """
+        content = self.session["content"]
         if node in self.model.cache:
+            logger.info(f"is content:{content} in cache {node}")
             cache_hit = self.model.cache[node].get(self.session["content"], self.session["priority"])
-            content = self.session["content"]
-            logger.info(f"is content:{content} in cache {node} : {cache_hit}")
+            logger.info(f"{cache_hit}")
             if cache_hit:
                 if self.session["log"]:
                     tier_index = self.get_tier_index(node, self.session["content"], self.session['priority'])
@@ -943,6 +1001,7 @@ class NetworkController:
         name, props = fnss.get_stack(self.model.topology, node)
         if name == "source" and self.session["content"] in props["contents"]:
             if self.collector is not None and self.session["log"]:
+                logger.info(f"content:{content} in server {node}")
                 self.collector.server_hit(node, server_size=len(self.model.source_node[node]), carbon_intensity=self.model.node_carbon_intensity[node], **kwargs)
             return True
         else:

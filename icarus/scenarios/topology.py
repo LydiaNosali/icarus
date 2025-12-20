@@ -31,6 +31,7 @@ __all__ = [
     "topology_wide",
     "topology_garr",
     "topology_rocketfuel_latency",
+    "topology_carbon8",
 ]
 
 
@@ -312,7 +313,7 @@ def topology_geant(**kwargs):
     """
     # 240 nodes in the main component
     topology = fnss.parse_topology_zoo(
-        path.join(TOPOLOGY_RESOURCES_DIR, "Geant2012.graphml")
+        path.join(TOPOLOGY_RESOURCES_DIR, "Geant2012_with_carbon.graphml")
     ).to_undirected()
     topology = largest_connected_component_subgraph(topology)
     deg = nx.degree(topology)
@@ -444,7 +445,7 @@ def topology_wide(**kwargs):
         The topology object
     """
     topology = fnss.parse_topology_zoo(
-        path.join(TOPOLOGY_RESOURCES_DIR, "WideJpn.graphml")
+        path.join(TOPOLOGY_RESOURCES_DIR, "WideJpn_with_carbon.graphml")
     ).to_undirected()
     # sources are nodes representing neighbouring AS's
     sources = [9, 8, 11, 13, 12, 15, 14, 17, 16, 19, 18]
@@ -651,7 +652,7 @@ def topology_geant2(**kwargs):
     """
     # 53 nodes
     topology = fnss.parse_topology_zoo(
-        path.join(TOPOLOGY_RESOURCES_DIR, "Geant2012.graphml")
+        path.join(TOPOLOGY_RESOURCES_DIR, "Geant2012_with_carbon.graphml")
     ).to_undirected()
     topology = largest_connected_component_subgraph(topology)
     deg = nx.degree(topology)
@@ -843,4 +844,55 @@ def topology_rocketfuel_latency(
         fnss.add_stack(topology, v, "receiver")
     for v in routers:
         fnss.add_stack(topology, v, "router")
+    return IcnTopology(topology)
+
+
+@register_topology_factory("CARBON8")
+def topology_carbon8(delay_int=1, delay_ext=5, **kwargs):
+    topology = fnss.Topology()
+
+    # Add nodes
+    for n in ["S", "C1", "C2", "R"]:
+        topology.add_node(n)
+
+    # Add edges
+    edges = [
+        ("S", "C1"),
+        ("S", "C2"),
+        ("C1", "R"),
+        ("C2", "R"),
+    ]
+    for u, v in edges:
+        topology.add_edge(u, v, type="internal")
+
+    # Define roles:
+    #   sources behind the core (e.g., C1 and/or C2)
+    #   receivers at the edge
+    #   routers = aggregation + core
+    sources   = ["S"]                    # single source at core
+    receivers = ["R"]  # all edge nodes are receivers
+    routers   = ["C1", "C2"]        # remaining nodes are ICN routers
+
+    topology.graph["icr_candidates"] = set(routers)
+
+    for v in sources:
+        fnss.add_stack(topology, v, "source")
+    for v in receivers:
+        fnss.add_stack(topology, v, "receiver")
+    for v in routers:
+        fnss.add_stack(topology, v, "router")
+
+
+    # Set weights and delays
+    fnss.set_weights_constant(topology, 1.0)
+    fnss.set_delays_constant(topology, INTERNAL_LINK_DELAY, "ms")
+    for u, v in topology.edges():
+        if u in sources or v in sources:
+            topology.adj[u][v]["type"] = "external"
+            # this prevents sources to be used to route traffic
+            fnss.set_weights_constant(topology, 1000.0, [(u, v)])
+            fnss.set_delays_constant(topology, EXTERNAL_LINK_DELAY, "ms", [(u, v)])
+        else:
+            topology.adj[u][v]["type"] = "internal"
+
     return IcnTopology(topology)

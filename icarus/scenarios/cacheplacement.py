@@ -4,10 +4,13 @@ This module provides algorithms for performing cache placement, i.e., given
 a cumulative cache size and a topology where each possible node candidate is
 labelled, these functions deploy caching space to the nodes of the topology.
 """
+import logging
 import random
 import networkx as nx
 import numpy as np
 
+from icarus.scenarios.paes.topsis import topsis
+from icarus.scenarios.paes.paes_icarus_2obj import run_paes
 from icarus.util import iround
 from icarus.registry import register_cache_placement
 from icarus.scenarios.algorithms import (
@@ -25,11 +28,12 @@ __all__ = [
     "optimal_median_cache_placement",
     "optimal_hashrouting_cache_placement",
     "clustered_hashrouting_cache_placement",
-    "green_cache_placement",
+    "score_based_cache_placement",
     "hybrid_cache_placement",
-    "allocated_cache_placement"
+    "allocated_cache_placement",
+    "green_cache_placement"
 ]
-
+logger = logging.getLogger("babel")
 
 @register_cache_placement("UNIFORM")
 def uniform_cache_placement(topology, cache_budget, **kwargs):
@@ -401,62 +405,51 @@ def clustered_hashrouting_cache_placement(
         raise ValueError("clustering policy %s not supported" % policy)
 
 
-@register_cache_placement("GREEN")
-def green_cache_placement(topology, cache_budget, **kwargs):
-    """Places cache budget uniformly across cache nodes.
-
-    Parameters
-    ----------
-    topology : Topology
-        The topology object
-    cache_budget : int
-        The cumulative cache budget        
+@register_cache_placement("SCORE_BASED")
+def score_based_cache_placement(topology, cache_budget, **kwargs):
     """
-    
-    seed = kwargs.get("seed", 1.0)
-    RGN = kwargs.get("RGN", 0.2)
-    random.seed(seed)
+    Dynamic cache placement:
+    - Initial allocation: simple uniform split across ICR candidates
+    - Per-period reallocation: done inside NetworkModel.save_state()
+      using multi-criteria scores (hit ratio, carbon intensity, embodied).
+    """
 
-    icr_candidates = topology.graph.get("icr_candidates", list(topology.nodes))
+    icr_candidates = topology.graph["icr_candidates"]
     if not icr_candidates:
-        raise ValueError("No ICR candidates found in topology.")
+        return
 
-    greenness = {}
-    for node in icr_candidates:
-        carbon_intensity = topology.nodes[node].get("carbon_intensity", 400)
-        greenness[node] = carbon_intensity  # lower is better!
-
-    # Select the greenest nodes (lowest carbon intensity)
-    num_greens = max(1, int(len(icr_candidates) * RGN))  # at least 1 node
-    sorted_nodes = sorted(greenness, key=greenness.get)  # ascending
-    green_nodes = sorted_nodes[:num_greens]
-    print(f"icr_candidates:{len(icr_candidates)}, num_green:{num_greens}")
-   # Determine uniform cache size for selected green nodes
-    cache_size = iround(cache_budget / num_greens)
+    # Initial: uniform allocation, just to start with something valid
+    cache_size = iround(cache_budget / len(icr_candidates))
     if cache_size == 0:
-        raise ValueError(
-            f"Cache budget ({cache_budget}) too small for {num_greens} green nodes. "
-            f"Each would get zero cache. Increase budget or reduce RGN."
-        )
+        return
 
-    for v in green_nodes:
+    for v in icr_candidates:
         topology.node[v]["stack"][1]["cache_size"] = cache_size
+
+    # 👇 Flag this topology as using dynamic, score-based allocation
+    topology.graph["dynamic_cache_policy"] = "SCORE_BASED"
 
 
 @register_cache_placement("HYBRID_GREEN_CENTRALITY")
 def hybrid_cache_placement(topology, cache_budget, **kwargs):
     """
-    Cache placement based on a hybrid score of greenness (low carbon intensity)
-    and betweenness centrality. You control the balance with 'alpha'.
+    Multi-criteria cache placement based on:
+    - Greenness (low operational carbon intensity)
+    - Betweenness centrality
+    - Embodied carbon footprint
+    - [Optional] Other user-provided normalized or weighted node metrics
 
-    Improvements:
-    - Greenness normalized using min/max scaling.
-    - Centrality normalized to [0,1].
-    - Stochastic rounding for fairer allocations.
-    - Uses topology.nodes instead of deprecated topology.node.
+    Criteria weights are configurable via 'weights' dict:
+      e.g. {'greenness': 0.4, 'centrality': 0.3, 'embodied': 0.3}
     """
 
-    alpha = kwargs.get("alpha", 0.5)
+    import random
+    alpha = kwargs.get("alpha", None)  # Deprecated
+    weights = kwargs.get("weights", {
+        'greenness': 0.4,
+        'centrality': 0.3,
+        'embodied': 0.3,
+    })
     seed = kwargs.get("seed", 1)
     random.seed(seed)
 
@@ -464,7 +457,8 @@ def hybrid_cache_placement(topology, cache_budget, **kwargs):
     if not icr_candidates:
         raise ValueError("No ICR candidates found in topology.")
 
-    # 1. Greenness (lower carbon intensity is better → normalized score)
+    # --- Criteria normalization ---
+    # 1. Operational carbon intensity (greenness)
     carbon_intensities = {
         node: topology.nodes[node].get("carbon_intensity", 400)
         for node in icr_candidates
@@ -475,21 +469,48 @@ def hybrid_cache_placement(topology, cache_budget, **kwargs):
         for node, ci in carbon_intensities.items()
     }
 
-    # 2. Betweenness centrality (normalized)
+    # 2. Betweenness centrality
     betw = nx.betweenness_centrality(topology, normalized=True)
     centralities = {v: betw.get(v, 0.0) for v in icr_candidates}
 
-    # 3. Combine into hybrid score
-    scores = {
-        node: alpha * greenness[node] + (1 - alpha) * centralities[node]
+    # 3. Embodied carbon footprint (lower is better)
+    embodied_carbon = {
+        node: topology.nodes[node].get("embodied_carbon", 1000)
         for node in icr_candidates
     }
+    min_ec, max_ec = min(embodied_carbon.values()), max(embodied_carbon.values())
+    embodied_score = {
+        node: (max_ec - ec) / (max_ec - min_ec + 1e-9)
+        for node, ec in embodied_carbon.items()
+    }
 
-    # 4. Normalize scores to allocate proportionally
+    # 4. Additional criteria (optional)
+    extra_criteria = kwargs.get("extra_criteria", {})
+    normalized_extra = {}
+    for crit_name, crit_map in extra_criteria.items():
+        min_val, max_val = min(crit_map.values()), max(crit_map.values())
+        normalized_extra[crit_name] = {
+            node: (crit_map[node] - min_val) / (max_val - min_val + 1e-9)
+            for node in icr_candidates
+        }
+
+    # ---- Combine with weights ----
+    scores = {}
+    for node in icr_candidates:
+        score = (
+            weights.get('greenness', 0) * greenness[node]
+            + weights.get('centrality', 0) * centralities[node]
+            + weights.get('embodied', 0) * embodied_score[node]
+        )
+        for crit_name, norm_map in normalized_extra.items():
+            score += weights.get(crit_name, 0) * norm_map[node]
+        scores[node] = score
+
+    # --- Allocation proportional to score ---
     total_score = sum(scores.values()) or 1e-9
     raw_alloc = {v: cache_budget * scores[v] / total_score for v in scores}
 
-    # 5. Stochastic rounding + ensure ≥1
+    # --- Stochastic rounding + ensure ≥1 ---
     rounded_alloc = {}
     for node, val in raw_alloc.items():
         base = int(val)
@@ -497,10 +518,9 @@ def hybrid_cache_placement(topology, cache_budget, **kwargs):
         rounded = base + (1 if random.random() < frac else 0)
         rounded_alloc[node] = max(1, rounded)
 
-    # Adjust to exact budget if needed
+    # --- Adjust to exact budget if needed ---
     total_allocated = sum(rounded_alloc.values())
     while total_allocated > cache_budget:
-        # Reduce from node with lowest score that has >1
         over_nodes = [n for n, a in rounded_alloc.items() if a > 1]
         if not over_nodes:
             break
@@ -508,70 +528,108 @@ def hybrid_cache_placement(topology, cache_budget, **kwargs):
         rounded_alloc[victim] -= 1
         total_allocated -= 1
     while total_allocated < cache_budget:
-        # Add to node with highest score
         winner = max(rounded_alloc, key=lambda n: scores[n])
         rounded_alloc[winner] += 1
         total_allocated += 1
 
-    # 6. Apply cache sizes
+    # --- Assign cache sizes ---
     for node in icr_candidates:
         topology.nodes[node]["stack"][1]["cache_size"] = rounded_alloc[node]
 
 
-@register_cache_placement("ALLOCATED")
-def allocated_cache_placement(topology, cache_budget, allocations=None, **kwargs):
-    """Assigns cache to ICR candidates based on user-provided allocations.
-
-    - Supports allocations as a list (order = icr_candidates order).
-    - Supports allocations as a dict {node: weight or count}.
-    - If allocations sum to 1.0, they are treated as fractions of cache_budget.
-    - Otherwise, they are treated as weights and normalized to cache_budget.
-    - Ensures Icarus never sees cache_size=0 on active nodes.
-    """
-    icr_candidates = list(topology.graph["icr_candidates"])
-    if allocations is None:
-        raise ValueError("ALLOCATED placement requires 'allocations'")
-
-    # --- Handle list case
-    if isinstance(allocations, list):
-        if len(allocations) != len(icr_candidates):
-            raise ValueError(
-                f"Allocations list length {len(allocations)} != icr_candidates length {len(icr_candidates)}"
-            )
-        allocations = {v: a for v, a in zip(icr_candidates, allocations)}
-
-    # --- Active nodes only
-    active_allocs = {v: a for v, a in allocations.items() if a > 0}
-    if not active_allocs:
-        return
-
-    total_alloc = sum(active_allocs.values())
-
-    # --- Normalize allocations
-    if np.isclose(total_alloc, 1.0):
-        # Treat as fractions
-        norm_alloc = {v: allocations[v] * cache_budget for v in icr_candidates}
-    else:
-        # Treat as weights
-        norm_alloc = {v: (allocations[v] / total_alloc) * cache_budget for v in icr_candidates}
-
-    # --- Round, enforce ≥1 for active, adjust total
-    rounded_alloc = {v: max(1, int(round(norm_alloc.get(v, 0)))) for v in active_allocs}
-    total_allocated = sum(rounded_alloc.values())
-
-    # Fix over-allocation (like in your betweenness code)
-    while total_allocated > cache_budget:
-        over_nodes = [v for v in rounded_alloc if rounded_alloc[v] > 1]
-        if not over_nodes:
-            break
-        victim = min(over_nodes, key=lambda v: allocations[v])
-        rounded_alloc[victim] -= 1
-        total_allocated -= 1
-
-    # --- Apply allocations to topology
-    for v in icr_candidates:
-        if v in rounded_alloc:
-            topology.node[v]["stack"][1]["cache_size"] = rounded_alloc[v]
+@register_cache_placement("ALLOCATED") 
+def allocated_cache_placement(topology, cache_budget, allocations=None, **kwargs): 
+    logger.info("in ALLOCATED cache placement policy ") 
+    """ Assigns cache sizes exactly as provided by PAES. 
+    allocations: dict {node_id: cache_size} """ 
+    
+    if allocations is None: 
+        raise ValueError("ALLOCATED placement requires 'allocations' dict.") 
+    
+    for v, size in allocations.items():
+        if size > 0:
+            topology.node[v]["stack"][1]["cache_size"] = int(size)
         else:
             if "cache_size" in topology.node[v]["stack"][1]:
                 del topology.node[v]["stack"][1]["cache_size"]
+
+
+@register_cache_placement("GREEN")
+def green_cache_placement(topology, cache_budget, **kwargs):
+    logger.info("in GREEN cache placement policy ")
+    """
+    Dynamic cache placement:
+    - Initial allocation: simple uniform split across ICR candidates
+    - Call PAES to propose allocations
+    - Use TOPSIS to chose the best allocation for the objective functions (hit ratio, cost, carbon emissions)
+    - Periodic reallocation: done inside NetworkModel.save_state()
+    """
+
+    params = kwargs.get("cache_placement_tree")
+    metrics= kwargs.get("metrics")
+    settings = kwargs.get("settings")
+    allocs = kwargs.get("allocs", [])
+    max_evaluations = kwargs.get("max_evaluations")
+    deg = dict(nx.degree(topology))
+    betw = dict(nx.betweenness_centrality(topology))
+    icr_candidates = topology.graph["icr_candidates"]
+    centralities = {v: betw[v] for v in icr_candidates}
+
+    ci = {
+        node: topology.nodes[node].get("carbon_intensity", 400)
+        for node in icr_candidates}
+
+    if ci is not None:
+        params["network"]["node_carbon_intensity"] = ci
+    params["network"]["node_betweenness"] = centralities
+    params["network"]["node_traffic"] = deg
+    if not icr_candidates:
+        return
+
+    pareto = run_paes(icr_candidates=icr_candidates,
+                      params=params,
+                      metrics=metrics,
+                      settings = settings,
+                      cache_budget=cache_budget,
+                      archive_size=40,
+                      grid_divisions=30,
+                      max_evaluations=max_evaluations,  # small for test, increase later
+                      seed=0,
+                      allocs=allocs)
+    
+    logger.info(f"Found {len(pareto)} Pareto solutions (max Hit, min Cost, min Carbon):")
+    for sol, (h, c, cf) in pareto:
+        allocs = sol["allocations"]
+        logger.info(f"{allocs}, -> hit={h}, cost={c}, carbon={cf}")
+    
+    directions = [+1, -1, -1]
+
+    values = []
+    solutions = []
+    for sol, (h, c, cf) in pareto:
+        values.append([h, c, cf])   # no minus here
+        solutions.append(sol)
+
+    # Convert to array
+    values = np.array(values)
+    weights = np.array([0.3, 0.1, 0.6])
+    # Run TOPSIS
+    best_idx, scores = topsis(values, directions, weights=weights)
+    best_sol = solutions[best_idx]
+
+    allocs = best_sol["allocations"]
+    nodes  = best_sol["icr_candidates"]
+
+    logger.info(f"Scores:{scores}, Chosen allocations:{allocs}")
+    print(f"Scores:{scores}, Chosen allocations:{allocs}")
+
+    # Apply the allocations
+    for node, size in zip(nodes, allocs):
+        if size > 0:
+            topology.node[node]["stack"][1]["cache_size"] = size
+        else:
+            if "cache_size" in topology.node[node]["stack"][1]:
+                del topology.node[node]["stack"][1]["cache_size"]
+    # Tag the topology
+    topology.graph["paes"] = "PAES"
+

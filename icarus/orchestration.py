@@ -3,7 +3,7 @@
 The orchestrator is responsible for scheduling experiments specified in the
 user-provided settings.
 """
-from pathlib import Path
+import random
 import time
 import collections
 import multiprocessing as mp
@@ -24,7 +24,7 @@ from icarus.registry import (
     STRATEGY,
 )
 from icarus.results import ResultSet
-from icarus.util import SequenceNumber, timestr
+from icarus.util import SequenceNumber, Tree, timestr
 
 
 __all__ = ["Orchestrator", "run_scenario"]
@@ -137,6 +137,7 @@ class Orchestrator:
             while queue:
                 experiment = queue.popleft()
                 for _ in range(self.settings.N_REPLICATIONS):
+                    # print(self.settings.__dict__)
                     self.experiment_callback(
                         run_scenario(
                             self.settings, experiment, self.seq.assign(), self.n_exp
@@ -182,6 +183,7 @@ class Orchestrator:
         self.n_success += 1
         # Store results
         self.results.add(params, results)
+
         self.exp_durations.append(duration)
         if self.n_success % self.summary_freq == 0:
             # Number of experiments scheduled to be executed
@@ -229,8 +231,17 @@ def run_scenario(settings, params, curr_exp, n_exp):
         logger = logging.getLogger("runner-%s" % proc_name)
 
         # Get list of metrics required
-        metrics = settings.DATA_COLLECTORS
+        def tree_to_dict(tree):
+            if isinstance(tree, Tree):
+                return {k: tree_to_dict(v) for k, v in tree.items()}
+            elif isinstance(tree, list):
+                return [tree_to_dict(v) for v in tree]
+            else:
+                return tree
+
         tree = copy.deepcopy(params)
+        metrics = tree_to_dict(tree["data_collectors"]) if tree["data_collectors"] else settings.DATA_COLLECTORS
+        cache_placement_tree = copy.deepcopy(params)
 
         # Set topology
         topology_spec = tree["topology"]
@@ -242,6 +253,11 @@ def run_scenario(settings, params, curr_exp, n_exp):
             return None
         topology = TOPOLOGY_FACTORY[topology_name](**topology_spec)
 
+        # # Assign carbon intensities to nodes
+        # topology.node["C1"]["carbon_intensity"] = 600
+        # topology.node["C2"]["carbon_intensity"] = 150
+        
+        # Set workload
         workload_spec = tree["workload"]
         workload_name = workload_spec.pop("name")
         if workload_name not in WORKLOAD:
@@ -250,7 +266,7 @@ def run_scenario(settings, params, curr_exp, n_exp):
             )
             return None
         workload = WORKLOAD[workload_name](topology, **workload_spec)
-
+        
         # Assign caches to nodes
         if "cache_placement" in tree:
             cachepl_spec = tree["cache_placement"]
@@ -260,16 +276,8 @@ def run_scenario(settings, params, curr_exp, n_exp):
                 return None
             network_cache = cachepl_spec.pop("network_cache")
             cachepl_spec["cache_budget"] = workload.n_contents * network_cache
-            logger.info("total cache_budget:%s"%cachepl_spec["cache_budget"])
-            CACHE_PLACEMENT[cachepl_name](topology, **cachepl_spec)
         
-        allocs = {}
-        for v in topology.nodes():
-            stack = topology.node[v].get("stack", [])
-            if len(stack) > 1 and "cache_size" in stack[1]:
-                allocs[v] = stack[1]["cache_size"]
-        results = {"allocations": allocs}
-
+        # Assign cotennt to sources
         contpl_spec = tree["content_placement"]
         contpl_name = contpl_spec.pop("name")
         if contpl_name not in CONTENT_PLACEMENT:
@@ -295,18 +303,18 @@ def run_scenario(settings, params, curr_exp, n_exp):
             )
             return None
 
+        netconf = tree["netconf"]
         avg_content_size = getattr(workload, "avg_content_size", None)
         if avg_content_size is not None:
-            tree.setdefault("netconf", {})["avg_content_size"] = avg_content_size
+            netconf["avg_content_size"] = avg_content_size
         
-        netconf = tree["netconf"]
         scenario = tree["desc"] if "desc" in tree else "Description N/A"
         logger.info(
             "Experiment %d/%d | Preparing scenario: %s", curr_exp, n_exp, scenario
         )
-        cache_budget = cachepl_spec["cache_budget"]
-        print(f"Experiment {curr_exp}/{n_exp} | Preparing scenario: {scenario}, total nb items:{cache_budget}")
-
+        
+        print(f"Experiment {curr_exp}/{n_exp} | Preparing scenario: {scenario}")
+        
         if any(m not in DATA_COLLECTOR for m in metrics):
             logger.error(
                 "There are no implementations for at least one data collector specified"
@@ -314,43 +322,93 @@ def run_scenario(settings, params, curr_exp, n_exp):
             return None
         
         collectors = metrics
-        logger.info("Experiment %d/%d | Start simulation", curr_exp, n_exp)
-        
-        N_PERIODS = getattr(settings, "N_PERIODS", 3)
-        collector = None
-        prev_state_path = None
-        for period in range(N_PERIODS):
-            print(f"\n🚀 Running period {period + 1}/{N_PERIODS}")
 
-            # Load previous saved state (skip for first period)
+        logger.info("Experiment %d/%d | Start simulation", curr_exp, n_exp)
+        logger.info(f"Experiment {curr_exp}/{n_exp} | Start simulation")
+        N_PERIODS = getattr(settings, "N_PERIODS", 3)
+        prev_state_path = None
+        full_alloc_list = []
+        
+        for period in range(N_PERIODS):
+            logger.info(f"\n🚀 Running period {period + 1}/{N_PERIODS}")
+   
             if period > 0:
                 netconf["saved_state_file"] = prev_state_path
                 # Skip warmup for subsequent periods
-                if "n_warmup" in workload_spec:
-                    workload_spec["n_warmup"] = 0
+                logger.info("[⏭️] Warmup skipped (resuming from saved network state)")
+                workload_spec["n_warmup"] = 0
+                workload_spec["seed"] = 1 + period
+                cache_placement_workload_spec = cache_placement_tree["workload"]
+                cache_placement_workload_spec["seed"] = 1 + period
+                cache_placement_workload_spec["n_warmup"] = 0
 
-            collector, model = exec_experiment(
-                topology, workload, netconf, strategy, cache_policy, collectors, collector=collector, period=period + 1
-            )
-
-            try:
-                if hasattr(model, "save_state"):
-                    state_prefix = f"exp{curr_exp}_{topology_name}"
-                    prev_state_path = model.save_state(state_prefix)
-                    print(f"[💾] Saved network model state after Experiment {curr_exp} -> {prev_state_path}")
+                # Assign new carbon intensities to nodes
+                # topology.node["C1"]["carbon_intensity"] = 150
+                # topology.node["C2"]["carbon_intensity"] = 600
+                # betw = nx.betweenness_centrality(topology)  # node -> BC
+                # # Sort nodes by BC descending
+                # sorted_nodes = sorted(betw.keys(), key=lambda n: betw[n], reverse=True)
+                # k = max(1, int(0.1 * len(sorted_nodes)))  # top 20% most central nodes
+                # high_bc_nodes = set(sorted_nodes[:k])
+                for v in topology.nodes():
+                    val = topology.node[v].get("carbon_intensity", 0)
+                    if val!= 0:
+                #         if v in high_bc_nodes:
+                #             base_ci = 900
+                #         else:
+                #             base_ci = 50
+                        if random.random() < 0.30:
+                            # drift = val * random.uniform(-0.1, 0.1)
+                            drift = val * random.uniform(-0.1, 0.1)
+                            topology.node[v]["carbon_intensity"] = max(20.0, min(900.0, val + drift))
+                #         # else:
+                #         topology.node[v]["carbon_intensity"] = base_ci
+                #         topology.node["C2"]["carbon_intensity"] = 150
+            
+            logger.info(f"cache allocation: {cachepl_name}")
+            if "cache_placement" in tree:
+                if cachepl_name == "GREEN":
+                    CACHE_PLACEMENT[cachepl_name](topology, cachepl_spec["cache_budget"], cache_placement_tree=cache_placement_tree, metrics=metrics, settings=settings, allocs=full_alloc_list, max_evaluations=cachepl_spec["MAX_EVALUATION"] )
                 else:
-                    print(f"[⚠️] NetworkModel has no save_state() method.")
+                    CACHE_PLACEMENT[cachepl_name](topology, **cachepl_spec)
+            
+            workload = WORKLOAD[workload_name](topology, **workload_spec)
+            
+            full_alloc_list = []
+            icr_candidates = topology.graph["icr_candidates"]
+            for v in icr_candidates:
+                stack = topology.node[v].get("stack", [])
+                if len(stack) > 1 and "cache_size" in stack[1]:
+                    full_alloc_list.append(stack[1]["cache_size"])
+                else:
+                    full_alloc_list.append(0)
+            
+            allocs = {}
+            for v in topology.nodes():
+                stack = topology.node[v].get("stack", [])
+                if len(stack) > 1 and "cache_size" in stack[1]:
+                    allocs[v] = stack[1]["cache_size"]
+            cachepl_spec["cache_budget"] = sum(allocs.values())
+            results = {"allocations": allocs}
+            
+            save_state = False if cachepl_name == "ALLOCATED" else True
+
+            results, model = exec_experiment(
+                topology, workload, netconf, strategy, cache_policy, collectors, period=period + 1, save=save_state, curr_exp=curr_exp
+            )
+            
+            try:
+                if cachepl_name != "ALLOCATED":
+                    if hasattr(model, "save_state"):
+                        model.cache_placement = cachepl_name
+                        model.network_cache = network_cache
+                        state_prefix = f"exp{curr_exp}_{topology_name}_p{period + 1}"
+                        prev_state_path = model.save_state(state_prefix)
+                        print(f"[💾] Saved network model state after Experiment {curr_exp} -> {prev_state_path}")
+                    else:
+                        print(f"[⚠️] NetworkModel has no save_state() method.")
             except Exception as e:
                 print(f"[❌] Failed to save network state: {e}")
-            collector.new_period()
-
-        results = collector.results()
-        allocs = {}
-        for v in topology.nodes():
-            stack = topology.node[v].get("stack", [])
-            if len(stack) > 1 and "cache_size" in stack[1]:
-                allocs[v] = stack[1]["cache_size"]
-        results["cache_allocations"] = allocs
         
         duration = time.time() - start_time
         logger.info(

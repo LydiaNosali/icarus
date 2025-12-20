@@ -469,7 +469,7 @@ class CacheLessToSaveMore(Strategy):
         self.request_counter = {}
         self.log_file_path = '../../examples/lce-vs-probcache/path_log.csv'
 
-    def restore_strategy_state(self, strategy_name=None, period=None):
+    def restore_strategy_state(self, strategy_name=None, period=None, curr_exp=None):
         """
         Restore the saved state (gain_per_data, request_counter) for this strategy.
         Supports period-specific resumes (e.g. CL2SM_p2.pkl).
@@ -478,7 +478,7 @@ class CacheLessToSaveMore(Strategy):
         saved_dir = Path("strategy_states")
 
         # Choose filename based on period number if provided
-        filename = f"{strategy_name}_p{period}.pkl"
+        filename = f"exp_{curr_exp}_{strategy_name}_p{period}.pkl"
         saved_state_path = saved_dir / filename
         saved_json_path = saved_state_path.with_suffix(".json")
 
@@ -537,7 +537,6 @@ class CacheLessToSaveMore(Strategy):
         try:
             with open(jsonpath, "w") as jf:
                 json.dump(state, jf, indent=2)
-            print(f"[📄] JSON copy saved to {jsonpath}")
         except Exception as e:
             print(f"[⚠️] Failed to save {strategy_name} state (json): {e}")
 
@@ -558,7 +557,7 @@ class CacheLessToSaveMore(Strategy):
         path = self.view.shortest_path(receiver, source)
          # Route requests to original source and queries caches on the path
         self.controller.start_session(time, receiver, content, log, priority)
-        serving_node = None
+        logger.info(f"path:{path}")
         for u, v in path_links(path):
             if v not in self.gain_per_data:
                 self.gain_per_data[v] = {}
@@ -569,10 +568,10 @@ class CacheLessToSaveMore(Strategy):
                 if self.controller.get_content(v, size=size, priority=priority):
                     serving_node = v
                     break
-        if serving_node is None:
+        else:
             # No cache hits, get content from source
-            self.controller.get_content(source, tier_index=0, size=size, priority=priority, time=time)
-            serving_node = source
+            self.controller.get_content(v, tier_index=0, size=size, priority=priority)
+            serving_node = v
         # Return content
         path = list(reversed(self.view.shortest_path(receiver, serving_node)))
         for u, v in path_links(path):
@@ -592,13 +591,7 @@ class CacheLessToSaveMore(Strategy):
             # print(f"reaccess_prob for content {content} at node {v}: {reaccess_prob}")
             # print(f"is_reaccessed:{is_reaccessed}")
             # if is_reaccessed:
-            new_path = list(reversed(self.view.shortest_path(v, serving_node)))
-            storage_gain, band, trans, pen = self.storage_gain(new_path, size, priority)
-            adjusted_gain = storage_gain * reaccess_prob
-            self.gain_per_data[v].update({content: adjusted_gain})
-            
             cache_dump = self.view.cache_dump(v, k=content)
-            # print(f"cache_dump:{cache_dump}")
             if len(cache_dump) == self.cache_size[v]:
                 paths = {}
                 for c in list(cache_dump.keys())[:max(2, round(0.1 * len(cache_dump)))]:
@@ -610,22 +603,34 @@ class CacheLessToSaveMore(Strategy):
                     min_content, min_gain = min(paths.items(), key=lambda x: x[1])
                     # calculate storage loss
                     storage_loss, dep, stor = self.storage_loss(v, tiers, content, size, priority) 
-                    baseline_min_gain = self.gain_per_data[v].get(min_content, 0.0) if min_content else 0.0
+                    # calculate storage gain
+                    new_path = list(reversed(self.view.shortest_path(v, serving_node)))
+                    storage_gain, band, trans, pen = self.storage_gain(new_path, size, priority)
+                    adjusted_gain = storage_gain * reaccess_prob
+                    self.gain_per_data[v].update({content: adjusted_gain})
                     
-                    if adjusted_gain >= storage_loss + baseline_min_gain:
+                    if self.gain_per_data[v].get(content) >= storage_loss + self.gain_per_data[v].get(min_content):
                         logger.info("storage_gain > storage_loss")
                         tier_index = self.controller.get_tier_index(v, content, priority)
                         self.controller.put_content(v, min_content=min_content, tier_index=tier_index, size=size, priority=priority)
                     else:
                         logger.info("cost is not for it")
+                
                 else:
                     logger.info("no paths")
                     tier_index = self.controller.get_tier_index(v, content, priority)
+                    new_path = list(reversed(self.view.shortest_path(v, serving_node)))
+                    storage_gain, band, trans, pen = self.storage_gain(new_path, size, priority) 
+                    adjusted_gain = storage_gain * reaccess_prob
+                    self.gain_per_data[v].update({content: adjusted_gain})   
                     self.controller.put_content(v, tier_index=tier_index, size=size, priority=priority)
             else:
                 tier_index = self.controller.get_tier_index(v, content, priority)
-                self.controller.put_content(v, tier_index=tier_index, size=size, priority=priority) 
-        
+                new_path = list(reversed(self.view.shortest_path(v, serving_node)))
+                storage_gain, band, trans, pen = self.storage_gain(new_path, size, priority)
+                adjusted_gain = storage_gain * reaccess_prob
+                self.gain_per_data[v].update({content: adjusted_gain})
+                self.controller.put_content(v, tier_index=tier_index, size=size, priority=priority)
         self.controller.end_session()
 
     def get_probability_estimate(self, content, request_count):
@@ -668,14 +673,14 @@ class CacheLessToSaveMore(Strategy):
         depreciation_cost = 0.0
         for tier in tiers[tier_index:]:
             tier_max_capacity = tier['actual_size_bytes']
-            tier_purchase_cost = tier['purchase_cost']
+            tier_purchase_cost = tier['purchase_cost'] * tier_max_capacity
             tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
             depreciation_cost += (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity)
         
         if tier_index != 0 and len(tiers) > 1:
             tier = tiers[tier_index]
             tier_max_capacity = tier['actual_size_bytes']
-            tier_purchase_cost = tier['purchase_cost']
+            tier_purchase_cost = tier['purchase_cost'] * tier_max_capacity
             tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
             read_cost = (content_size * tier_purchase_cost) / (tier_lifespan * tier_max_capacity)
             depreciation_cost += read_cost

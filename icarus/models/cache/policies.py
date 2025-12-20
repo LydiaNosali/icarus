@@ -2001,6 +2001,15 @@ class Deque(object):
             for k in iterable:
                 self.od[k] = None
 
+    def to_list(self):
+        return list(self.od.keys())
+
+    def append(self, k):
+        if k in self.od:
+            del self.od[k]
+        self.od[k] = None
+        self.od.move_to_end(k, last=False)
+
     def append_left(self, k):
         if k in self.od:
             del self.od[k]
@@ -2090,12 +2099,13 @@ class ARCCache():
             self.b2.append_left(old)
         
         # self.lock.acquire()
-        del self._cache[old]
+        if old is not None and old in self._cache:
+            del self._cache[old]
         # self.lock.release()
 
     @inheritdoc(Cache)
     def get(self, k, *args, **kwargs):
-        logger.info("get"+k.__str__())
+        # logger.info("get"+k.__str__())
         # Case I: x is in T1 or T2.
         #  A cache hit has occurred in ARC(c) and DBL(2c)
         #   Move x to MRU position in T2.
@@ -2113,7 +2123,7 @@ class ARCCache():
         return res  # Return value not found in cache
         
     def put(self, k, *args, **kwargs):
-        logger.info("put"+k.__str__())
+        # logger.info("put"+k.__str__())
         # Case II: x is in B1
         #  A cache miss has occurred in ARC(c)
         #   ADAPTATION
@@ -2203,7 +2213,7 @@ class QMARCCache(Cache):
             )
         if not isinstance(tiers, list) or not tiers:
             raise ValueError("QMARC cache requires a non-empty list in kwargs['tiers'].")
-        # --- ✅ Sort tiers by latency (fastest → slowest) ---
+
         try:
             tiers = sorted(tiers, key=lambda t: float(t.get("latency", 1.0)))
         except Exception as e:
@@ -2241,23 +2251,7 @@ class QMARCCache(Cache):
         
         for i in range(self._n_caches):
             self._beta[i] = self._sizes[i] / self._sizes[0]
-                
-        # cold_start = kwargs.get("cold_start", True)
-        # if not cold_start and "saved_tiers" in kwargs:
-        #     try:
-        #         saved_tiers = kwargs["saved_tiers"]
-        #         for i, tier_cache in self._tier_m_caches.items():
-        #             name = tier_cache.name
-        #             if name in saved_tiers:
-        #                 stored = saved_tiers[name]
-        #                 if isinstance(stored, dict):
-        #                     if "t1" in stored:
-        #                         tier_cache.t1 = Deque(stored["t1"])
-        #                     if "t2" in stored:
-        #                         tier_cache.t2 = Deque(stored["t2"])
-        #         print(f"[♻️] Restored QMARC tiers from saved state ({len(saved_tiers)} tiers).")
-        #     except Exception as e:
-        #         print(f"[⚠️] QMARC restore failed: {e}")
+                  
 
     class TierMCache:
         def __init__(self, name, maxlen):
@@ -2364,18 +2358,19 @@ class QMARCCache(Cache):
             tier_dump[tier.name] = {
                 "name": tier.name,
                 "maxlen": getattr(tier, "_maxlen", None),
-                "t1": list(tier.t1),
-                "t2": list(tier.t2),
+                "t1": tier.t1.to_list(),
+                "t2": tier.t2.to_list(),
                 "p": getattr(tier, "p", 0),
                 "last_access": getattr(tier, "last_access", None),
             }
 
+
         # --- Global ARC-level state ---
         global_state = {
-            "t1": list(self.t1),
-            "t2": list(self.t2),
-            "b1": list(self.b1),
-            "b2": list(self.b2),
+            "t1": self.t1.to_list(),
+            "t2": self.t2.to_list(),
+            "b1": self.b1.to_list(),
+            "b2": self.b2.to_list(),
             "p": self.p,
             "_cache": {k: v for k, v in self._cache.items()},  # Safe shallow copy
         }
@@ -2399,9 +2394,9 @@ class QMARCCache(Cache):
                     tdata = tiers[name]
                     tier_cache.t1 = Deque()
                     tier_cache.t2 = Deque()
-                    for item in tdata.get("t1", []):
+                    for item in tdata["t1"]:
                         tier_cache.t1.append_left(item)
-                    for item in tdata.get("t2", []):
+                    for item in tdata["t2"]:
                         tier_cache.t2.append_left(item)
                     tier_cache.p = tdata.get("p", 0)
                     tier_cache.last_access = tdata.get("last_access", 0.0)
@@ -2446,7 +2441,7 @@ class QMARCCache(Cache):
             del self._cache[min_content]
             return min_content
         else:
-            if self.t1 and ((k in self.b2 and len(self.t1) == int(self.p)) or (len(self.t1) > self.p)):
+            if self.t1 and ((k in self.b2 and len(self.t1) == int(self.p)) or (len(self.t1) > int(self.p))):
                 old = self.t1.get_without_pop()
                 # logger.info("remove %s from t1", old.__str__())
                 self.t1_pop(old)
@@ -2503,7 +2498,7 @@ class QMARCCache(Cache):
         # logger.info(f"T1 after get: {self.t1}")
         # logger.info(f"T2 after get: {self.t2}")
         # for cache in self._tier_m_caches.values():
-        #     logger.info(f"Tier {cache.name}, T1 after: {cache.t1}")
+        #     logger.info(f"Tier {cache.name}, max len: {cache._maxlen}, T1 after: {cache.t1}")
         #     logger.info(f"Tier {cache.name}, T2 after: {cache.t2}")
         # logger.info(f"B1 after: {self.b1}")
         # logger.info(f"B2 after: {self.b2}")
@@ -2548,7 +2543,7 @@ class QMARCCache(Cache):
             # logger.info(f"T1 after put: {self.t1}")
             # logger.info(f"T2 after put: {self.t2}")
             # for cache in self._tier_m_caches.values():
-            #     logger.info(f"Tier {cache.name}, T1 after: {cache.t1}")
+            #     logger.info(f"Tier {cache.name}, max len: {cache._maxlen}, T1 after: {cache.t1}")
             #     logger.info(f"Tier {cache.name}, T2 after: {cache.t2}")
             # logger.info(f"B1 after: {self.b1}")
             # logger.info(f"B2 after: {self.b2}")
@@ -2576,7 +2571,7 @@ class QMARCCache(Cache):
             # logger.info(f"T1 after put: {self.t1}")
             # logger.info(f"T2 after put: {self.t2}")
             # for cache in self._tier_m_caches.values():
-            #     logger.info(f"Tier {cache.name}, T1 after: {cache.t1}")
+            #     logger.info(f"Tier {cache.name}, max len: {cache._maxlen}, T1 after: {cache.t1}")
             #     logger.info(f"Tier {cache.name}, T2 after: {cache.t2}")
             # logger.info(f"B1 after: {self.b1}")
             # logger.info(f"B2 after: {self.b2}")
@@ -2624,7 +2619,7 @@ class QMARCCache(Cache):
         # logger.info(f"T1 after put: {self.t1}")
         # logger.info(f"T2 after put: {self.t2}")
         # for cache in self._tier_m_caches.values():
-        #     logger.info(f"Tier {cache.name}, T1 after: {cache.t1}")
+        #     logger.info(f"Tier {cache.name}, max len: {cache._maxlen}, T1 after: {cache.t1}")
         #     logger.info(f"Tier {cache.name}, T2 after: {cache.t2}")
         # logger.info(f"B1 after: {self.b1}")
         # logger.info(f"B2 after: {self.b2}")
@@ -2690,9 +2685,9 @@ class QMARCCache(Cache):
             if (a,b) != (None, None):
                 try:
                     if b =="t1":
-                        self._tier_m_caches[i].put_t1(a)
+                        a, b = self._tier_m_caches[i].put_t1(a)
                     else:
-                        self._tier_m_caches[i].put_t2(a)
+                        a, b = self._tier_m_caches[i].put_t2(a)
                 except Exception as e:
                     pass
             
@@ -2703,87 +2698,48 @@ class QMARCCache(Cache):
             if (a,b) != (None, None):
                 try:
                     if b =="t1":
-                        self._tier_m_caches[i].put_t1(a)
+                        a, b = self._tier_m_caches[i].put_t1(a)
                     else:
-                        self._tier_m_caches[i].put_t2(a)
+                        a, b = self._tier_m_caches[i].put_t2(a)
                 except Exception as e:
                     pass
 
     def t1_append_by_index(self, k, index):
+        logger.info(f"find the local index in t1 of index:{index}")
         self.t1.append_by_index(index, k)
-        t1_tier_length = []
-        c_max = []
-        tier_nb = 0
+        tier_nb = self.t1_get_index_tier(index)
 
-        for i in range (self._n_caches):
-            t1_tier_length.append(len(self._tier_m_caches[i].t1))
-            c_max.append(self._tier_m_caches[i]._maxlen)
+        # 3) compute local index inside that tier
+        new_index = self.t1_get_local_index_in_tier(index, tier_nb)
+        logger.info(f"found the local index in t1 of index:{index} -> tier {tier_nb}, local {new_index}")
         
-        for i in range(len(t1_tier_length) - 1, -1, -1):
-            if index <= t1_tier_length[i] != 0:
-                tier_nb = i
-                if index == 0 or t1_tier_length[tier_nb] < c_max[tier_nb]:
-                    new_index = index
-                else:
-                    new_index = index - t1_tier_length[0]
-                    for i in range(1, len(t1_tier_length)):
-                        if new_index >= 0:
-                            break
-                        else:
-                            new_index += t1_tier_length[i]
-                break
-            else:
-                new_index = index - t1_tier_length[i]
-                break
-
-        # logger.info("write to t1 of %s at index = %s" % (tier_nb, new_index))
         a, b = self._tier_m_caches[tier_nb].put_t1(k, new_index)
         for i in range(tier_nb + 1, self._n_caches):
             if (a,b) != (None, None):
                 try:
                     if b =="t1":
-                        self._tier_m_caches[i].put_t1(a)
+                        a, b = self._tier_m_caches[i].put_t1(a)
                     else:
-                        self._tier_m_caches[i].put_t2(a)
+                        a, b = self._tier_m_caches[i].put_t2(a)
                 except Exception as e:
                     pass
 
     def t2_append_by_index(self, k, index):
         self.t2.append_by_index(index, k)
-        t2_tier_length = []
-        c_max = []
-        tier_nb = 0
+        tier_nb = self.t2_get_index_tier(index)
 
-        for i in range (self._n_caches):
-            t2_tier_length.append(len(self._tier_m_caches[i].t2))
-            c_max.append(self._tier_m_caches[i]._maxlen)
+        # 3) compute local index inside that tier
+        new_index = self.t2_get_local_index_in_tier(index, tier_nb)
+        logger.info(f"found the local index in t1 of index:{index} -> tier {tier_nb}, local {new_index}")
         
-        for i in range(len(t2_tier_length) -1, -1, -1):
-            if index <= t2_tier_length[i] != 0:
-                tier_nb = i
-                if index == 0 or t2_tier_length[tier_nb] < c_max[tier_nb]:
-                    new_index = index
-                else:
-                    new_index = index - t2_tier_length[0]
-                    for i in range(1, len(t2_tier_length)):
-                        if new_index >= 0:
-                            break
-                        else:
-                            new_index += t2_tier_length[i]
-                break
-            else:
-                new_index = index - t2_tier_length[i]
-                break
-        
-        # logger.info("write to t2 of %s at index = %s" % (tier_nb, new_index))
         a, b = self._tier_m_caches[tier_nb].put_t2(k, new_index)
         for i in range(tier_nb + 1, self._n_caches):
             if (a,b) != (None, None):
                 try:
                     if b =="t1":
-                        self._tier_m_caches[i].put_t1(a)
+                        a, b = self._tier_m_caches[i].put_t1(a)
                     else:
-                        self._tier_m_caches[i].put_t2(a)
+                        a, b = self._tier_m_caches[i].put_t2(a)
                 except Exception as e:
                     pass
     
@@ -2800,60 +2756,162 @@ class QMARCCache(Cache):
             self._tier_m_caches[i].p = max(0, self._tier_m_caches[i].p - max((len_b1 / len_b2) * self._beta[i],  self._beta[i]))
 
     def t1_get_index_tier(self, index):
-        t1_tier_length = []
-        c_max = []
-        tier_nb = 0
+        """
+        index: global index in T1, 0 = LRU, len(T1)-1 = MRU.
+        Uses current per-tier sizes, but never assigns more positions to a tier
+        than its c_max, so behavior converges to c_max layout when tiers are full.
 
-        for i in range (self._n_caches):
-            t1_tier_length.append(len(self._tier_m_caches[i].t1))
-            c_max.append(self._tier_m_caches[i]._maxlen)
-        
-        for i in range(len(t1_tier_length) - 1, -1, -1):
-            if index <= t1_tier_length[i] != 0:
-                tier_nb = i
-                if index == 0 or t1_tier_length[tier_nb] < c_max[tier_nb]:
-                    new_index = index
-                else:
-                    new_index = index - t1_tier_length[0]
-                    for i in range(1, len(t1_tier_length)):
-                        if new_index >= 0:
-                            break
-                        else:
-                            new_index += t1_tier_length[i]
-                break
-            else:
-                new_index = index - t1_tier_length[i]
+        Returns:
+            tier_nb: 0=DRAM, 1=SSD, 2=HDD, ...
+        """
+        # current per-tier T1 sizes
+        len_per_tier = [len(self._tier_m_caches[i].t1) for i in range(self._n_caches)]
+        # configured capacities
+        c_max = [self._tier_m_caches[i]._maxlen for i in range(self._n_caches)]
+
+        total_curr = sum(len_per_tier)
+        if total_curr <= 0:
+            return 0
+
+        # clamp global index to current T1
+        if index < 0:
+            index = 0
+        elif index >= total_curr:
+            index = total_curr - 1
+
+        # we build the *effective* segmentation from LRU→MRU,
+        # but each tier gets at most c_max[i] positions
+        cum = 0
+        for tier_nb in range(self._n_caches - 1, -1, -1):  # HDD→…→DRAM
+            # effective span this tier can currently occupy:
+            # it cannot exceed its capacity, and cannot exceed remaining elements
+            remaining = total_curr - cum
+            if remaining <= 0:
                 break
 
-        return tier_nb
-    
+            span = min(len_per_tier[tier_nb], c_max[tier_nb], remaining)
+            if span <= 0:
+                continue
+
+            next_cum = cum + span  # this tier covers global indices [cum, next_cum)
+
+            if index < next_cum:
+                # index lies in this tier's effective band
+                return tier_nb
+
+            cum = next_cum
+
+        # fallback: most MRU tier (DRAM)
+        return 0
+
+    def t1_get_local_index_in_tier(self, global_index, tier_nb):
+        """
+        global_index: 0 = LRU, len(T1)-1 = MRU (global T1).
+        tier_nb: tier id returned by t1_get_index_tier.
+
+        Returns:
+            local_index: index inside that tier's T1,
+                        0 = tier LRU, len(tier.t1)-1 = tier MRU.
+        """
+        # clamp tier_nb
+        if tier_nb < 0:
+            tier_nb = 0
+        elif tier_nb >= self._n_caches:
+            tier_nb = self._n_caches - 1
+
+        # compute how many global positions are occupied by tiers more LRU than this one
+        # (HDD..tier_nb+1), then subtract that offset
+        offset = 0
+        for i in range(self._n_caches - 1, tier_nb, -1):  # from last tier down to tier_nb+1
+            offset += len(self._tier_m_caches[i].t1)
+
+        # local index is global_index minus LRU-side offset
+        local_index = global_index - offset
+        if local_index < 0:
+            local_index = 0
+        elif local_index >= len(self._tier_m_caches[tier_nb].t1):
+            local_index = len(self._tier_m_caches[tier_nb].t1)
+
+        return local_index
+
     def t2_get_index_tier(self, index):
-        t2_tier_length = []
-        c_max = []
-        tier_nb = 0
+        """
+        index: global index in T1, 0 = LRU, len(T1)-1 = MRU.
+        Uses current per-tier sizes, but never assigns more positions to a tier
+        than its c_max, so behavior converges to c_max layout when tiers are full.
 
-        for i in range (self._n_caches):
-            t2_tier_length.append(len(self._tier_m_caches[i].t2))
-            c_max.append(self._tier_m_caches[i]._maxlen)
-        
-        for i in range(len(t2_tier_length) -1, -1, -1):
-            if index <= t2_tier_length[i] != 0:
-                tier_nb = i
-                if index == 0 or t2_tier_length[tier_nb] < c_max[tier_nb]:
-                    new_index = index
-                else:
-                    new_index = index - t2_tier_length[0]
-                    for i in range(1, len(t2_tier_length)):
-                        if new_index >= 0:
-                            break
-                        else:
-                            new_index += t2_tier_length[i]
-                break
-            else:
-                new_index = index - t2_tier_length[i]
+        Returns:
+            tier_nb: 0=DRAM, 1=SSD, 2=HDD, ...
+        """
+        # current per-tier T1 sizes
+        len_per_tier = [len(self._tier_m_caches[i].t2) for i in range(self._n_caches)]
+        # configured capacities
+        c_max = [self._tier_m_caches[i]._maxlen for i in range(self._n_caches)]
+
+        total_curr = sum(len_per_tier)
+        if total_curr <= 0:
+            return 0
+
+        # clamp global index to current T1
+        if index < 0:
+            index = 0
+        elif index >= total_curr:
+            index = total_curr - 1
+
+        # we build the *effective* segmentation from LRU→MRU,
+        # but each tier gets at most c_max[i] positions
+        cum = 0
+        for tier_nb in range(self._n_caches - 1, -1, -1):  # HDD→…→DRAM
+            # effective span this tier can currently occupy:
+            # it cannot exceed its capacity, and cannot exceed remaining elements
+            remaining = total_curr - cum
+            if remaining <= 0:
                 break
 
-        return tier_nb
+            span = min(len_per_tier[tier_nb], c_max[tier_nb], remaining)
+            if span <= 0:
+                continue
+
+            next_cum = cum + span  # this tier covers global indices [cum, next_cum)
+
+            if index < next_cum:
+                # index lies in this tier's effective band
+                return tier_nb
+
+            cum = next_cum
+
+        # fallback: most MRU tier (DRAM)
+        return 0
+
+    def t2_get_local_index_in_tier(self, global_index, tier_nb):
+        """
+        global_index: 0 = LRU, len(T1)-1 = MRU (global T1).
+        tier_nb: tier id returned by t1_get_index_tier.
+
+        Returns:
+            local_index: index inside that tier's T1,
+                        0 = tier LRU, len(tier.t1)-1 = tier MRU.
+        """
+        # clamp tier_nb
+        if tier_nb < 0:
+            tier_nb = 0
+        elif tier_nb >= self._n_caches:
+            tier_nb = self._n_caches - 1
+
+        # compute how many global positions are occupied by tiers more LRU than this one
+        # (HDD..tier_nb+1), then subtract that offset
+        offset = 0
+        for i in range(self._n_caches - 1, tier_nb, -1):  # from last tier down to tier_nb+1
+            offset += len(self._tier_m_caches[i].t2)
+
+        # local index is global_index minus LRU-side offset
+        local_index = global_index - offset
+        if local_index < 0:
+            local_index = 0
+        elif local_index >= len(self._tier_m_caches[tier_nb].t2):
+            local_index = len(self._tier_m_caches[tier_nb].t2)
+
+        return local_index
 
     def get_tier_index(self, k, priority):
         if priority == 'high':
@@ -2868,7 +2926,7 @@ class QMARCCache(Cache):
         else:
             global_pos = round(len(self.t1) * self._alpha)
             return self.t1_get_index_tier(global_pos)
-
+        
     def get_tiers_last_access(self):
         tiers_last_access = {}
         for i in range(self._n_caches):

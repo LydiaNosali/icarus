@@ -205,8 +205,6 @@ class CollectorProxy(DataCollector):
         self.collectors = {
             e: [c for c in collectors if e in type(c).__dict__] for e in self.EVENTS
         }
-        self._period = 0
-        self._period_results = {}  # ✅ store results by period
 
     @inheritdoc(DataCollector)
     def start_session(self, timestamp, receiver, content, priority):
@@ -253,28 +251,9 @@ class CollectorProxy(DataCollector):
         for c in self.collectors["end_session"]:
             c.end_session(success)
 
-    # ---------- Period handling ----------
-    def new_period(self):
-        """Snapshot current results at the end of a discrete period."""
-        self._period += 1
-        key = f"period_{self._period}"
-        try:
-            self._period_results[key] = {
-                c.name: c.results() for c in self.collectors["results"]
-            }
-            print(f"[🧩] CollectorProxy saved results for {key}")
-        except Exception as e:
-            print(f"[⚠️] Failed to snapshot collectors for {key}: {e}")
-
     @inheritdoc(DataCollector)
     def results(self):
-        """Return total aggregated results and per-period breakdown."""
-        # Base (global) results
-        base_results = {c.name: c.results() for c in self.collectors["results"]}
-        # Include period-wise data if available
-        if self._period_results:
-            base_results["per_period"] = self._period_results
-        return Tree(**base_results)
+        return Tree(**{c.name: c.results() for c in self.collectors["results"]})
 
 @register_data_collector("LINK_LOAD")
 class LinkLoadCollector(DataCollector):
@@ -530,7 +509,8 @@ class CostCollector(DataCollector):
         
         # depreciation cost
         tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
-        self.sess_depreciation_cost += (content_size * tier['purchase_cost']) / (tier_lifespan * tier_max_capacity)
+        purchase_cost = tier['purchase_cost'] * tier_max_capacity
+        self.sess_depreciation_cost += (content_size * purchase_cost) / (tier_lifespan * tier_max_capacity)
 
     @inheritdoc(DataCollector)
     def server_hit(self, node, **kwargs):
@@ -571,7 +551,8 @@ class CostCollector(DataCollector):
             self.sess_write_cost += (tier_idle_power_density * idle_time * tier_max_capacity * 8 + tier_active_power_density * write_time * content_size * 8) * self.cost_per_joule
             
             tier_lifespan = tier['lifespan'] * 365 * 24 * 60 * 60
-            self.sess_depreciation_cost += (content_size * tier['purchase_cost']) / (tier_lifespan * tier_max_capacity)
+            purchase_cost = tier['purchase_cost'] * tier_max_capacity
+            self.sess_depreciation_cost += (content_size * purchase_cost) / (tier_lifespan * tier_max_capacity)
 
     @inheritdoc(DataCollector)
     def end_session(self, success=True):
@@ -602,15 +583,19 @@ class CostCollector(DataCollector):
     def results(self):
         results = Tree(
             {
-            "MEAN": self.cost / self.sess_count,
-            "DEPRECIATION": self.depreciation_cost / self.sess_count,
-            "BANDWIDTH": self.bandwidth_cost / self.sess_count,
-            "READ_STORAGE": self.read_cost / self.sess_count,
-            "WRITE_STORAGE": self.write_cost / self.sess_count,
-            "ROUTERS": self.routers_energy_cost / self.sess_count,
-            "LINKS": self.links_energy_cost / self.sess_count,
-            "PENALTY": self.penalty_cost / self.sess_count
+            "MEAN": self.cost / self.sess_count
             })
+        # results = Tree(
+            # {
+            # "MEAN": self.cost / self.sess_count,
+            # "DEPRECIATION": self.depreciation_cost / self.sess_count,
+            # "BANDWIDTH": self.bandwidth_cost / self.sess_count,
+            # "READ_STORAGE": self.read_cost / self.sess_count,
+            # "WRITE_STORAGE": self.write_cost / self.sess_count,
+            # "ROUTERS": self.routers_energy_cost / self.sess_count,
+            # "LINKS": self.links_energy_cost / self.sess_count,
+            # "PENALTY": self.penalty_cost / self.sess_count
+            # })
         chrcp["cost"] = round(self.cost, 3)
         return results
 
@@ -668,7 +653,8 @@ class CarbonFootprintCollector(DataCollector):
         self.opex = 0.0
 
         # Per-tier totals
-        self.tier_opex = defaultdict(float)
+        self.tier_active_opex = defaultdict(float)
+        self.tier_idle_opex = defaultdict(float)
         self.device_times = defaultdict(lambda: {"idle": 0.0, "active": 0.0})
         # In CarbonFootprintCollector.__init__
         self.tiers_info = params["tiers"]
@@ -719,7 +705,7 @@ class CarbonFootprintCollector(DataCollector):
         if main_path:
             ci = kwargs.get("carbon_intensity") 
             if ci is None: 
-                ci = self._ci(node_hint=u)
+                ci = self._ci(node_hint=v)
             self.sess_routers_opex += ci * self.request_size * self.router_energy_density / 3.6e6
             self.sess_links_opex += ci * self.request_size * self.link_energy_density / 3.6e6
             
@@ -727,9 +713,9 @@ class CarbonFootprintCollector(DataCollector):
     def content_hop(self, u, v, **kwargs):
         main_path = kwargs.get("main_path", True)
         if main_path:
-            ci = kwargs.get("carbon_intensity") 
+            ci = kwargs.get("carbon_intensity")
             if ci is None: 
-                ci = self._ci(node_hint=u)
+                ci = self._ci(node_hint=v)
             content_size = kwargs["size"] * 8  # bytes -> bit
             self.sess_routers_opex += ci * content_size * self.router_energy_density  / 3.6e6   # Kg CO2
             self.sess_links_opex += ci * content_size * self.link_energy_density / 3.6e6   # Kg CO2
@@ -765,7 +751,8 @@ class CarbonFootprintCollector(DataCollector):
         idle_opex = ci * tier_idle_power_density * idle_time * tier_max_capacity * 8 / 3.6e6
         read_opex = ci * tier_active_power_density * read_time * content_size * 8 / 3.6e6
         
-        self.tier_opex[tier_name] += read_opex + idle_opex 
+        self.tier_active_opex[tier_name] += read_opex 
+        self.tier_idle_opex[tier_name] += idle_opex
         self.sess_opex += read_opex + idle_opex 
         
         self.device_times[tier_name]["idle"] += idle_time
@@ -816,7 +803,8 @@ class CarbonFootprintCollector(DataCollector):
             idle_opex = ci * tier_idle_power_density * idle_time * tier_max_capacity * 8 / (3.6e6)
             write_opex = ci * tier_active_power_density * write_time * content_size * 8 / (3.6e6)
 
-            self.tier_opex[tier_name] += write_opex + idle_opex
+            self.tier_active_opex[tier_name] += write_opex 
+            self.tier_idle_opex[tier_name] += idle_opex
             self.sess_opex += write_opex + idle_opex
 
     @inheritdoc(DataCollector)
@@ -838,6 +826,7 @@ class CarbonFootprintCollector(DataCollector):
         per_tier_results = {}
         total_opex = total_capex = 0
         tiers_stats = self.view.get_tier_stats()
+        # print(f"tiers_stats:{tiers_stats}")
         for tier, times in self.device_times.items():
             active_time = times["active"]
             idle_time = times["idle"]
@@ -853,18 +842,19 @@ class CarbonFootprintCollector(DataCollector):
             capex = (TE * tier_max_capacity * active_time) / tier_lifespan
 
             per_tier_results[tier] = {
-                "OPEX": self.tier_opex[tier] * 1000 / tiers_stats[tier],
+                "OPEX": self.tier_active_opex[tier] * 1000 / tiers_stats[tier],
+                "IDLE_OPEX": self.tier_idle_opex[tier] * 1000 / tiers_stats[tier],
                 "CAPEX": capex * 1000 / tiers_stats[tier],
                 "ACTIVE_TIME": active_time,
                 "IDLE_TIME": idle_time,
                 "UTILIZATION": use_density,
             }
-            total_opex += self.tier_opex[tier]
+            total_opex += self.tier_active_opex[tier]
             total_capex += capex
         # --------------- BUILD RESULTS TREE -----------------
         results = Tree(
             {
-                "TOTAL": (total_opex + total_capex) * 1000,
+                "TOTAL": (total_opex + total_capex + self.server_opex +self.routers_opex + self.links_opex) * 1000,
                 "TOTAL_OPEX": total_opex * 1000,
                 "TOTAL_CAPEX": total_capex * 1000,
                 "SERVER_OPEX": self.server_opex * 1000,
