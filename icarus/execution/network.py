@@ -14,6 +14,7 @@ of all relevant events.
 """
 import copy
 import logging
+import math
 
 import networkx as nx
 import fnss
@@ -413,7 +414,7 @@ class NetworkModel:
         policy_args = {k: v for k, v in cache_policy.items() if k != "name"}
         base_tiers = cache_policy.get("tiers", [])
         self.per_node_tiers = cache_policy.get("tiers_per_node", {})
-
+        
         saved_state_path = kwargs.get("saved_state_file")
         for node, data in topology.nodes(data=True):
             # Carbon intensity (default to 400 if not present)
@@ -422,10 +423,9 @@ class NetworkModel:
 
             if stack_name == "router":
                 if "cache_size" in stack_props:
-                    size = max(1, stack_props["cache_size"])
+                    size = stack_props["cache_size"]
                     self.cache_size[node] = size
                     
-                    node_policy_args = {k: v for k, v in policy_args.items() if k != "tiers"}
                     if node in self.per_node_tiers:
                         tiers_src = self.per_node_tiers[node]
                     else:
@@ -433,10 +433,24 @@ class NetworkModel:
                         
                     if tiers_src:
                         node_tier_list = []
-                        for tier in tiers_src:
+                        # 1️⃣ Compute raw sizes
+                        raw_sizes = [tier["size_factor"] * size for tier in tiers_src]
+                        floored_sizes = [int(math.floor(s)) for s in raw_sizes]
+                        remainder = int(size - sum(floored_sizes))  # remaining units to distribute
+                        
+                        # 2️⃣ Distribute remainder to tiers with largest fractional part
+                        fracs = [(i, raw_sizes[i] - floored_sizes[i]) for i in range(len(tiers_src))]
+                        fracs.sort(key=lambda x: x[1], reverse=True)
+                        for i, _ in fracs[:remainder]:
+                            floored_sizes[i] += 1
+                        
+                        # 3️⃣ Build tier list
+                        for tier, actual_size in zip(tiers_src, floored_sizes):
+                            if actual_size <= 0:
+                                continue  # remove zero-sized tiers
                             tier_copy = tier.copy()
-                            tier_copy["actual_size"] = round(tier_copy["size_factor"] * size)
-                            tier_copy["actual_size_bytes"] = tier_copy["actual_size"] * self.avg_content_size
+                            tier_copy["actual_size"] = actual_size
+                            tier_copy["actual_size_bytes"] = actual_size * self.avg_content_size
                             node_tier_list.append(tier_copy)
 
                         if node_tier_list and node_tier_list[0]["actual_size"] == 0:
@@ -453,16 +467,10 @@ class NetworkModel:
 
                         node_tier_list = [t for t in node_tier_list if t["actual_size"] > 0]
                         self.per_node_tiers[node] = node_tier_list
+                        node_policy_args = {k: v for k, v in policy_args.items() if k != "tiers"}
                         node_policy_args["tiers"] = node_tier_list
 
-                    if size > 0:
-                        node_policy_args["cold_start"] = not bool(saved_state_path)
-                        if saved_state_path:
-                            node_policy_args["saved_tiers"] = saved_state_path
-
-                        self.cache[node] = CACHE_POLICY[policy_name](size, **node_policy_args)
-                        
-
+                    self.cache[node] = CACHE_POLICY[policy_name](size, **node_policy_args)
             elif stack_name == "source":
                 contents = stack_props.get("contents", [])
                 self.source_node[node] = contents
@@ -488,7 +496,6 @@ class NetworkModel:
                 # logger.info(f"t.name:{tname}, t.size:{tsize}")
         self.tier_statistics = {}
         self.tier_sizes_mb = {}
-
         
         for node, tiers in self.per_node_tiers.items():
             for tier in tiers:
@@ -529,27 +536,14 @@ class NetworkModel:
 
                 # Restore per-node tiers and capacities
                 if "old_per_node_tiers" in state:
-                    new_tiers, new_tier_stats, new_tier_sizes_mb = self.rebuild_tiers(state["old_per_node_tiers"], self.cache_size)
-                    # Restore node carbon intensity and tier stats
-                    self.tier_statistics = new_tier_stats
-                    self.tier_sizes_mb = new_tier_sizes_mb
-                    for node, tiers in self.per_node_tiers.items():
-                        if node not in new_tiers.keys():
-                            continue
-                        for t in tiers:
-                            name = t["name"]
-                            if name in new_tiers[node]["tiers"]:
-                                t["actual_size"] = new_tiers[node]["tiers"][name]["maxlen"]
-                                t["actual_size_bytes"] = t["actual_size"] * self.avg_content_size
-
+                    new_tiers = self.rebuild_tiers(state["old_per_node_tiers"], self.cache_size)
                     for node, cache_state in new_tiers.items():
                         if node in self.cache and hasattr(self.cache[node], "restore_from_dump"):
                             self.cache[node].restore_from_dump(cache_state)
-                            
                 print(f"[✅] NetworkModel restored from {saved_state_path}")
             except Exception as e:
                 print(f"[⚠️] Failed to load saved network state: {e}")
-    
+
         # self.shortest_path = (
         #     dict(shortest_path)
         #     if shortest_path is not None
@@ -603,7 +597,6 @@ class NetworkModel:
         #             f"delay_CI={path_ci(p1):.1f}, carbon_CI={path_ci(p2):.1f}"
         #         )
 
-
     def build_carbon_aware_paths(self, topology, node_ci, lam):
         # router_energy = 2 * 10**-8
         # link_energy = 1.5 * 10**-9
@@ -635,8 +628,6 @@ class NetworkModel:
 
     def rebuild_tiers(self, old_cache_tiers_per_node, new_cache_sizes):
         new_per_node_tiers = {}
-        new_tier_stats = {}
-        new_tier_sizes_mb = {}
 
         # Helper for consistent eviction from a tier
         def _evict_from_tier(node_state, tinfo, qname):
@@ -686,7 +677,7 @@ class NetworkModel:
                     name = tier["name"]
                     if name not in node_state["tiers"]:
                         continue
-                    new_maxlens[name] = max(1, round(tier["size_factor"] * total_new))
+                    new_maxlens[name] = tier["actual_size"]
 
                 for name, length in new_maxlens.items():
                     node_state["tiers"][name]["maxlen"] = int(length)
@@ -743,19 +734,24 @@ class NetworkModel:
                         extra -= 1
                 
                 # ---- 6) Enforce |B1| + |B2| ≤ C ----
-                b1 = node_state["global"]["b1"]
-                b2 = node_state["global"]["b2"]
+                T1 = node_state["global"]["t1"]
+                T2 = node_state["global"]["t2"]
+                B1 = node_state["global"]["b1"]
+                B2 = node_state["global"]["b2"]
                 
-                ghost_over = max(0, len(b1) + len(b2) - total_new)
-                
-                while ghost_over > 0:
-                    if b1:
-                        b1.pop(0)   # LRU from B1
-                    elif b2:
-                        b2.pop(0)   # LRU from B2
+                # Enforce |T1| + |B1| ≤ C
+                while len(T1) + len(B1) >= total_new:
+                    if B1:
+                        B1.pop(0)  # LRU from B1
                     else:
                         break
-                    ghost_over -= 1
+
+                # Enforce |T2| + |B2| ≤ C
+                while len(T2) + len(B2) >= total_new:
+                    if B2:
+                        B2.pop(0)  # LRU from B2
+                    else:
+                        break
                 
                 # ---- 7) Clamp p ----
                 node_state["global"]["p"] = min(
@@ -764,16 +760,10 @@ class NetworkModel:
                 
                 new_per_node_tiers[node] = node_state
 
-                # ---- 6) Accumulate tier statistics & sizes (based on maxlen) ----
-                for tname, tinfo in node_state.get("tiers", {}).items():
-                    new_tier_stats[tname] = new_tier_stats.get(tname, 0) + 1
-                    size_mb = tinfo.get("maxlen", 0) * (self.avg_content_size / (1024 * 1024))
-                    new_tier_sizes_mb[tname] = new_tier_sizes_mb.get(tname, 0) + size_mb
-
             except Exception as e:
                 print(f"[⚠️] Failed to rebuild tiers for node {node}: {e}")
 
-        return new_per_node_tiers, new_tier_stats, new_tier_sizes_mb
+        return new_per_node_tiers
     
     def save_state(self, filename_prefix="network_state", directory="network_states"):
         Path(directory).mkdir(exist_ok=True)

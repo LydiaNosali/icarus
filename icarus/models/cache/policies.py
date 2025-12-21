@@ -2211,6 +2211,9 @@ class QMARCCache(Cache):
                 "QMARC cache expects `tiers` for the current node, not `tiers_per_node`.\n"
                 "Make sure NetworkModel passes node_policy_args['tiers'] = per_node_tiers[node]."
             )
+        self._maxlen = maxlen
+        if self._maxlen <= 0:
+            raise ValueError("maxlen must be positive")
         if not isinstance(tiers, list) or not tiers:
             raise ValueError("QMARC cache requires a non-empty list in kwargs['tiers'].")
 
@@ -2220,10 +2223,6 @@ class QMARCCache(Cache):
             raise ValueError(f"Failed to sort tiers by latency: {e}\nTiers: {tiers}")
 
         self._caches = tiers
-        
-        self._maxlen = round(maxlen)
-        if self._maxlen <= 0:
-            raise ValueError("maxlen must be positive")
         
         try:
             self._sizes = [int(t['actual_size']) for t in self._caches]
@@ -2364,7 +2363,6 @@ class QMARCCache(Cache):
                 "last_access": getattr(tier, "last_access", None),
             }
 
-
         # --- Global ARC-level state ---
         global_state = {
             "t1": self.t1.to_list(),
@@ -2387,13 +2385,11 @@ class QMARCCache(Cache):
         """
         try:
             # Restore per-tier queues
-            tiers = dump.get("tiers", {})
-            for i, tier_cache in self._tier_m_caches.items():
+            tiers = dump.get("tiers")
+            for _, tier_cache in self._tier_m_caches.items():
                 name = tier_cache.name
                 if name in tiers:
                     tdata = tiers[name]
-                    tier_cache.t1 = Deque()
-                    tier_cache.t2 = Deque()
                     for item in tdata["t1"]:
                         tier_cache.t1.append_left(item)
                     for item in tdata["t2"]:
@@ -2402,17 +2398,14 @@ class QMARCCache(Cache):
                     tier_cache.last_access = tdata.get("last_access", 0.0)
 
             # Restore global ARC state
-            global_state = dump.get("global", {})
+            global_state = dump.get("global")
             for queue_name in ["t1", "t2", "b1", "b2"]:
-                q = Deque()
-                for item in global_state.get(queue_name, []):
-                    q.append_left(item)
-                setattr(self, queue_name, q)
+                dq = getattr(self, queue_name)  # reuse the existing Deque
+                for item in global_state.get(queue_name):
+                    dq.append_left(item)
             self.p = global_state.get("p", 0)
-            self._cache = dict(global_state.get("_cache", {}))
-
+            self._cache = dict(global_state.get("_cache"))
             print(f"[♻️] QMARC restored successfully (tiers: {len(tiers)})")
-
         except Exception as e:
             print(f"[⚠️] Failed to restore QMARC cache: {e}")
 
@@ -2506,7 +2499,6 @@ class QMARCCache(Cache):
     
     @inheritdoc(Cache)
     def put(self, k, *args, **kwargs):
-        # logger.info("put: "+k.__str__())
         min_content = kwargs.get("min_content") or None
         size = kwargs.get("size") or None
         priority = kwargs.get("priority") or None
@@ -2516,17 +2508,17 @@ class QMARCCache(Cache):
         #   ADAPTATION
         #   REPLACE(x)
         #   Move x from B1 to the MRU position in T2 (also fetch x to the cache).
-        # logger.info(f"put : {k} and remove {min_content}")
+        logger.info(f"put : {k} and remove {min_content}")
         if k in self._cache:
             # logger.info(f" item k:{k} already in cache, updating value and moving to MRU position.")
             res = self.get(k, *args, **kwargs)
             return res
         
         # logger.info(f"Cache before: {list(self._cache.keys())}")
-        # logger.info(f"T1 before: {self.t1}")
-        # logger.info(f"T2 before: {self.t2}")
-        # logger.info(f"B1 before: {self.b1}")
-        # logger.info(f"B2 before: {self.b2}")
+        logger.info(f"T1 before: {self.t1}")
+        logger.info(f"T2 before: {self.t2}")
+        logger.info(f"B1 before: {self.b1}")
+        logger.info(f"B2 before: {self.b2}")
         if k in self.b1:
             self.increment_p(len(self.b1), len(self.b2))
             res = self.replace(k=k, min_content=min_content)
@@ -2540,13 +2532,13 @@ class QMARCCache(Cache):
                 self.t2_append_by_index(k, global_pos)
                 self._cache[k] = [True, size, priority]
             # logger.info(f"Cache after: {self._cache.keys()}")
-            # logger.info(f"T1 after put: {self.t1}")
-            # logger.info(f"T2 after put: {self.t2}")
-            # for cache in self._tier_m_caches.values():
-            #     logger.info(f"Tier {cache.name}, max len: {cache._maxlen}, T1 after: {cache.t1}")
-            #     logger.info(f"Tier {cache.name}, T2 after: {cache.t2}")
-            # logger.info(f"B1 after: {self.b1}")
-            # logger.info(f"B2 after: {self.b2}")
+            logger.info(f"T1 after put: {self.t1}")
+            logger.info(f"T2 after put: {self.t2}")
+            for cache in self._tier_m_caches.values():
+                logger.info(f"Tier {cache.name}, max len: {cache._maxlen}, T1 after: {cache.t1}")
+                logger.info(f"Tier {cache.name}, T2 after: {cache.t2}")
+            logger.info(f"B1 after: {self.b1}")
+            logger.info(f"B2 after: {self.b2}")
             return res
 
         # Case III: x is in B2
@@ -2568,21 +2560,23 @@ class QMARCCache(Cache):
                 self.t2_append_by_index(k, global_pos)
                 self._cache[k] = [True, size, priority]
             # logger.info(f"Cache after: {list(self._cache.keys())}")
-            # logger.info(f"T1 after put: {self.t1}")
-            # logger.info(f"T2 after put: {self.t2}")
-            # for cache in self._tier_m_caches.values():
-            #     logger.info(f"Tier {cache.name}, max len: {cache._maxlen}, T1 after: {cache.t1}")
-            #     logger.info(f"Tier {cache.name}, T2 after: {cache.t2}")
-            # logger.info(f"B1 after: {self.b1}")
-            # logger.info(f"B2 after: {self.b2}")
+            logger.info(f"T1 after put: {self.t1}")
+            logger.info(f"T2 after put: {self.t2}")
+            for cache in self._tier_m_caches.values():
+                logger.info(f"Tier {cache.name}, max len: {cache._maxlen}, T1 after: {cache.t1}")
+                logger.info(f"Tier {cache.name}, T2 after: {cache.t2}")
+            logger.info(f"B1 after: {self.b1}")
+            logger.info(f"B2 after: {self.b2}")
             return res
         
         # Case IV: x is not in (T1 u B1 u T2 u B2)
         #  A cache miss has occurred in ARC(c) and DBL(2c)
+        logger.info(f"|t1|:{len(self.t1)}, |t2|:{len(self.t2)}, self._maxlen:{self._maxlen}")
         if len(self.t1) + len(self.b1) == self._maxlen:
             # Case A: L1 (T1 u B1) has exactly c pages.
             if len(self.t1) < self._maxlen:
                 # Delete LRU page in B1. REPLACE(x, p)
+                logger.info("remove from b1")
                 self.b1.pop()
                 res = self.replace(k=k, min_content=min_content)
             else:
@@ -2593,7 +2587,7 @@ class QMARCCache(Cache):
                 else:
                     res = self.t1.get_without_pop()
                 self.t1_pop(res)
-                # logger.info("remove %s from t1", res.__str__())
+                logger.info("remove %s from t1", res.__str__())
                 self._cache.pop(res, None)
         else:
             # Case B: L1 (T1 u B1) has less than c pages.
@@ -2604,9 +2598,10 @@ class QMARCCache(Cache):
                     self.b2.pop()
 
                 # REPLACE(x, p)
+                logger.info("remove from b2")
                 res = self.replace(k=k, min_content=min_content)
         
-        # logger.info("put %s in t1", k.__str__())
+        logger.info("put %s in t1", k.__str__())
         # Finally, fetch x to the cache and move it to MRU position in T1
         if args[0] == 'high':
             self.t1_append_left(k)
@@ -2616,13 +2611,13 @@ class QMARCCache(Cache):
             self.t1_append_by_index(k, global_pos)
             self._cache[k] = [True, size, priority]
         # logger.info(f"Cache after: {list(self._cache.keys())}")
-        # logger.info(f"T1 after put: {self.t1}")
-        # logger.info(f"T2 after put: {self.t2}")
+        logger.info(f"T1 after put: {self.t1}")
+        logger.info(f"T2 after put: {self.t2}")
         # for cache in self._tier_m_caches.values():
         #     logger.info(f"Tier {cache.name}, max len: {cache._maxlen}, T1 after: {cache.t1}")
         #     logger.info(f"Tier {cache.name}, T2 after: {cache.t2}")
-        # logger.info(f"B1 after: {self.b1}")
-        # logger.info(f"B2 after: {self.b2}")
+        logger.info(f"B1 after: {self.b1}")
+        logger.info(f"B2 after: {self.b2}")
         return res
     
     @inheritdoc(Cache)
