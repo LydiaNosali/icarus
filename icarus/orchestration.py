@@ -359,8 +359,8 @@ def run_scenario(settings, params, curr_exp, n_exp):
                 #             base_ci = 50
                         if random.random() < 0.30:
                             # drift = val * random.uniform(-0.1, 0.1)
-                            drift = val * random.uniform(-0.1, 0.1)
-                            topology.node[v]["carbon_intensity"] = max(20.0, min(900.0, val + drift))
+                            drift = random.uniform(50, 900)
+                            topology.node[v]["carbon_intensity"] = max(20.0, min(900.0, drift))
                 #         # else:
                 #         topology.node[v]["carbon_intensity"] = base_ci
                 #         topology.node["C2"]["carbon_intensity"] = 150

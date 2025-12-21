@@ -434,20 +434,18 @@ class NetworkModel:
                     if tiers_src:
                         node_tier_list = []
                         # 1️⃣ Compute raw sizes
-                        raw_sizes = [tier["size_factor"] * size for tier in tiers_src]
-                        floored_sizes = [int(math.floor(s)) for s in raw_sizes]
-                        remainder = int(size - sum(floored_sizes))  # remaining units to distribute
+                        logger.info(f"size:{size}")
+                        floored_sizes = [round(tier["size_factor"] * size) for tier in tiers_src]
+                        logger.info(f"floored_sizes:{floored_sizes}")
                         
-                        # 2️⃣ Distribute remainder to tiers with largest fractional part
-                        fracs = [(i, raw_sizes[i] - floored_sizes[i]) for i in range(len(tiers_src))]
-                        fracs.sort(key=lambda x: x[1], reverse=True)
-                        for i, _ in fracs[:remainder]:
-                            floored_sizes[i] += 1
+                        remainder = int(size - sum(floored_sizes))  # remaining units to distribute
+                        logger.info(f"remainder:{remainder}")
+                        
+                        floored_sizes[len(floored_sizes)-1]+=remainder
+                        logger.info(f"floored_sizes:{floored_sizes}")
                         
                         # 3️⃣ Build tier list
                         for tier, actual_size in zip(tiers_src, floored_sizes):
-                            if actual_size <= 0:
-                                continue  # remove zero-sized tiers
                             tier_copy = tier.copy()
                             tier_copy["actual_size"] = actual_size
                             tier_copy["actual_size_bytes"] = actual_size * self.avg_content_size
@@ -466,6 +464,8 @@ class NetworkModel:
                                     break
 
                         node_tier_list = [t for t in node_tier_list if t["actual_size"] > 0]
+                        logger.info(f"node:{node}")
+                        logger.info(f"node_tier_list:{node_tier_list}")
                         self.per_node_tiers[node] = node_tier_list
                         node_policy_args = {k: v for k, v in policy_args.items() if k != "tiers"}
                         node_policy_args["tiers"] = node_tier_list
@@ -651,6 +651,7 @@ class NetworkModel:
             return removed
 
         for node, node_state in old_cache_tiers_per_node.items():
+            logger.info(f"node:{node}")
             try:
                 if node not in new_cache_sizes:
                     continue 
@@ -678,7 +679,7 @@ class NetworkModel:
                     if name not in node_state["tiers"]:
                         continue
                     new_maxlens[name] = tier["actual_size"]
-
+                
                 for name, length in new_maxlens.items():
                     node_state["tiers"][name]["maxlen"] = int(length)
 
@@ -689,7 +690,10 @@ class NetworkModel:
                     tinfo = node_state["tiers"][name]
                     curr[name] = len(tinfo["t1"]) + len(tinfo["t2"])
                     tgt[name] = new_maxlens[name]
-
+                
+                logger.info(f"curr:{curr}")
+                logger.info(f"new_maxlens:{new_maxlens}")
+                
                 # ---- 3) Strict cascade: fast → immediate slower tier ----
                 for i, fast_name in enumerate(tiers_sorted[:-1]):
                     t_fast = node_state["tiers"][fast_name]
@@ -734,30 +738,56 @@ class NetworkModel:
                         extra -= 1
                 
                 # ---- 6) Enforce |B1| + |B2| ≤ C ----
-                T1 = node_state["global"]["t1"]
-                T2 = node_state["global"]["t2"]
+
                 B1 = node_state["global"]["b1"]
                 B2 = node_state["global"]["b2"]
-                
-                # Enforce |T1| + |B1| ≤ C
-                while len(T1) + len(B1) >= total_new:
-                    if B1:
-                        B1.pop(0)  # LRU from B1
-                    else:
-                        break
+                B1.clear()
+                B2.clear()
 
-                # Enforce |T2| + |B2| ≤ C
-                while len(T2) + len(B2) >= total_new:
-                    if B2:
-                        B2.pop(0)  # LRU from B2
-                    else:
-                        break
-                
                 # ---- 7) Clamp p ----
                 node_state["global"]["p"] = min(
                     node_state["global"]["p"], total_new
                 )
+                # ---- 8) Consistency check between tiers and global ----
+                global_t1 = node_state["global"]["t1"]
+                global_t2 = node_state["global"]["t2"]
+                global_cache = node_state["global"]["_cache"]
+
+                # 8a) collect all keys that appear in any tier queue
+                tier_keys = set()
+                for tname in tiers_sorted:
+                    tinfo = node_state["tiers"][tname]
+                    tier_keys.update(tinfo["t1"])
+                    tier_keys.update(tinfo["t2"])
+
+                # 8b) ensure global T1/T2 only contain keys that are still in tiers
+                for qname, gq in (("t1", global_t1), ("t2", global_t2)):
+                    to_remove = [k for k in gq if k not in tier_keys]
+                    if to_remove:
+                        logger.warning(
+                            f"[rebuild_tiers] node {node}: removing {len(to_remove)} "
+                            f"orphan(s) from global {qname}: {to_remove}"
+                        )
+                    for k in to_remove:
+                        gq.remove(k)
+                        global_cache.pop(k, None)
                 
+                # 8c) ensure all tier keys appear in global T1/T2/_cache
+                global_keys = set(global_t1) | set(global_t2)
+                missing = tier_keys - global_keys
+                if missing:
+                    logger.warning(
+                        f"[rebuild_tiers] node {node}: {len(missing)} keys in tiers "
+                        f"missing from global T1/T2: {missing}"
+                    )
+                    # Option 1: re-insert them into T1 and _cache
+                    for k in missing:
+                        if k not in global_cache:
+                            # you may want to reconstruct the value differently
+                            global_cache[k] = None
+                        if k not in global_t1 and k not in global_t2:
+                            global_t1.append(k)  # or T2, depending on your policy
+
                 new_per_node_tiers[node] = node_state
 
             except Exception as e:

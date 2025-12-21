@@ -2425,10 +2425,12 @@ class QMARCCache(Cache):
         """
         if min_content is not None:
             if min_content in self.t1:
+                logger.info("remove %s from t1", min_content)
                 self.t1_pop(min_content)
                 self.b1.append_left(min_content)
             else:
                 if min_content in self.t2:
+                    logger.info("remove %s from t2", min_content)
                     self.t2_pop(min_content)
                     self.b2.append_left(min_content)
             del self._cache[min_content]
@@ -2436,12 +2438,12 @@ class QMARCCache(Cache):
         else:
             if self.t1 and ((k in self.b2 and len(self.t1) == int(self.p)) or (len(self.t1) > int(self.p))):
                 old = self.t1.get_without_pop()
-                # logger.info("remove %s from t1", old.__str__())
+                logger.info("remove %s from t1", old.__str__())
                 self.t1_pop(old)
                 self.b1.append_left(old)
             else:
                 old = self.t2.get_without_pop()
-                # logger.info("remove %s from t2", old.__str__())
+                logger.info("remove %s from t2", old.__str__())
                 self.t2_pop(old)
                 self.b2.append_left(old)
             del self._cache[old]
@@ -2571,7 +2573,7 @@ class QMARCCache(Cache):
         
         # Case IV: x is not in (T1 u B1 u T2 u B2)
         #  A cache miss has occurred in ARC(c) and DBL(2c)
-        logger.info(f"|t1|:{len(self.t1)}, |t2|:{len(self.t2)}, self._maxlen:{self._maxlen}")
+        logger.info(f"|t1|:{len(self.t1)}, |t2|:{len(self.t2)}, self._maxlen:{self._maxlen}, self.p:{self.p}")
         if len(self.t1) + len(self.b1) == self._maxlen:
             # Case A: L1 (T1 u B1) has exactly c pages.
             if len(self.t1) < self._maxlen:
@@ -2595,10 +2597,10 @@ class QMARCCache(Cache):
             if total >= self._maxlen:
                 # Delete LRU page in B2, if |T1| + |T2| + |B1| + |B2| == 2c
                 if total == (2 * self._maxlen):
+                    logger.info("remove from b2")
                     self.b2.pop()
 
                 # REPLACE(x, p)
-                logger.info("remove from b2")
                 res = self.replace(k=k, min_content=min_content)
         
         logger.info("put %s in t1", k.__str__())
