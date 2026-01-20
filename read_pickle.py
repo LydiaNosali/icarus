@@ -1,3 +1,4 @@
+import json
 import pickle
 
 class ResultSet:
@@ -5,14 +6,17 @@ class ResultSet:
         self.results = results
 
 try:
-    with open('/home/ubuntu/icarus/examples/lce-vs-probcache/results.pickle', 'rb') as file:
+    # with open('/Users/lydia/Desktop/icarus/examples/lce-vs-probcache/results_aggregated.pickle', 'rb') as file:
+    with open('/Users/lydia/Desktop/icarus/examples/lce-vs-probcache/results_aggregated.pickle', 'rb') as file:
         loaded_data = pickle.load(file)
         print("Loaded data successfully!")
 
         # Assuming ResultSet has an attribute 'results'
-        results = loaded_data._results
+        results = loaded_data
         # print(results)
-        with open('/home/ubuntu/icarus/examples/lce-vs-probcache/results.txt', 'w') as txt_file:
+        # with open('/Users/lydia/Desktop/icarus/examples/lce-vs-probcache/results_aggregated.txt', 'w') as txt_file:
+        with open('/Users/lydia/Desktop/icarus/examples/lce-vs-probcache/results_aggregated.json', 'w') as txt_file:
+            # json.dump(loaded_data, txt_file, indent=2)
             for result in results:
                 txt_file.write(str(result) + '\n')
 

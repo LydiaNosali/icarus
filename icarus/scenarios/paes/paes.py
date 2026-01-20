@@ -94,7 +94,6 @@ class PAES:
 
         # cache of evaluated solutions to avoid re-running Icarus
         # key must be hashable: use tuple(allocations) or any canonical form
-        print(f"max_eval:{self.max_evaluations}")
         self._evaluated: dict[tuple, Objectives] = {}
 
     def _key(self, sol: Solution) -> tuple:
@@ -122,6 +121,17 @@ class PAES:
         while evaluations < self.max_evaluations:
             # mutate; allow duplicates but do not re-evaluate them
             child = self.mutate_fn(parent, self.local_random)
+
+            parent_key = self._key(parent)
+            child_key = self._key(child)
+
+            l1_dist = sum(abs(a-b) for a,b in zip(parent['allocations'], child['allocations']))
+            # print(f"L1: {l1_dist}, Nodes changed: {sum(1 for a,b in zip(parent['allocations'], child['allocations']) if a != b)}")
+
+            if parent_key == child_key:
+                # print("❌ IDENTICAL - skipping")
+                continue
+
             k_child = self._key(child)
 
             # check cache BEFORE calling _get_or_eval
@@ -134,26 +144,31 @@ class PAES:
                 evaluations += 1
                 is_new = True
 
-            # dominance logic
-            if dominates(f_child, f_parent):
-                parent, f_parent = child, f_child
-                self.archive.consider(child, f_child)
-                continue
-            if dominates(f_parent, f_child):
-                self.archive.consider(child, f_child)
-                continue
+            # # dominance logic
+            # if dominates(f_child, f_parent):
+            #     parent, f_parent = child, f_child
+            #     self.archive.consider(child, f_child)
+            #     continue
+            # if dominates(f_parent, f_child):
+            #     self.archive.consider(child, f_child)
+            #     continue
+            # ✅ FIXED: Always consider child for archive first
+            self.archive.consider(child, f_child)
 
             # grid-density rule + random side-step
             dens_child = self.archive.cell_density(f_child)
             dens_parent = self.archive.cell_density(f_parent)
 
-            if dens_child < dens_parent:
+            if dens_child < dens_parent or self.local_random.random() < 0.10:
+                # print(f"✅ Parent updated (density child={dens_child} < parent={dens_parent})")
                 parent, f_parent = child, f_child
-            else:
-                if self.local_random.random() < 0.10:
-                    parent, f_parent = child, f_child
+            elif self.local_random.random() < 0.05:
+                # print("🎲 Random walk: parent updated")
+                parent, f_parent = child, f_child
+            # else:
+            #     print(f"❌ Parent rejected (dens_child={dens_child} >= dens_parent={dens_parent})")
 
-            self.archive.consider(child, f_child)
+            # self.archive.consider(child, f_child)
 
         return self.archive.as_pareto_set()
 

@@ -22,7 +22,7 @@ __all__ = ["exec_experiment"]
 
 logger = logging.getLogger("main")
 
-def exec_experiment(topology, workload, netconf, strategy, cache_policy, collectors, period=None, save=False, curr_exp=None):
+def  exec_experiment(topology, workload, netconf, strategy, cache_policy, collectors, save=False, prev_state_path=None, save_state_path=None, cachepl_name=None, green_period=None):
     """Execute the simulation of a specific scenario.
 
     Parameters
@@ -53,7 +53,6 @@ def exec_experiment(topology, workload, netconf, strategy, cache_policy, collect
     results : Tree
         A tree with the aggregated simulation results from all collectors
     """
-
     model = NetworkModel(topology, cache_policy, **netconf)
     view = NetworkView(model)
     controller = NetworkController(model)
@@ -71,7 +70,7 @@ def exec_experiment(topology, workload, netconf, strategy, cache_policy, collect
     
     # === RESTORE STRATEGY STATE (if previous period exists) ===
     if strategy_name == "CL2SM":
-        strategy_inst.restore_strategy_state(strategy_name=strategy_name, period=period-1, curr_exp=curr_exp)
+        strategy_inst.restore_strategy_state(prev_state_path, strategy_name)
 
     # Specify the headers
     for i, (time, event) in enumerate(workload):
@@ -86,7 +85,7 @@ def exec_experiment(topology, workload, netconf, strategy, cache_policy, collect
 
         try:
             saved_dir = Path("strategy_states")
-            filepath = saved_dir / f"exp_{curr_exp}_{strategy_name}_p{period}.pkl"
+            filepath = saved_dir / f"{save_state_path}.pkl"
             with open(filepath, "wb") as f:
                 pickle.dump(state, f)
             print(f"[💾] Saved {strategy_name} state to {filepath}")
@@ -96,8 +95,7 @@ def exec_experiment(topology, workload, netconf, strategy, cache_policy, collect
                 json.dump(state, jf, indent=2)
             print(f"[📄] JSON copy saved to {jsonpath}")
         except Exception as e:
-            print(f"[⚠️] Failed to save {strategy_name} state (period {period}): {e}")
+            print(f"[⚠️] Failed to save {strategy_name} state : {e}")
 
     model.collector_proxy = collector
-    model.period = period
     return collector.results(), model

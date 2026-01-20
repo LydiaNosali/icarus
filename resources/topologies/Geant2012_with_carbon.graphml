@@ -54,7 +54,7 @@
       <data key="d31">0</data>
       <data key="d32">4.88969</data>
       <data key="d33">NL</data>
-      <data key="d34">300</data>
+      <data key="d34">176</data>
     </node>
     <node id="1">
       <data key="d28">1</data>
@@ -63,7 +63,7 @@
       <data key="d31">1</data>
       <data key="d32">4.34878</data>
       <data key="d33">BE</data>
-      <data key="d34">180</data>
+      <data key="d34">143</data>
     </node>
     <node id="2">
       <data key="d28">1</data>
@@ -73,7 +73,7 @@
       <data key="d31">2</data>
       <data key="d32">12.56553</data>
       <data key="d33">DK</data>
-      <data key="d34">120</data>
+      <data key="d34">171</data>
     </node>
     <node id="3">
       <data key="d28">1</data>
@@ -82,7 +82,7 @@
       <data key="d31">3</data>
       <data key="d32">16.96667</data>
       <data key="d33">PL</data>
-      <data key="d34">600</data>
+      <data key="d34">752</data>
     </node>
     <node id="4">
       <data key="d28">1</data>
@@ -91,7 +91,7 @@
       <data key="d31">4</data>
       <data key="d32">8.68333</data>
       <data key="d33">DE</data>
-      <data key="d34">400</data>
+      <data key="d34">224</data>
     </node>
     <node id="5">
       <data key="d28">1</data>
@@ -100,7 +100,7 @@
       <data key="d31">5</data>
       <data key="d32">14.42076</data>
       <data key="d33">CZ</data>
-      <data key="d34">420</data>
+      <data key="d34">470</data>
     </node>
     <node id="6">
       <data key="d28">1</data>
@@ -109,7 +109,7 @@
       <data key="d31">6</data>
       <data key="d32">6.13</data>
       <data key="d33">LU</data>
-      <data key="d34">60</data>
+      <data key="d34">176</data>
     </node>
     <node id="7">
       <data key="d28">1</data>
@@ -118,7 +118,7 @@
       <data key="d31">7</data>
       <data key="d32">2.3488</data>
       <data key="d33">FR</data>
-      <data key="d34">50</data>
+      <data key="d34">33</data>
     </node>
     <node id="8">
       <data key="d28">1</data>
@@ -127,7 +127,7 @@
       <data key="d31">8</data>
       <data key="d32">7.44744</data>
       <data key="d33">CH</data>
-      <data key="d34">20</data>
+      <data key="d34">30</data>
     </node>
     <node id="9">
       <data key="d28">1</data>
@@ -136,7 +136,7 @@
       <data key="d31">9</data>
       <data key="d32">9.18951</data>
       <data key="d33">IT</data>
-      <data key="d34">300</data>
+      <data key="d34">684</data>
     </node>
     <node id="10">
       <data key="d28">1</data>
@@ -148,7 +148,7 @@
       <data key="d28">1</data>
       <data key="d31">11</data>
       <data key="d33">MD</data>
-      <data key="d34">400</data>
+      <data key="d34">391</data>
     </node>
     <node id="12">
       <data key="d28">1</data>
@@ -157,7 +157,7 @@
       <data key="d31">12</data>
       <data key="d32">23.32415</data>
       <data key="d33">BG</data>
-      <data key="d34">380</data>
+      <data key="d34">522</data>
     </node>
     <node id="13">
       <data key="d28">1</data>
@@ -166,7 +166,7 @@
       <data key="d31">13</data>
       <data key="d32">26.10626</data>
       <data key="d33">RO</data>
-      <data key="d34">350</data>
+      <data key="d34">372</data>
     </node>
     <node id="14">
       <data key="d36">Turkey</data>
@@ -176,7 +176,7 @@
       <data key="d31">14</data>
       <data key="d32">34.91155</data>
       <data key="d33">TR</data>
-      <data key="d34">450</data>
+      <data key="d34">466</data>
     </node>
     <node id="15">
       <data key="d28">1</data>
@@ -185,7 +185,7 @@
       <data key="d31">15</data>
       <data key="d32">23.71622</data>
       <data key="d33">GR</data>
-      <data key="d34">270</data>
+      <data key="d34">505</data>
     </node>
     <node id="16">
       <data key="d28">1</data>
@@ -194,7 +194,7 @@
       <data key="d31">16</data>
       <data key="d32">33.36667</data>
       <data key="d33">CY</data>
-      <data key="d34">500</data>
+      <data key="d34">859</data>
     </node>
     <node id="17">
       <data key="d36">Israel</data>
@@ -204,7 +204,7 @@
       <data key="d31">17</data>
       <data key="d32">34.75</data>
       <data key="d33">IL</data>
-      <data key="d34">430</data>
+      <data key="d34">531</data>
     </node>
     <node id="18">
       <data key="d28">1</data>
@@ -213,13 +213,13 @@
       <data key="d31">18</data>
       <data key="d32">14.42556</data>
       <data key="d33">MT</data>
-      <data key="d34">350</data>
+      <data key="d34">475</data>
     </node>
     <node id="19">
       <data key="d28">1</data>
       <data key="d31">19</data>
       <data key="d33">BY</data>
-      <data key="d34">500</data>
+      <data key="d34">290</data>
     </node>
     <node id="20">
       <data key="d28">1</data>
@@ -228,7 +228,7 @@
       <data key="d31">20</data>
       <data key="d32">21.43333</data>
       <data key="d33">MK</data>
-      <data key="d34">450</data>
+      <data key="d34">339</data>
     </node>
     <node id="21">
       <data key="d28">1</data>
@@ -237,7 +237,7 @@
       <data key="d31">21</data>
       <data key="d32">19.26361</data>
       <data key="d33">ME</data>
-      <data key="d34">400</data>
+      <data key="d34">369</data>
     </node>
     <node id="22">
       <data key="d28">1</data>
@@ -246,7 +246,7 @@
       <data key="d31">22</data>
       <data key="d32">19.03991</data>
       <data key="d33">HU</data>
-      <data key="d34">300</data>
+      <data key="d34">294</data>
     </node>
     <node id="23">
       <data key="d28">1</data>
@@ -255,7 +255,7 @@
       <data key="d31">23</data>
       <data key="d32">17.10674</data>
       <data key="d33">SK</data>
-      <data key="d34">250</data>
+      <data key="d34">335</data>
     </node>
     <node id="24">
       <data key="d28">1</data>
@@ -264,7 +264,7 @@
       <data key="d31">24</data>
       <data key="d32">-9.13333</data>
       <data key="d33">PT</data>
-      <data key="d34">200</data>
+      <data key="d34">83</data>
     </node>
     <node id="25">
       <data key="d28">1</data>
@@ -273,7 +273,7 @@
       <data key="d31">25</data>
       <data key="d32">-3.70256</data>
       <data key="d33">ES</data>
-      <data key="d34">250</data>
+      <data key="d34">154</data>
     </node>
     <node id="26">
       <data key="d28">1</data>
@@ -282,7 +282,7 @@
       <data key="d31">26</data>
       <data key="d32">20.46513</data>
       <data key="d33">RS</data>
-      <data key="d34">400</data>
+      <data key="d34">372</data>
     </node>
     <node id="27">
       <data key="d28">1</data>
@@ -291,7 +291,7 @@
       <data key="d31">27</data>
       <data key="d32">15.97798</data>
       <data key="d33">HR</data>
-      <data key="d34">250</data>
+      <data key="d34">291</data>
     </node>
     <node id="28">
       <data key="d28">1</data>
@@ -300,7 +300,7 @@
       <data key="d31">28</data>
       <data key="d32">14.50513</data>
       <data key="d33">SL</data>
-      <data key="d34">400</data>
+      <data key="d34">329</data>
     </node>
     <node id="29">
       <data key="d28">1</data>
@@ -309,7 +309,7 @@
       <data key="d31">29</data>
       <data key="d32">16.37208</data>
       <data key="d33">AT</data>
-      <data key="d34">100</data>
+      <data key="d34">247</data>
     </node>
     <node id="30">
       <data key="d28">1</data>
@@ -318,7 +318,7 @@
       <data key="d31">30</data>
       <data key="d32">23.9</data>
       <data key="d33">LT</data>
-      <data key="d34">100</data>
+      <data key="d34">142</data>
     </node>
     <node id="31">
       <data key="d28">1</data>
@@ -328,7 +328,7 @@
       <data key="d31">31</data>
       <data key="d32">37.61556</data>
       <data key="d33">RU</data>
-      <data key="d34">450</data>
+      <data key="d34">361</data>
     </node>
     <node id="32">
       <data key="d28">1</data>
@@ -338,7 +338,7 @@
       <data key="d31">32</data>
       <data key="d32">-21.89541</data>
       <data key="d33">IS</data>
-      <data key="d34">0</data>
+      <data key="d34">28</data>
     </node>
     <node id="33">
       <data key="d28">1</data>
@@ -347,7 +347,7 @@
       <data key="d31">33</data>
       <data key="d32">-6.26719</data>
       <data key="d33">IE</data>
-      <data key="d34">250</data>
+      <data key="d34">329</data>
     </node>
     <node id="34">
       <data key="d28">1</data>
@@ -356,7 +356,7 @@
       <data key="d31">34</data>
       <data key="d32">-0.12574</data>
       <data key="d33">UK</data>
-      <data key="d34">200</data>
+      <data key="d34">171</data>
     </node>
     <node id="35">
       <data key="d36">Norway</data>
@@ -367,7 +367,7 @@
       <data key="d29">62.0</data>
       <data key="d35">NORDUNet</data>
       <data key="d31">35</data>
-      <data key="d34">20</data>
+      <data key="d34">46</data>
     </node>
     <node id="36">
       <data key="d28">1</data>
@@ -377,7 +377,7 @@
       <data key="d31">36</data>
       <data key="d32">18.0649</data>
       <data key="d33">SE</data>
-      <data key="d34">40</data>
+      <data key="d34">36</data>
     </node>
     <node id="37">
       <data key="d28">1</data>
@@ -387,7 +387,7 @@
       <data key="d31">37</data>
       <data key="d32">22.26869</data>
       <data key="d33">FI</data>
-      <data key="d34">80</data>
+      <data key="d34">58</data>
     </node>
     <node id="38">
       <data key="d28">1</data>
@@ -396,7 +396,7 @@
       <data key="d31">38</data>
       <data key="d32">24.75353</data>
       <data key="d33">EE</data>
-      <data key="d34">500</data>
+      <data key="d34">243</data>
     </node>
     <node id="39">
       <data key="d28">1</data>
@@ -405,7 +405,7 @@
       <data key="d31">39</data>
       <data key="d32">24.10589</data>
       <data key="d33">LV</data>
-      <data key="d34">100</data>
+      <data key="d34">152</data>
     </node>
     <edge source="0" target="1">
       <data key="d38">e59</data>

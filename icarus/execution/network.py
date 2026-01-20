@@ -15,6 +15,7 @@ of all relevant events.
 import copy
 import logging
 import math
+import random
 
 import networkx as nx
 import fnss
@@ -386,11 +387,6 @@ class NetworkModel:
                 "fnss.Topology or any of its subclasses."
             )
 
-        # self.shortest_path = (
-        #     dict(shortest_path)
-        #     if shortest_path is not None
-        #     else symmetrify_paths(dict(nx.all_pairs_dijkstra_path(topology)))
-        # )
         self.avg_content_size = avg_content_size
         self.topology = topology
         self.content_source = {}
@@ -415,10 +411,9 @@ class NetworkModel:
         base_tiers = cache_policy.get("tiers", [])
         self.per_node_tiers = cache_policy.get("tiers_per_node", {})
         
-        saved_state_path = kwargs.get("saved_state_file")
+        saved_state_file = kwargs.get("saved_state_file")
         for node, data in topology.nodes(data=True):
-            # Carbon intensity (default to 400 if not present)
-            self.node_carbon_intensity[node] = data.get("carbon_intensity", 400) / 1000
+            self.node_carbon_intensity[node] = data.get("carbon_intensity", random.randint(50,900)) / 1000
             stack_name, stack_props = fnss.get_stack(topology, node)
 
             if stack_name == "router":
@@ -478,22 +473,13 @@ class NetworkModel:
                     self.content_source[content] = node
 
         # --- NEW: compute tier statistics ---
-        print(f"[✅] cold_start={not bool(saved_state_path)}")
-        logger.info(f"[✅] cold_start={not bool(saved_state_path)}")
-        # logger.info(f"cache_size:{self.cache_size}")
-        # logger.info(f"node_carbon_intensity:{self.node_carbon_intensity}")
+        print(f"[✅] cold_start={not bool(saved_state_file)}, saved_state_file:{saved_state_file}")
+        logger.info(f"[✅] cold_start={not bool(saved_state_file)}")
         self.per_node_tiers = {
             n: tiers for n, tiers in self.per_node_tiers.items()
             if n in set(self.cache.keys())
         }
-        # print(f"self.per_node_tiers:{self.per_node_tiers.keys()}")
-        # for node, tiers in self.per_node_tiers.items():
-            # logger.info(f"node:{node}")
-            # logger.info(f"tiers:{tiers}")
-            # for t in tiers:
-            #     tname = t["name"]
-            #     tsize = t["actual_size"]
-                # logger.info(f"t.name:{tname}, t.size:{tsize}")
+
         self.tier_statistics = {}
         self.tier_sizes_mb = {}
         
@@ -509,11 +495,9 @@ class NetworkModel:
                     self.tier_sizes_mb[tier_name] = 0
                 self.tier_sizes_mb[tier_name] += size_bytes / (1024 * 1024)  # convert bytes -> MB
 
-        # print example
         # print(f"Tier statistics: {self.tier_statistics}")
         # print(f"Tier sizes (MB): {self.tier_sizes_mb}")
-        # print(f"self.node_carbon_intensity:{self.node_carbon_intensity}")
-        # print(f"self.per_node_tiers:{self.per_node_tiers}")
+
         # Local uncoordinated cache (for edge cache mode)
         self.local_cache = {}
 
@@ -528,7 +512,11 @@ class NetworkModel:
         # ==========================================================
         # ✅ AUTOLOAD PREVIOUS STATE (optional)
         # ==========================================================
-        if saved_state_path and Path(saved_state_path).exists():
+        if saved_state_file :
+            saved_dir = Path("network_states")
+            # Choose filename based on period number if provided
+            saved_state_path = saved_dir / f"{saved_state_file}.pkl"
+            Path(saved_state_path).exists()
             try:
                 print(f"[♻️] Loading saved network state from {saved_state_path} ...")
                 with open(saved_state_path, "rb") as f:
@@ -544,84 +532,36 @@ class NetworkModel:
             except Exception as e:
                 print(f"[⚠️] Failed to load saved network state: {e}")
 
-        # self.shortest_path = (
-        #     dict(shortest_path)
-        #     if shortest_path is not None
-        #     else symmetrify_paths(dict(nx.all_pairs_dijkstra_path(topology)))
-        # )
+        # Shortest paths of the network
         self.shortest_path = (
             dict(shortest_path)
             if shortest_path is not None
-            else self.build_carbon_aware_paths(topology, self.node_carbon_intensity, lam=0.9)
+            else symmetrify_paths(dict(nx.all_pairs_dijkstra_path(topology)))
         )
+        # node_greenness = topology.graph.get("node_greenness", {})
+        # if node_greenness  == {}:
+        #     # print(f"USING LATENCIES")
+        #     # self.shortest_path = (
+        #     #         dict(shortest_path)
+        #     #         if shortest_path is not None
+        #     #         else self.build_carbon_aware_paths(topology, self.node_carbon_intensity)
+        #     #     )
+        #     self.shortest_path = (
+        #     dict(shortest_path)
+        #     if shortest_path is not None
+        #     else symmetrify_paths(dict(nx.all_pairs_dijkstra_path(topology)))
+        #     )
+        # else:
+        #     # print(f"USING TOPSIS SCORES")
+        #     self.shortest_path = (
+        #         dict(shortest_path)
+        #         if shortest_path is not None
+        #         else self.build_carbon_aware_paths(topology, node_greenness)
+        #     )
 
-        # G = topology
-
-        # sp_delay = dict(nx.all_pairs_dijkstra_path(G))  # pure shortest-path
-        # sp_carbon = self.build_carbon_aware_paths(G, self.node_carbon_intensity, lam=1.0)
-
-        # diff_count = 0
-        # total = 0
-
-        # for s in sp_delay:
-        #     for t in sp_delay[s]:
-        #         if s == t or t not in sp_carbon.get(s, {}):
-        #             continue
-        #         p1 = sp_delay[s][t]
-        #         p2 = sp_carbon[s][t]
-        #         total += 1
-        #         if p1 != p2:
-        #             diff_count += 1
-        #             # print(f"{s}->{t}: delay={p1}, carbon={p2}")
-
-        # print(f"Different paths: {diff_count} / {total}")
-
-        # def path_len(path):
-        #     return len(path) - 1
-
-        # def path_ci(path):
-        #     # average node CI along path
-        #     return sum(self.node_carbon_intensity[n] for n in path) / len(path)
-
-        # for s in sp_delay:
-        #     for t in sp_delay[s]:
-        #         if s == t or t not in sp_carbon.get(s, {}):
-        #             continue
-        #         p1 = sp_delay[s][t]
-        #         p2 = sp_carbon[s][t]
-        #         if p1 == p2:
-        #             continue
-        #         print(
-        #             f"{s}->{t}: "
-        #             f"delay_len={path_len(p1)}, carbon_len={path_len(p2)}, "
-        #             f"delay_CI={path_ci(p1):.1f}, carbon_CI={path_ci(p2):.1f}"
-        #         )
-
-    def build_carbon_aware_paths(self, topology, node_ci, lam):
-        # router_energy = 2 * 10**-8
-        # link_energy = 1.5 * 10**-9
-        # link_delay = fnss.get_delays(topology)
-
-        # Precompute delay range for normalization
-        # delays = list(link_delay.values())
-        # d_min, d_max = min(delays), max(delays)
-        # c_min, c_max = min(node_ci), max(node_ci)
-
+    def build_carbon_aware_paths(self, topology, node_greenness):
         def weight(u, v, data):
-            # ---- LATENCY TERM ----
-            # delay = link_delay.get((u, v), data.get("delay", 1.0))
-            ci_edge = node_ci.get(v, 0.0)
-#             if d_max > d_min:
-#                 delay_norm = (delay - d_min) / (d_max - d_min)
-#             else:
-#                 delay_norm = 0  # fallback when topology uniform
-#             if c_max > c_min:
-#                 c_norm = (ci_edge - c_min) / (c_max - c_min)
-#             else:
-#                 c_norm = 0
-#             # ---- Combined Balanced Cost ----`
-            return ci_edge
-
+            return node_greenness.get(v, 1.0)
         return symmetrify_paths(
             dict(nx.all_pairs_dijkstra_path(topology, weight=weight))
         )
@@ -763,11 +703,11 @@ class NetworkModel:
                 # 8b) ensure global T1/T2 only contain keys that are still in tiers
                 for qname, gq in (("t1", global_t1), ("t2", global_t2)):
                     to_remove = [k for k in gq if k not in tier_keys]
-                    if to_remove:
-                        logger.warning(
-                            f"[rebuild_tiers] node {node}: removing {len(to_remove)} "
-                            f"orphan(s) from global {qname}: {to_remove}"
-                        )
+                    # if to_remove:
+                    #     logger.warning(
+                    #         f"[rebuild_tiers] node {node}: removing {len(to_remove)} "
+                    #         f"orphan(s) from global {qname}: {to_remove}"
+                    #     )
                     for k in to_remove:
                         gq.remove(k)
                         global_cache.pop(k, None)
@@ -805,17 +745,20 @@ class NetworkModel:
         collector_proxy = getattr(self, "collector_proxy", None)
         network_cache = getattr(self, "network_cache", None)
         cache_placement = getattr(self, "cache_placement", None)
+        alpha = getattr(self, "alpha", None)
         root = collector_proxy.results()
 
         state = {
             "network_cache": network_cache,
             "cache_placement":cache_placement,
+            "alpha":alpha,
             "old_cache_size": old_cache_sizes,
             "old_cache_size_total": sum(old_cache_sizes.values()),
             "old_tier_statistics": self.tier_statistics,
             "old_tier_sizes_mb": self.tier_sizes_mb,
             "old_per_node_tiers": old_per_node_tiers,
             "old_results":root,
+            "old_ci":self.node_carbon_intensity,
         }
 
         with open(filepath, "wb") as f:
@@ -825,7 +768,7 @@ class NetworkModel:
         jsonpath = filepath.with_suffix(".json")
         with open(jsonpath, "w") as jf:
             json.dump(state, jf, indent=2)
-        print(f"[📄] JSON copy saved to {jsonpath}")
+        # print(f"[📄] JSON copy saved to {jsonpath}")
         return str(filepath)
 
 

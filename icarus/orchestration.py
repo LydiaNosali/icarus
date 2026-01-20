@@ -3,6 +3,8 @@
 The orchestrator is responsible for scheduling experiments specified in the
 user-provided settings.
 """
+import math
+from pathlib import Path
 import random
 import time
 import collections
@@ -14,6 +16,7 @@ import signal
 import traceback
 
 from icarus.execution import exec_experiment
+from icarus.extract_ci_per_node import load_nodes_ci
 from icarus.registry import (
     TOPOLOGY_FACTORY,
     CACHE_PLACEMENT,
@@ -252,10 +255,6 @@ def run_scenario(settings, params, curr_exp, n_exp):
             )
             return None
         topology = TOPOLOGY_FACTORY[topology_name](**topology_spec)
-
-        # # Assign carbon intensities to nodes
-        # topology.node["C1"]["carbon_intensity"] = 600
-        # topology.node["C2"]["carbon_intensity"] = 150
         
         # Set workload
         workload_spec = tree["workload"]
@@ -327,13 +326,35 @@ def run_scenario(settings, params, curr_exp, n_exp):
         logger.info(f"Experiment {curr_exp}/{n_exp} | Start simulation")
         N_PERIODS = getattr(settings, "N_PERIODS", 3)
         prev_state_path = None
+        save_state_path = None
         full_alloc_list = []
+        folder = "/Users/lydia/Desktop/icarus/examples/lce-vs-probcache/carbon_intensities/carbon_profiles/"  # path containing all node CSVs
+        day_str = "2024-05-24"
+        nodes_ci = load_nodes_ci(folder, day_str, 24)
         
+        if cachepl_name == "ALLOCATED":
+            GREEN_PERIOD = getattr(settings, "GREEN_PERIOD")
+            prev_state_path = getattr(settings, "PREV_STATE_PATH")
+            print(f"green_period:{GREEN_PERIOD}")
+            per = GREEN_PERIOD
+        else:
+            per = 0
+        
+        for node, data in topology.nodes(data=True):
+            country = data.get("Country")
+            if country is not None and country in nodes_ci:
+                val = nodes_ci[country][per]
+                if isinstance(val, float) and math.isnan(val):
+                    ci_val = random.randint(50, 900)
+                else:
+                    ci_val = val
+                topology.node[node]["carbon_intensity"] = ci_val
+            else:
+                topology.node[node]["carbon_intensity"] = random.randint(50,900)
+
         for period in range(N_PERIODS):
             logger.info(f"\n🚀 Running period {period + 1}/{N_PERIODS}")
-   
             if period > 0:
-                netconf["saved_state_file"] = prev_state_path
                 # Skip warmup for subsequent periods
                 logger.info("[⏭️] Warmup skipped (resuming from saved network state)")
                 workload_spec["n_warmup"] = 0
@@ -342,38 +363,27 @@ def run_scenario(settings, params, curr_exp, n_exp):
                 cache_placement_workload_spec["seed"] = 1 + period
                 cache_placement_workload_spec["n_warmup"] = 0
 
-                # Assign new carbon intensities to nodes
-                # topology.node["C1"]["carbon_intensity"] = 150
-                # topology.node["C2"]["carbon_intensity"] = 600
-                # betw = nx.betweenness_centrality(topology)  # node -> BC
-                # # Sort nodes by BC descending
-                # sorted_nodes = sorted(betw.keys(), key=lambda n: betw[n], reverse=True)
-                # k = max(1, int(0.1 * len(sorted_nodes)))  # top 20% most central nodes
-                # high_bc_nodes = set(sorted_nodes[:k])
-                for v in topology.nodes():
-                    val = topology.node[v].get("carbon_intensity", 0)
-                    if val!= 0:
-                #         if v in high_bc_nodes:
-                #             base_ci = 900
-                #         else:
-                #             base_ci = 50
-                        if random.random() < 0.30:
-                            # drift = val * random.uniform(-0.1, 0.1)
-                            drift = random.uniform(50, 900)
-                            topology.node[v]["carbon_intensity"] = max(20.0, min(900.0, drift))
-                #         # else:
-                #         topology.node[v]["carbon_intensity"] = base_ci
-                #         topology.node["C2"]["carbon_intensity"] = 150
+                for node, data in topology.nodes(data=True):
+                    country = data.get("Country")
+                    if country is not None and country in nodes_ci:
+                        val = nodes_ci[country][period]
+                        if isinstance(val, float) and math.isnan(val):
+                            # choose a fallback, e.g. random or regional average
+                            ci_val = random.randint(50, 900)
+                        else:
+                            ci_val = val
+                        topology.node[node]["carbon_intensity"] = ci_val
+                    else:
+                        topology.node[node]["carbon_intensity"] = random.randint(50,900)
             
             logger.info(f"cache allocation: {cachepl_name}")
             if "cache_placement" in tree:
                 if cachepl_name == "GREEN":
-                    CACHE_PLACEMENT[cachepl_name](topology, cachepl_spec["cache_budget"], cache_placement_tree=cache_placement_tree, metrics=metrics, settings=settings, allocs=full_alloc_list, max_evaluations=cachepl_spec["MAX_EVALUATION"] )
+                    CACHE_PLACEMENT[cachepl_name](topology, cachepl_spec["cache_budget"], cache_placement_tree=cache_placement_tree, metrics=metrics, settings=settings, allocs=full_alloc_list, max_evaluations=cachepl_spec["MAX_EVALUATION"], period=period, prev_state_path=prev_state_path)
                 else:
                     CACHE_PLACEMENT[cachepl_name](topology, **cachepl_spec)
             
             workload = WORKLOAD[workload_name](topology, **workload_spec)
-            
             full_alloc_list = []
             icr_candidates = topology.graph["icr_candidates"]
             for v in icr_candidates:
@@ -391,10 +401,11 @@ def run_scenario(settings, params, curr_exp, n_exp):
             cachepl_spec["cache_budget"] = sum(allocs.values())
             results = {"allocations": allocs}
             
-            save_state = False if cachepl_name == "ALLOCATED" else True
-
+            netconf["saved_state_file"] = prev_state_path
+            save_state_path = f"exp{curr_exp}_{topology_name}_p{period + 1}"
+            save = False if cachepl_name == "ALLOCATED" else True
             results, model = exec_experiment(
-                topology, workload, netconf, strategy, cache_policy, collectors, period=period + 1, save=save_state, curr_exp=curr_exp
+                topology, workload, netconf, strategy, cache_policy, collectors, save=save, prev_state_path=prev_state_path, save_state_path=save_state_path, cachepl_name=cachepl_name, green_period=per
             )
             
             try:
@@ -402,9 +413,11 @@ def run_scenario(settings, params, curr_exp, n_exp):
                     if hasattr(model, "save_state"):
                         model.cache_placement = cachepl_name
                         model.network_cache = network_cache
-                        state_prefix = f"exp{curr_exp}_{topology_name}_p{period + 1}"
-                        prev_state_path = model.save_state(state_prefix)
-                        print(f"[💾] Saved network model state after Experiment {curr_exp} -> {prev_state_path}")
+                        model.alpha=workload_spec["alpha"]
+                        model.period = period
+                        model.save_state(filename_prefix=save_state_path)
+                        prev_state_path = save_state_path
+                        print(f"[💾] Saved network model state after Experiment {curr_exp} -> {save_state_path}")
                     else:
                         print(f"[⚠️] NetworkModel has no save_state() method.")
             except Exception as e:

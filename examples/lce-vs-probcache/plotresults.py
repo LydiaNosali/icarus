@@ -6,6 +6,7 @@ import logging
 
 import matplotlib.pyplot as plt
 import numpy as np
+from icarus.util import Tree
 
 from icarus.util import Settings, config_logging
 from icarus.results import plot_lines, plot_bar_chart
@@ -79,29 +80,32 @@ STRATEGY_LEGEND = {
 }
 
 PLACEMENT_STYLE = {
-    "GREEN":"g->",
-    "UNIFORM": "b-v",
-    "DEGREE": "g-o",
-    "BETWEENNESS_CENTRALITY" :"ko-", 
-    "CONSOLIDATED":"k-d", 
-    "RANDOM":"r-s", 
-    "OPTIMAL_MEDIAN":"c-*", 
-    "OPTIMAL_HASHROUTING":"m->",
-    "HYBRID_GREEN_CENTRALITY":"m->",
-    "ALLOCATED":"r-s", 
+    "UNIFORM": "b-v",                    # blue
+    "DEGREE": "g-o",                     # green
+    "BETWEENNESS_CENTRALITY": "k-^",     # black
+    "CONSOLIDATED": "c-d",               # cyan
+    "RANDOM": "m-s",                     # magenta
+    "OPTIMAL_MEDIAN": "y-*",             # yellow
+    "OPTIMAL_HASHROUTING": "tab:orange->",
+    "HYBRID_GREEN_CENTRALITY": "tab:purple-<",
+    "GREEN": "r-s",                      # RED (as requested)
+    "CACHECRAFT": "m-s",
+    "EIGENVECTOR_CENTRALITY": "y-*",
 }
 
 PLACEMENT_LEGEND = {
-    "GREEN":"GREEN",
-    "UNIFORM": "UNIFORM",
-    "DEGREE": "DEGREE",
-    "BETWEENNESS_CENTRALITY" :"BETWEENNESS_CENTRALITY", 
+    "GREEN":"CacheCorset",
+    "UNIFORM": "Uniform",
+    "DEGREE": "Degree",
+    "CACHECRAFT":"CacheCraft",
+    "BETWEENNESS_CENTRALITY" :"BC", 
     "CONSOLIDATED":"CONSOLIDATED", 
-    "RANDOM":"RANDOM", 
+    "RANDOM":"Random", 
     "OPTIMAL_MEDIAN":"OPTIMAL_MEDIAN", 
     "OPTIMAL_HASHROUTING":"OPTIMAL_HASHROUTING",
     "HYBRID_GREEN_CENTRALITY":"HYBRID_GREEN_CENTRALITY",
     "ALLOCATED":"ALLOCATED",
+    "EIGENVECTOR_CENTRALITY":"EIGENVECTOR_CENTRALITY",
 }
 # Color and hatch styles for bar charts of cache hit ratio and link load vs topology
 
@@ -120,62 +124,21 @@ STRATEGY_BAR_HATCH = {
     "CPCache": "."
 }
 
+PLACEMENT_BAR_COLOR = {
+    placement: MATPLOTLIB_COLOR_TO_HEX[style[0]]
+    for placement, style in PLACEMENT_STYLE.items()
+    if style[0] in MATPLOTLIB_COLOR_TO_HEX
+}
 
-def plot_cache_hits_vs_cache_size(
-    resultset, topology, alpha, cache_size_range, strategies, plotdir
-):
-    desc = {}
-    if "NO_CACHE" in strategies:
-        strategies.remove("NO_CACHE")
-    # print("here")
-    desc["xlabel"] = "Cache Proportion (%)"
-    desc["ylabel"] = "Cache hit ratio"
-    desc["xparam"] = ("cache_placement", "network_cache")
-    desc["xvals"] = cache_size_range
-    desc["filter"] = {
-        "topology": {"name": topology},
-        "workload": {"name": "STATIONARY", "alpha": alpha},
-    }
-    desc["ymetrics"] = [("CACHE_HIT_RATIO", "MEAN")] * len(strategies)
-    desc["ycondnames"] = [("strategy", "name")] * len(strategies)
-    desc["ycondvals"] = strategies
-    desc["errorbar"] = True
-    desc["legend_loc"] = "upper left"
-    desc["line_style"] = STRATEGY_STYLE
-    desc["legend"] = STRATEGY_LEGEND
-    desc["plotempty"] = PLOT_EMPTY_GRAPHS
-    plot_lines(
-        resultset,
-        desc,
-        "CACHE_HIT_RATIO_T={}@A={}.jpg".format(topology, alpha),
-        plotdir,
-    )
+PLACEMENT_BAR_HATCH = {
+    "GREEN": None,
+    "BETWEENNESS_CENTRALITY": "\\",
+    "UNIFORM": "//",
+    "EIGENVECTOR_CENTRALITY": "x",
+    "CACHECRAFT": "+",
+    "DEGREE": ".",
+}
 
-def plot_cost_vs_cache_size(
-    resultset, topology, alpha, cache_size_range, strategies, plotdir
-):
-    desc = {}
-    # desc["title"] = "Content Popularity \u03b1 = {}".format(alpha)
-    desc["xlabel"] = "Cache Proportion (%)"
-    desc["ylabel"] = "Cost per Request ($)"
-    desc["xparam"] = ("cache_placement", "network_cache")
-    desc["xvals"] = cache_size_range
-    desc["filter"] = {
-        "topology": {"name": topology},
-        "workload": {"name": "STATIONARY", "alpha" : alpha},
-    }
-    desc["ymetrics"] = [("COST", "MEAN")] * len(strategies)
-    desc["ycondnames"] = [("strategy", "name")] * len(strategies)
-    desc["ycondvals"] = strategies
-    desc["metric"] = ("COST", "MEAN")
-    desc["errorbar"] = True
-    desc["legend_loc"] = "upper right"
-    desc["line_style"] = STRATEGY_STYLE
-    desc["legend"] = STRATEGY_LEGEND
-    desc["plotempty"] = PLOT_EMPTY_GRAPHS
-    plot_lines(
-        resultset, desc, "COST_T={}@A={}.jpg".format(topology, alpha), plotdir
-    )
 
 def plot_chrcp_vs_cache_size(
     resultset, topology, alpha, cache_size_range, strategies, plotdir):
@@ -234,32 +197,6 @@ def plot_chrcp_vs_cache_size(
     
     plot_lines(
         resultset, desc, f"CHRCP_T={topology}@A={alpha}.jpg", plotdir
-    )
-
-def plot_latency_vs_cache_size(
-    resultset, topology, alpha, cache_size_range, strategies, plotdir
-):
-    desc = {}
-    # desc["title"] = "Content Popularity \u03b1 = {}".format(alpha)
-    desc["xlabel"] = "Cache Proportion (%)"
-    desc["ylabel"] = "Latency (ms)"
-    desc["xparam"] = ("cache_placement", "network_cache")
-    desc["xvals"] = cache_size_range 
-    desc["filter"] = {
-        "topology": {"name": topology},
-        "workload": {"name": "STATIONARY", "alpha": alpha},
-    }
-    desc["ymetrics"] = [("LATENCY", "MEAN")] * len(strategies)
-    desc["ycondnames"] = [("strategy", "name")] * len(strategies)
-    desc["ycondvals"] = strategies
-    desc["metric"] = ("LATENCY", "MEAN")
-    desc["errorbar"] = True
-    desc["legend_loc"] = "upper right"
-    desc["line_style"] = STRATEGY_STYLE
-    desc["legend"] = STRATEGY_LEGEND
-    desc["plotempty"] = PLOT_EMPTY_GRAPHS
-    plot_lines(
-        resultset, desc, "LATENCY_T={}@A={}.jpg".format(topology, alpha), plotdir
     )
 
 def plot_cost_components_vs_cache_size(
@@ -342,145 +279,93 @@ def plot_cost_components_vs_cache_size(
 
 def plot_network_cf_components_vs_cache_size(resultset, topology, alpha, cache_size_range, placements, plotdir):
     """
-    Plot ROUTERS_OPEX and LINKS_OPEX for each placement and cache size
-    as stacked bars showing network carbon footprint components.
+    Plot network OPEX (ROUTERS_OPEX + LINKS_OPEX) vs cache size for each placement.
+    Each bar = routers + links OPEX, with color per placement.
     """
-    # Components from CARBONFOOTPRINT
-    cf_components = ["ROUTERS_OPEX", "LINKS_OPEX"]
-    num_components = len(cf_components)
 
-    # --- Figure setup ---
-    fig, ax = plt.subplots(figsize=(10, 6))
-    bar_width = 0.18
-    group_spacing = 0.4  # spacing between cache size groups
+    # Precompute values: one number per placement per cache size
+    filtered = resultset.filter({
+        "topology": {"name": topology},
+        "workload": {"name": "STATIONARY", "alpha": alpha},
+    })
+    for res in filtered:
+        metrics = res[1]
+        total_opex = metrics['CARBONFOOTPRINT']["ROUTERS_OPEX"] + metrics['CARBONFOOTPRINT']["LINKS_OPEX"]
+        metrics["ROUTING_OPEX"] = Tree({"MEAN": total_opex})
+     
+    # Build desc dictionary
+    desc = {}
+    desc["xlabel"] = "Cache Proportion (%)"
+    desc["ylabel"] = "Network OPEX (gCO₂e)"
+    desc["xparam"] = ("cache_placement", "network_cache")
+    desc["xvals"] = cache_size_range
+    desc["filter"] = {
+        "topology": {"name": topology},
+        "workload": {"name": "STATIONARY", "alpha": alpha},
+    }
 
-    cf_colors = ['#1F77B4', '#FF7F0E']  # blue = routers, orange = links
-    cf_hatches = ['/', '\\']
+    # Use a placeholder metric name; we'll feed yvals directly
+    desc["ymetrics"] = [("ROUTING_OPEX", "MEAN")] * len(placements)
+    desc["ycondnames"] = [("cache_placement", "name")] * len(placements)
+    desc["ycondvals"] = placements
 
-    # --- Prepare data structures ---
-    total_groups = len(cache_size_range)
-    total_placements = len(placements)
-    total_bars_per_group = total_placements
+    # Colors and legend
+    desc["bar_color"] = PLACEMENT_BAR_COLOR  # color per placement
+    desc["bar_hatch"] = PLACEMENT_BAR_HATCH
+    desc["legend"] = PLACEMENT_LEGEND
+    desc["legend_loc"] = "upper right"
+    desc["errorbar"] = True
+    desc["plotempty"] = PLOT_EMPTY_GRAPHS
 
-    all_data = {comp: [] for comp in cf_components}
-    x_positions, xtick_labels = [], []
+    # Attach precomputed values to ResultSet (so plot_bar_chart can read them)
+    # resultset._precomputed_yvals = yvals
 
-    # --- Collect data ---
-    for i, cache_size in enumerate(cache_size_range):
-        for k, placement in enumerate(placements):
-            filtered = resultset.filter({
-                "topology": {"name": topology},
-                "cache_placement": {"network_cache": cache_size, "name": placement},
-                "workload": {"name": "STATIONARY", "alpha": alpha},
-            })
+    # Call generic plotting function
+    plot_bar_chart(
+        resultset,
+        desc,
+        "NETWORK_OPEX_T={}_A={}.jpg".format(topology, alpha),
+        plotdir,
+    )
 
-            cf_data = filtered[0][1]['CARBONFOOTPRINT'] if filtered else {}
-
-            for comp in cf_components:
-                val = cf_data.get(comp, 0)
-                all_data[comp].append(val)
-
-            x_pos = i * (total_placements * (bar_width + group_spacing)) + k * (bar_width + 0.1)
-            x_positions.append(x_pos)
-            xtick_labels.append(f"{placement}\n(Cache {cache_size})")
-
-    x_positions = np.array(x_positions)
-    bottom = np.zeros(len(x_positions))
-
-    # --- Plot stacked bars ---
-    for j, comp in enumerate(cf_components):
-        data = np.array(all_data[comp])
-        ax.bar(
-            x_positions,
-            data,
-            bar_width,
-            bottom=bottom,
-            color=cf_colors[j],
-            hatch=cf_hatches[j],
-            label=comp,
-            edgecolor="black"
-        )
-        bottom += data
-
-    # --- Style and labels ---
-    ax.set_xlabel("Cache Proportion and Placement", fontsize=13)
-    ax.set_ylabel("Network Carbon Footprint (gCO₂e)", fontsize=13)
-    ax.set_xticks(x_positions)
-    ax.set_xticklabels(xtick_labels, rotation=45, ha="right", fontsize=10)
-    ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.7)
-    ax.legend(title="Network CF Components", fontsize=10)
-    plt.tight_layout()
-
-    # --- Save ---
-    outfile = os.path.join(plotdir, f"ROUTERS_vs_LINKS_OPEX_T={topology}@A={alpha}.jpg")
-    plt.savefig(outfile, bbox_inches="tight")
-    plt.close()
-    print(f"[✔] Saved network CF plot to {outfile}")
-
-def plot_opex_vs_capex_cache_size(resultset, topology, alpha, cache_size_range, placements, plotdir):
+def plot_opex_vs_capex_cache_size(
+    resultset, topology, alpha, cache_size_range, placements, plotdir
+):
     """
-    Plot stacked OPEX + CAPEX carbon footprint for each placement and cache size.
+    Plot OPEX (only) vs cache size for various placement strategies
+    for a fixed topology and alpha.
     """
-    cf_components = ["TOTAL_OPEX", "TOTAL_CAPEX"]
-    num_components = len(cf_components)
 
-    fig, ax = plt.subplots(figsize=(10, 6))
-    bar_width = 0.15
-    bar_spacing = 0.05
-    total_bars_per_group = len(placements) * (bar_width + bar_spacing)
+    desc = {}
+    desc["xlabel"] = "Cache Proportion (%)"
+    desc["ylabel"] = "OPEX (gCO₂e)"
+    desc["xparam"] = ("cache_placement", "network_cache")
+    desc["xvals"] = cache_size_range
+    desc["filter"] = {
+        "topology": {"name": topology},
+        "workload": {"name": "STATIONARY", "alpha": alpha},
+    }
 
-    cf_colors = ['#1F77B4', '#FF7F0E']  # Blue for OPEX, Orange for CAPEX
-    cf_hatches = ['/', '\\']
+    # Y-metrics: OPEX
+    desc["ymetrics"] = [("CARBONFOOTPRINT", "TOTAL_OPEX")] * len(placements)
+    desc["ycondnames"] = [("cache_placement", "name")] * len(placements)
+    desc["ycondvals"] = placements
 
-    x_positions, xtick_labels = [], []
+    # Colors, hatches, legend
+    desc["bar_color"] = PLACEMENT_BAR_COLOR  # define mapping of placement -> color
+    desc["bar_hatch"] = PLACEMENT_BAR_HATCH  # optional
+    desc["legend"] = PLACEMENT_LEGEND
+    desc["legend_loc"] = "upper right"
+    desc["errorbar"] = True
+    desc["plotempty"] = PLOT_EMPTY_GRAPHS
 
-    # Collect all bar data
-    all_data = {comp: [] for comp in cf_components}
-
-    for i, cache_size in enumerate(cache_size_range):
-        for k, placement in enumerate(placements):
-            filtered = resultset.filter({
-                "topology": {"name": topology},
-                "cache_placement": {"network_cache": cache_size, "name": placement},
-                "workload": {"name": "STATIONARY", "alpha": alpha},
-            })
-
-            cf_data = filtered[0][1]['CARBONFOOTPRINT'] if filtered else {}
-            for comp in cf_components:
-                value = cf_data.get(comp, 0)
-                all_data[comp].append(value)
-
-            x_pos = i * (total_bars_per_group + 0.2) + k * (bar_width + bar_spacing)
-            x_positions.append(x_pos)
-            xtick_labels.append(f"{placement}\n(Cache {cache_size})")
-
-    x_positions = np.array(x_positions)
-    bottom = np.zeros(len(x_positions))
-
-    # Draw stacked bars
-    for j, comp in enumerate(cf_components):
-        data = np.array(all_data[comp])
-        ax.bar(
-            x_positions, data, bar_width,
-            bottom=bottom,
-            color=cf_colors[j],
-            hatch=cf_hatches[j],
-            label=comp,
-            edgecolor='black'
-        )
-        bottom += data
-
-    # Labels and layout
-    ax.set_xlabel('Cache Proportion and Placement', fontsize=13)
-    ax.set_ylabel('Carbon Footprint (gCO₂e)', fontsize=13)
-    ax.set_xticks(x_positions)
-    ax.set_xticklabels(xtick_labels, fontsize=10, rotation=45, ha="right")
-    ax.grid(True, linestyle='--', linewidth=0.5, alpha=0.7)
-    ax.legend(title="CF Component", fontsize=10)
-    plt.tight_layout()
-
-    plt.savefig(os.path.join(plotdir, f"CAPEX_OPEX_T={topology}@A={alpha}.jpg"), bbox_inches='tight')
-    plt.close()
+    # Call general plotting function
+    plot_bar_chart(
+        resultset,
+        desc,
+        "CAPEX_OPEX_T={}_A={}.jpg".format(topology, alpha),
+        plotdir,
+    )
 
 def plot_server_opex_vs_capex_cache_size(resultset, topology, alpha, cache_size_range, placements, plotdir):
     """
@@ -563,34 +448,6 @@ def plot_server_opex_vs_capex_cache_size(resultset, topology, alpha, cache_size_
     plt.close()
     print(f"[✔] Saved plot to {outfile}")
 
-def plot_cf_vs_cache_size(
-    resultset, topology, alpha, cache_size_range, cache_placements, plotdir
-):
-    desc = {}
-    desc["xlabel"] = "Cache Proportion (%)"
-    desc["ylabel"] = "Carbon Footprint g.CO2"
-    desc["xparam"] = ("cache_placement", "network_cache")
-    desc["xvals"] = cache_size_range
-    desc["filter"] = {
-        "topology": {"name": topology},
-        "workload": {"name": "STATIONARY", "alpha": alpha},
-    }
-    desc["ymetrics"] = [("CARBONFOOTPRINT", "TOTAL")] * len(cache_placements)
-    desc["ycondnames"] = [("cache_placement", "name")] * len(cache_placements)
-    desc["ycondvals"] = cache_placements
-    desc["metric"] = ("CARBONFOOTPRINT", "TOTAL")
-    desc["errorbar"] = True
-    desc["legend_loc"] = "upper left"
-    desc["line_style"] = PLACEMENT_STYLE
-    desc["legend"] = PLACEMENT_LEGEND
-    desc["plotempty"] = PLOT_EMPTY_GRAPHS
-    plot_lines(
-        resultset,
-        desc,
-        "TOTAL_OPEX_CAPEX_T={}@A={}.jpg".format(topology, alpha),
-        plotdir,
-    )
-
 def plot_capex_vs_cache_size(
     resultset, topology, alpha, cache_size_range, cache_placements, plotdir
 ):
@@ -646,117 +503,6 @@ def plot_opex_vs_cache_size(
         plotdir,
     )
 
-def plot_cache_hits_vs_topology(
-    resultset, alpha, cache_size, topology_range, strategies, plotdir
-):
-    """
-    Plot bar graphs of cache hit ratio for specific values of alpha and cache
-    size for various topologies.
-
-    The objective here is to show that our algorithms works well on all
-    topologies considered
-    """
-    if "NO_CACHE" in strategies:
-        strategies.remove("NO_CACHE")
-    desc = {}
-    desc["xlabel"] = "Topologies"
-    desc["ylabel"] = "Cache hit ratio"
-    desc["xparam"] = ("topology", "name")
-    desc["xvals"] = topology_range
-    desc["filter"] = {
-        "cache_placement": {"network_cache": cache_size},
-        "workload": {"name": "STATIONARY", "alpha": alpha},
-    }
-    desc["ymetrics"] = [("CACHE_HIT_RATIO", "MEAN")] * len(strategies)
-    desc["ycondnames"] = [("strategy", "name")] * len(strategies)
-    desc["ycondvals"] = strategies
-    desc["errorbar"] = True
-    desc["legend_loc"] = "lower right"
-    desc["bar_color"] = STRATEGY_BAR_COLOR
-    desc["bar_hatch"] = STRATEGY_BAR_HATCH
-    desc["legend"] = STRATEGY_LEGEND
-    desc["plotempty"] = PLOT_EMPTY_GRAPHS
-    plot_bar_chart(
-        resultset,
-        desc,
-        "CACHE_HIT_RATIO_A={}_C={}.jpg".format(alpha, cache_size),
-        plotdir,
-    )
-
-def plot_cost_vs_topology(
-    resultset, alpha, cache_size, topology_range, strategies, plotdir
-):
-    """
-    Plot bar graphs of cache hit ratio for specific values of alpha and cache
-    size for various topologies.
-
-    The objective here is to show that our algorithms works well on all
-    topologies considered
-    """
-    if "NO_CACHE" in strategies:
-        strategies.remove("NO_CACHE")
-    desc = {}
-    desc["xlabel"] = "Topologies"
-    desc["ylabel"] = "Cost per Request ($)"
-    desc["xparam"] = ("topology", "name")
-    desc["xvals"] = topology_range
-    desc["filter"] = {
-        "cache_placement": {"network_cache": cache_size},
-        "workload": {"name": "STATIONARY", "alpha": alpha},
-    }
-    desc["ymetrics"] = [("COST", "MEAN")] * len(strategies)
-    desc["ycondnames"] = [("strategy", "name")] * len(strategies)
-    desc["ycondvals"] = strategies
-    desc["errorbar"] = True
-    desc["legend_loc"] = "lower right"
-    desc["bar_color"] = STRATEGY_BAR_COLOR
-    desc["bar_hatch"] = STRATEGY_BAR_HATCH
-    desc["legend"] = STRATEGY_LEGEND
-    desc["plotempty"] = PLOT_EMPTY_GRAPHS
-    plot_bar_chart(
-        resultset,
-        desc,
-        "COST_A={}_C={}.jpg".format(alpha, cache_size),
-        plotdir,
-    )
-
-def plot_latency_vs_topology(
-    resultset, alpha, cache_size, topology_range, strategies, plotdir
-):
-    """
-    Plot bar graphs of cache hit ratio for specific values of alpha and cache
-    size for various topologies.
-
-    The objective here is to show that our algorithms works well on all
-    topologies considered
-    """
-    if "NO_CACHE" in strategies:
-        strategies.remove("NO_CACHE")
-    desc = {}
-    desc["xlabel"] = "Topologies"
-    desc["ylabel"] = "Latency (ms)"
-    desc["xparam"] = ("topology", "name")
-    desc["xvals"] = topology_range
-    desc["filter"] = {
-        "cache_placement": {"network_cache": cache_size},
-        "workload": {"name": "STATIONARY", "alpha": alpha},
-    }
-    desc["ymetrics"] = [("LATENCY", "MEAN")] * len(strategies)
-    desc["ycondnames"] = [("strategy", "name")] * len(strategies)
-    desc["ycondvals"] = strategies
-    desc["errorbar"] = True
-    desc["legend_loc"] = "lower right"
-    desc["bar_color"] = STRATEGY_BAR_COLOR
-    desc["bar_hatch"] = STRATEGY_BAR_HATCH
-    desc["legend"] = STRATEGY_LEGEND
-    desc["plotempty"] = PLOT_EMPTY_GRAPHS
-    plot_bar_chart(
-        resultset,
-        desc,
-        "LATENCY_A={}_C={}.jpg".format(alpha, cache_size),
-        plotdir,
-    )
-
 def plot_chrcp_vs_topology(
     resultset, alpha, cache_size, topology_range, strategies, plotdir
 ):
@@ -792,85 +538,6 @@ def plot_chrcp_vs_topology(
         desc,
         "CHRCP_A={}_C={}.jpg".format(alpha, cache_size),
         plotdir,
-    )
-
-def plot_cache_hits_vs_alpha(
-    resultset, topology, cache_size, alpha_range, strategies, plotdir
-):
-    if "NO_CACHE" in strategies:
-        strategies.remove("NO_CACHE")
-    desc = {}
-    # desc["title"] = "Cache size = {}".format(cache_size)
-    desc["ylabel"] = "Cache hit ratio"
-    desc["xlabel"] = "Content distribution \u03b1"
-    desc["xparam"] = ("workload", "alpha")
-    desc["xvals"] = alpha_range
-    desc["filter"] = {
-        "topology": {"name": topology},
-        "cache_placement": {"network_cache": cache_size},
-    }
-    desc["ymetrics"] = [("CACHE_HIT_RATIO", "MEAN")] * len(strategies)
-    desc["ycondnames"] = [("strategy", "name")] * len(strategies)
-    desc["ycondvals"] = strategies
-    desc["errorbar"] = True
-    desc["legend_loc"] = "upper left"
-    desc["line_style"] = STRATEGY_STYLE
-    desc["legend"] = STRATEGY_LEGEND
-    desc["plotempty"] = PLOT_EMPTY_GRAPHS
-    plot_lines(
-        resultset,
-        desc,
-        "CACHE_HIT_RATIO_T={}@C={}.jpg".format(topology, cache_size),
-        plotdir,
-    )
-
-def plot_latency_vs_alpha(
-    resultset, topology, cache_size, alpha_range, strategies, plotdir
-):
-    desc = {}
-    # desc["title"] = "Cache size = {}".format(cache_size)
-    desc["xlabel"] = "Content distribution \u03b1"
-    desc["ylabel"] = "Latency (ms)"
-    desc["xparam"] = ("workload", "alpha")
-    desc["xvals"] = alpha_range
-    desc["filter"] = {
-        "topology": {"name": topology},
-        "cache_placement": {"network_cache": cache_size},
-    }
-    desc["ymetrics"] = [("LATENCY", "MEAN")] * len(strategies)
-    desc["ycondnames"] = [("strategy", "name")] * len(strategies)
-    desc["ycondvals"] = strategies
-    desc["errorbar"] = True
-    desc["legend_loc"] = "upper right"
-    desc["line_style"] = STRATEGY_STYLE
-    desc["legend"] = STRATEGY_LEGEND
-    desc["plotempty"] = PLOT_EMPTY_GRAPHS
-    plot_lines(
-        resultset, desc, "LATENCY_T={}@C={}.jpg".format(topology, cache_size), plotdir
-    )
-
-def plot_cost_vs_alpha(
-    resultset, topology, cache_size, alpha_range, strategies, plotdir
-):
-    desc = {}
-    desc["xlabel"] = "Content distribution \u03b1"
-    desc["ylabel"] = "Cost per Request ($)"
-    desc["xparam"] = ("workload", "alpha")
-    desc["xvals"] = alpha_range
-    desc["filter"] = {
-        "topology": {"name": topology},
-        "cache_placement": {"network_cache": cache_size},
-    }
-    desc["ymetrics"] = [("COST", "MEAN")] * len(strategies)
-    desc["ycondnames"] = [("strategy", "name")] * len(strategies)
-    desc["ycondvals"] = strategies
-    desc["errorbar"] = True
-    desc["legend_loc"] = "upper right"
-    desc["line_style"] = STRATEGY_STYLE
-    desc["legend"] = STRATEGY_LEGEND
-    desc["plotempty"] = PLOT_EMPTY_GRAPHS
-    plot_lines(
-        resultset, desc, "COST_T={}@C={}.jpg".format(topology, cache_size), plotdir
     )
 
 def plot_chrcp_vs_alpha(
@@ -1084,7 +751,7 @@ def plot_cache_hits_vs_cache_placement(
     resultset, topology, alpha, cache_size_range, strategy, cache_placements, plotdir
 ):
     desc = {}
-    desc["xlabel"] = "Cache Placements"
+    desc["xlabel"] = "Cache Proportion (%)"
     desc["ylabel"] = "Cache hit ratio"
     desc["xparam"] = ("cache_placement", "network_cache")
     desc["xvals"] = cache_size_range
@@ -1101,7 +768,6 @@ def plot_cache_hits_vs_cache_placement(
     desc["line_style"] = PLACEMENT_STYLE
     desc["legend"] = PLACEMENT_LEGEND
     desc["plotempty"] = PLOT_EMPTY_GRAPHS
-    print(desc)
     plot_lines(
         resultset,
         desc,
@@ -1112,32 +778,10 @@ def plot_cache_hits_vs_cache_placement(
 def plot_cost_vs_cache_placement(
     resultset, topology, alpha, cache_size_range, strategy, cache_placements, plotdir
 ):
-    """
-    Plot average cost per request ($) across different cache placements and cache sizes.
-    Produces a multi-line plot (one line per cache placement) showing cost trends
-    as cache size increases.
-
-    Parameters
-    ----------
-    resultset : ResultSet
-        The result set containing simulation results.
-    topology : str
-        Name of the topology (e.g., "GARR", "GEANT").
-    alpha : float
-        Zipf alpha parameter.
-    cache_size_range : list[float]
-        List of network cache proportions (e.g., [0.01, 0.015, 0.02]).
-    strategy : str
-        Name of the caching strategy (e.g., "CL2SM").
-    cache_placements : list[str]
-        List of cache placement strategies (e.g., ["ALLOCATED", "GREEN", "UNIFORM"]).
-    plotdir : str
-        Directory to save the output plot.
-    """
     # --- Plot metadata description for the plotting engine ---
     desc = {
-        "xlabel": "Cache Placement",
-        "ylabel": "Average Cost per Request ($)",
+        "xlabel": "Cache Proportion (%)",
+        "ylabel": "Cost per Request ($)",
         "xparam": ("cache_placement", "network_cache"),
         "xvals": cache_size_range,
         "filter": {
@@ -1155,11 +799,8 @@ def plot_cost_vs_cache_placement(
         "legend": PLACEMENT_LEGEND,
         "plotempty": PLOT_EMPTY_GRAPHS,
     }
-
-    # --- Generate and save the plot ---
     outfile = f"COST_T={topology}@A={alpha}@S={strategy}.jpg"
     plot_lines(resultset, desc, outfile, plotdir)
-    print(f"[✔] Saved cost-per-request plot to {os.path.join(plotdir, outfile)}")
 
 def plot_chrcp_vs_cache_placement(
     resultset, topology, alpha, cache_size_range, strategy, cache_placements, plotdir):
@@ -1226,7 +867,7 @@ def plot_latency_vs_cache_placement(
 ):
     desc = {}
     # desc["title"] = "Content Popularity \u03b1 = {}".format(alpha)
-    desc["xlabel"] = "Cache Placements"
+    desc["xlabel"] = "Cache Proportion (%)"
     desc["ylabel"] = "Latency (ms)"
     desc["xparam"] = ("cache_placement", "network_cache")
     desc["xvals"] = cache_size_range 
@@ -1244,7 +885,6 @@ def plot_latency_vs_cache_placement(
     desc["line_style"] = PLACEMENT_STYLE
     desc["legend"] = PLACEMENT_LEGEND
     desc["plotempty"] = PLOT_EMPTY_GRAPHS
-    print(desc)
     plot_lines(
         resultset, desc, "LATENCY_T={}@A={}@S={}.jpg".format(topology, alpha, strategy), plotdir
     )
@@ -1252,29 +892,8 @@ def plot_latency_vs_cache_placement(
 def plot_cf_vs_cache_placement(
     resultset, topology, alpha, cache_size_range, strategy, cache_placements, plotdir
 ):
-    """
-    Plot total carbon footprint (OPEX + CAPEX) versus cache placement and cache size.
-
-    Parameters
-    ----------
-    resultset : ResultSet
-        The simulation results container.
-    topology : str
-        Network topology name.
-    alpha : float
-        Workload alpha parameter.
-    cache_size_range : list
-        List of cache proportions (e.g., [0.01, 0.02, 0.05]).
-    strategy : str
-        Caching or management strategy name.
-    cache_placements : list
-        List of cache placement names (e.g., ["UNIFORM", "ALLOCATED"]).
-    plotdir : str
-        Output directory for saving plots.
-    """
-
     desc = {
-        "xlabel": "Cache Placement",
+        "xlabel": "Cache Proportion (%)",
         "ylabel": "Total Carbon Footprint (gCO₂e)",
         "xparam": ("cache_placement", "network_cache"),
         "xvals": cache_size_range,
@@ -1297,14 +916,34 @@ def plot_cf_vs_cache_placement(
     plot_lines(resultset, desc, filename, plotdir)
     print(f"[✔] Saved total CF plot → {os.path.join(plotdir, filename)}")
 
+def plot_cf_vs_strategies(resultset, topology, alpha, cache_size_range, strategies, cache_placement, plotdir):
+    desc = {
+        "xlabel": "Cache Placement",
+        "ylabel": "Total Carbon Footprint (gCO₂e)",
+        "xparam": ("cache_placement", "network_cache"),
+        "xvals": cache_size_range,
+        "filter": {
+            "topology": {"name": topology},
+            "workload": {"name": "STATIONARY", "alpha": alpha},
+            "cache_placement": {"name": cache_placement},
+        },
+        "ymetrics": [("CARBONFOOTPRINT", "TOTAL")] * len(strategies),
+        "ycondnames": [("strategies", "name")] * len(strategies),
+        "ycondvals": strategies,
+        "errorbar": True,
+        "legend_loc": "upper left",
+        "line_style": PLACEMENT_STYLE,
+        "legend": PLACEMENT_LEGEND,
+        "plotempty": PLOT_EMPTY_GRAPHS,
+    }
+
+    filename = f"TOTAL_CF_T={topology}@A={alpha}@P={cache_placement}.jpg"
+    plot_lines(resultset, desc, filename, plotdir)
+    print(f"[✔] Saved total CF plot → {os.path.join(plotdir, filename)}")
+
 def plot_capex_vs_cache_placement(
     resultset, topology, alpha, cache_size_range, strategy, cache_placements, plotdir
 ):
-    """
-    Plot embodied carbon footprint (CAPEX) versus cache placement and cache size.
-    Produces a multi-line plot (one per cache placement) showing TOTAL_CAPEX
-    from CARBONFOOTPRINT results.
-    """
     desc = {
         "xlabel": "Cache Placement",
         "ylabel": "CAPEX (gCO₂e)",
@@ -1332,11 +971,6 @@ def plot_capex_vs_cache_placement(
 def plot_opex_vs_cache_placement(
     resultset, topology, alpha, cache_size_range, strategy, cache_placements, plotdir
 ):
-    """
-    Plot operational carbon footprint (OPEX) versus cache placement and cache size.
-    Produces a multi-line plot (one per cache placement) showing TOTAL_OPEX
-    from CARBONFOOTPRINT results.
-    """
     desc = {
         "xlabel": "Cache Placement",
         "ylabel": "OPEX (gCO₂e)",
@@ -1382,368 +1016,12 @@ def plot_link_load_vs_cache_placement(
     desc["line_style"] = PLACEMENT_STYLE
     desc["legend"] = PLACEMENT_LEGEND
     desc["plotempty"] = PLOT_EMPTY_GRAPHS
-    print(desc)
     plot_lines(
         resultset,
         desc,
         "LINK_LOAD_INTERNAL_T={}@A={}@S={}.jpg".format(topology, alpha, strategy),
         plotdir,
     )
-
-# def plot_per_tier_opex_vs_capex_all_configs(
-#     resultset,
-#     topology,
-#     alpha,
-#     cache_size_range,
-#     placements,
-#     plotdir,
-#     mode='global'  # 'global' or 'per-tier'
-# ):
-#     """
-#     Generates two plots:
-#     (1) Fix cache size -> vary placement
-#     (2) Fix placement -> vary cache size
-#     Each bar = tier (e.g., DRAM/SSD) for a given configuration.
-
-#     Automatically reads TIER_STATS from resultset for each simulation.
-#     """
-#     import os
-#     import numpy as np
-#     import matplotlib.pyplot as plt
-
-#     cf_colors = ['#1F77B4', '#FF7F0E']  # OPEX, CAPEX
-#     cf_labels = ['OPEX Fraction', 'CAPEX Fraction']
-#     bar_width = 0.35
-#     group_spacing = 0.25
-
-#     def compute_fractions(per_tier, tier_stats):
-#         """Compute OPEX/CAPEX fractions based on mode and tier stats."""
-#         # Ensure we have valid tier stats
-#         if not tier_stats:
-#             tier_stats = {t: 1 for t in per_tier.keys()}
-
-#         # --- Scale each tier by its node count
-#         scaled_cf = {
-#             t: (v.get("OPEX", 0) + v.get("CAPEX", 0)) * tier_stats.get(t, 1)
-#             for t, v in per_tier.items()
-#         }
-
-#         total_cf = sum(scaled_cf.values())
-
-#         fractions = {}
-#         for t, v in per_tier.items():
-#             opex = v.get("OPEX", 0) * tier_stats.get(t, 1)
-#             capex = v.get("CAPEX", 0) * tier_stats.get(t, 1)
-#             if mode == 'global' and total_cf > 0:
-#                 opex_frac = opex / total_cf
-#                 capex_frac = capex / total_cf
-#             elif mode == 'per-tier':
-#                 tier_total = opex + capex
-#                 opex_frac = opex / tier_total if tier_total > 0 else 0
-#                 capex_frac = capex / tier_total if tier_total > 0 else 0
-#             else:
-#                 opex_frac = capex_frac = 0
-#             fractions[t] = (opex_frac, capex_frac)
-#         return fractions
-
-#     # ---------- (A) FIX CACHE SIZE ----------
-#     for cache_size in cache_size_range:
-#         fig, ax = plt.subplots(figsize=(10, 5))
-#         x_positions, xtick_labels = [], []
-#         offset = 0
-
-#         for placement in placements:
-#             filtered = resultset.filter({
-#                 "topology": {"name": topology},
-#                 "cache_placement": {"network_cache": cache_size},
-#                 "cache_placement": {"name": placement},
-#                 "workload": {"name": "STATIONARY", "alpha": alpha},
-#             })
-#             if len(filtered) == 0:
-#                 continue
-
-#             result = filtered[0][1]
-#             cf_data = result.get("CARBONFOOTPRINT", {})
-#             per_tier = cf_data.get("PER_TIER", {})
-#             tier_stats = cf_data.get("TIER_STATS", result.get("TIER_STATS", {}))
-
-#             if not per_tier:
-#                 continue
-
-#             fractions = compute_fractions(per_tier, tier_stats)
-
-#             for tier_name, (opex_frac, capex_frac) in fractions.items():
-#                 ax.bar(offset, opex_frac, bar_width, color=cf_colors[0],
-#                        hatch='/', edgecolor='black', label=cf_labels[0] if offset == 0 else "")
-#                 ax.bar(offset, capex_frac, bar_width, bottom=opex_frac,
-#                        color=cf_colors[1], hatch='\\', edgecolor='black', label=cf_labels[1] if offset == 0 else "")
-
-#                 xtick_labels.append(f"{tier_name}\n{placement}")
-#                 x_positions.append(offset)
-#                 offset += bar_width + group_spacing
-
-#         ax.set_xticks(x_positions)
-#         ax.set_xticklabels(xtick_labels, rotation=45, ha='right', fontsize=9)
-#         ax.set_ylabel("Fraction of Total Carbon Footprint")
-#         ax.set_xlabel(f"Tiers / Placement (Cache={cache_size})")
-#         ax.set_title(f"OPEX vs CAPEX Fraction per Tier – {topology} – α={alpha} – Cache={cache_size}")
-#         ax.legend(title="CF Component", fontsize=9)
-#         ax.grid(True, linestyle="--", alpha=0.6, axis="y")
-
-#         ax.set_ylim(0, 1.05)
-#         ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f"{int(y*100)}%"))
-
-#         plt.tight_layout()
-#         outname = f"TIER_FRACTION_BY_PLACEMENT_T={topology}_A={alpha}_Cache={cache_size}_{mode}.jpg"
-#         plt.savefig(os.path.join(plotdir, outname), bbox_inches="tight", dpi=300)
-#         plt.close()
-#         print(f"✅ Saved plot (fixed cache size): {outname}")
-
-#     # ---------- (B) FIX PLACEMENT ----------
-#     for placement in placements:
-#         fig, ax = plt.subplots(figsize=(10, 5))
-#         x_positions, xtick_labels = [], []
-#         offset = 0
-
-#         for cache_size in cache_size_range:
-#             filtered = resultset.filter({
-#                 "topology": {"name": topology},
-#                 "cache_placement": {"network_cache": cache_size},
-#                 "cache_placement": {"name": placement},
-#                 "workload": {"name": "STATIONARY", "alpha": alpha},
-#             })
-#             if len(filtered) == 0:
-#                 continue
-
-#             result = filtered[0][1]
-#             cf_data = result.get("CARBONFOOTPRINT", {})
-#             per_tier = cf_data.get("PER_TIER", {})
-#             tier_stats = cf_data.get("TIER_STATS", result.get("TIER_STATS", {}))
-
-#             if not per_tier:
-#                 continue
-
-#             fractions = compute_fractions(per_tier, tier_stats)
-
-#             for tier_name, (opex_frac, capex_frac) in fractions.items():
-#                 ax.bar(offset, opex_frac, bar_width, color=cf_colors[0],
-#                        hatch='/', edgecolor='black', label=cf_labels[0] if offset == 0 else "")
-#                 ax.bar(offset, capex_frac, bar_width, bottom=opex_frac,
-#                        color=cf_colors[1], hatch='\\', edgecolor='black', label=cf_labels[1] if offset == 0 else "")
-
-#                 xtick_labels.append(f"{tier_name}\nCache {cache_size}")
-#                 x_positions.append(offset)
-#                 offset += bar_width + group_spacing
-
-#         ax.set_xticks(x_positions)
-#         ax.set_xticklabels(xtick_labels, rotation=45, ha='right', fontsize=9)
-#         ax.set_ylabel("Fraction of Total Carbon Footprint")
-#         ax.set_xlabel(f"Tiers / Cache Size (Placement={placement})")
-#         ax.set_title(f"OPEX vs CAPEX Fraction per Tier – {topology} – α={alpha} – Placement={placement}")
-#         ax.legend(title="CF Component", fontsize=9)
-#         ax.grid(True, linestyle="--", alpha=0.6, axis="y")
-
-#         ax.set_ylim(0, 1.05)
-#         ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f"{int(y*100)}%"))
-
-#         plt.tight_layout()
-#         outname = f"TIER_FRACTION_BY_CACHE_T={topology}_A={alpha}_Placement={placement}_{mode}.jpg"
-#         plt.savefig(os.path.join(plotdir, outname), bbox_inches="tight", dpi=300)
-#         plt.close()
-#         print(f"✅ Saved plot (fixed placement): {outname}")
-
-# def plot_per_tier_opex_vs_capex_all_configs(
-#     resultset, topology, alpha, cache_size_range, placements, plotdir
-# ):
-#     """
-#     Plot stacked bars of DRAM/SSD OPEX and CAPEX per cache placement and size.
-#     """
-#     import numpy as np
-#     import matplotlib.pyplot as plt
-#     import os
-
-#     # Colors for (DRAM OPEX, SSD OPEX, DRAM CAPEX, SSD CAPEX)
-#     colors = ['#1f77b4', '#2ca02c', '#ff7f0e', '#d62728']
-#     labels = ['DRAM OPEX', 'SSD OPEX', 'DRAM CAPEX', 'SSD CAPEX']
-#     hatches = ['/', '\\', '...', 'xx']
-
-#     fig, ax = plt.subplots(figsize=(12, 6))
-#     bar_width = 0.35
-#     spacing = 0.4
-
-#     x_positions, xtick_labels = [], []
-
-#     for i, cache_size in enumerate(cache_size_range):
-#         for k, placement in enumerate(placements):
-#             filtered = resultset.filter({
-#                 "topology": {"name": topology},
-#                 "cache_placement": {"network_cache": cache_size},
-#                 "cache_placement": {"name": placement},
-#                 "workload": {"name": "STATIONARY", "alpha": alpha},
-#             })
-#             cf = filtered[0][1]['CARBONFOOTPRINT'] if len(filtered) > 0 else {}
-
-#             # Extract tier-level data
-#             per_tier = cf.get('PER_TIER', {})
-#             dram = per_tier.get('DRAM', {})
-#             ssd = per_tier.get('SSD', {})
-
-#             dram_opex = dram.get('OPEX', 0)
-#             ssd_opex = ssd.get('OPEX', 0)
-#             dram_capex = dram.get('CAPEX', 0)
-#             ssd_capex = ssd.get('CAPEX', 0)
-
-#             # Build the stack bottom-up
-#             x = i * (len(placements) * (bar_width + spacing)) + k * (bar_width + spacing)
-#             x_positions.append(x)
-#             xtick_labels.append(f'{placement}\n(Cache {cache_size})')
-
-#             bottoms = 0
-#             for j, val in enumerate([dram_opex, ssd_opex, dram_capex, ssd_capex]):
-#                 ax.bar(
-#                     x,
-#                     val,
-#                     bar_width,
-#                     bottom=bottoms,
-#                     color=colors[j],
-#                     hatch=hatches[j],
-#                     edgecolor='black',
-#                     label=labels[j] if (i == 0 and k == 0) else None
-#                 )
-#                 bottoms += val
-
-#     # X-axis formatting
-#     ax.set_xticks(x_positions)
-#     ax.set_xticklabels(xtick_labels, rotation=45, ha="right", fontsize=10)
-
-#     # Labels and legend
-#     ax.set_xlabel('Cache Proportion and Placement', fontsize=13)
-#     ax.set_ylabel('Carbon Footprint (gCO₂e)', fontsize=13)
-#     ax.legend(title="Component", fontsize=9, loc='upper right', ncol=2)
-#     ax.grid(True, linestyle='--', alpha=0.6)
-
-#     plt.tight_layout()
-#     filename = os.path.join(plotdir, f"PER_TIER_STACKED_T={topology}@A={alpha}.jpg")
-#     plt.savefig(filename, bbox_inches='tight')
-#     plt.close()
-#     print(f"✅ Saved stacked per-tier OPEX+CAPEX plot to {filename}")
-
-# def plot_per_tier_opex_vs_capex_all_configs(
-#     resultset, topology, alpha, cache_size_range, placements, plotdir,
-#     n_contents=10000, data_size_range=(1000, 8000), baseline=("UNIFORM", 0.01)
-# ):
-#     """
-#     Plot normalized (gCO2e/GB) per-tier OPEX/CAPEX with a secondary y-axis showing
-#     efficiency improvement (%) relative to a chosen baseline configuration.
-#     """
-
-#     import numpy as np
-#     import matplotlib.pyplot as plt
-#     import os
-
-#     # ----- Basic parameters -----
-#     avg_content_size = sum(data_size_range) / 2  # bytes
-#     total_cacheable_bytes = n_contents * avg_content_size
-
-#     colors = ['#1f77b4', '#2ca02c', '#ff7f0e', '#d62728']
-#     labels = ['DRAM OPEX', 'SSD OPEX', 'DRAM CAPEX', 'SSD CAPEX']
-#     hatches = ['/', '\\', '...', 'xx']
-
-#     fig, ax1 = plt.subplots(figsize=(12, 6))
-#     bar_width = 0.35
-#     spacing = 0.4
-
-#     x_positions, xtick_labels = [], []
-#     cf_norm_values = {}  # for improvement computation
-
-#     # ----- Compute normalized CF for each configuration -----
-#     for i, cache_size in enumerate(cache_size_range):
-#         for k, placement in enumerate(placements):
-#             filtered = resultset.filter({
-#                 "topology": {"name": topology},
-#                 "cache_placement": {"network_cache": cache_size},
-#                 "cache_placement": {"name": placement},
-#                 "workload": {"name": "STATIONARY", "alpha": alpha},
-#             })
-#             cf = filtered[0][1].get('CARBONFOOTPRINT', {}) if len(filtered) > 0 else {}
-#             per_tier = cf.get('PER_TIER', {})
-
-#             dram = per_tier.get('DRAM', {})
-#             ssd = per_tier.get('SSD', {})
-
-#             dram_opex = dram.get('OPEX', 0)
-#             ssd_opex = ssd.get('OPEX', 0)
-#             dram_capex = dram.get('CAPEX', 0)
-#             ssd_capex = ssd.get('CAPEX', 0)
-
-#             # ---- Normalization factor ----
-#             cache_bytes = cache_size * total_cacheable_bytes
-#             cache_gb = cache_bytes / (1024 ** 3)
-#             if cache_gb == 0:
-#                 continue
-#             norm = 1 / cache_gb
-
-#             dram_opex *= norm
-#             ssd_opex  *= norm
-#             dram_capex *= norm
-#             ssd_capex  *= norm
-
-#             total_cf = dram_opex + ssd_opex + dram_capex + ssd_capex
-#             cf_norm_values[(placement, cache_size)] = total_cf
-
-#             # ---- Draw stacked bars ----
-#             x = i * (len(placements) * (bar_width + spacing)) + k * (bar_width + spacing)
-#             x_positions.append(x)
-#             xtick_labels.append(f'{placement}\n(Cache {cache_size})')
-
-#             bottom = 0
-#             for j, val in enumerate([dram_opex, ssd_opex, dram_capex, ssd_capex]):
-#                 ax1.bar(
-#                     x, val, bar_width, bottom=bottom,
-#                     color=colors[j], hatch=hatches[j], edgecolor='black',
-#                     label=labels[j] if (i == 0 and k == 0) else None
-#                 )
-#                 bottom += val
-
-#     # ----- Left Y-axis -----
-#     ax1.set_ylabel('Carbon Footprint (g CO₂e / GB)', fontsize=12)
-#     ax1.grid(True, linestyle='--', alpha=0.6)
-
-#     # ----- Compute baseline and improvements -----
-#     baseline_val = cf_norm_values.get(baseline, None)
-#     if baseline_val is None:
-#         print(f"⚠️ Baseline {baseline} not found — skipping efficiency axis.")
-#         plt.close()
-#         return
-
-#     improvements = []
-#     for key, cf in cf_norm_values.items():
-#         imp = ((baseline_val - cf) / baseline_val) * 100
-#         improvements.append((key, imp))
-
-#     # Sort improvements to match x-axis order
-#     improvement_values = [imp for ((p, c), imp) in sorted(improvements,
-#                              key=lambda kv: (cache_size_range.index(kv[0][1]),
-#                                              placements.index(kv[0][0])))]
-
-#     # ----- Right Y-axis -----
-#     ax2 = ax1.twinx()
-#     ax2.plot(x_positions, improvement_values, 'ko--', markersize=4, label='Efficiency Δ (%)')
-#     ax2.set_ylabel('Efficiency Improvement (%) vs Baseline', fontsize=12, color='black')
-#     ax2.tick_params(axis='y', labelcolor='black')
-
-#     # ----- X-axis -----
-#     ax1.set_xticks(x_positions)
-#     ax1.set_xticklabels(xtick_labels, rotation=45, ha="right", fontsize=10)
-#     ax1.set_xlabel('Cache Proportion and Placement', fontsize=13)
-#     ax1.legend(title="Component", fontsize=9, loc='upper left', ncol=2)
-#     ax2.legend(loc='upper right')
-
-#     plt.tight_layout()
-#     fname = os.path.join(plotdir, f"NORMALIZED_EFFICIENCY_T={topology}@A={alpha}.jpg")
-#     plt.savefig(fname, bbox_inches='tight')
-#     plt.close()
-#     print(f"✅ Saved normalized efficiency plot: {fname}")
 
 def plot_per_tier_opex_vs_capex_all_configs(
     resultset, topology, alpha, cache_size_range, placements, plotdir,
@@ -1909,341 +1187,548 @@ def plot_per_tier_opex_vs_capex_all_configs(
     plt.close()
     print(f"✅ Saved triple-efficiency plot (DRAM, SSD, HDD): {fname}")
 
-# def plot_per_tier_opex_vs_capex_all_configs(
-#     resultset,
-#     topology,
-#     alpha,
-#     cache_size_range,
-#     placements,
-#     plotdir,
-#     mode="global"  # 'global' or 'per-tier'
-# ):
-#     """
-#     Generates stacked OPEX and CAPEX bars per configuration.
-#     Each bar group = one configuration (placement or cache size).
-#     Each bar is stacked by tier (DRAM, SSD, ...).
-#     """
-#     import os
-#     import numpy as np
-#     import matplotlib.pyplot as plt
+def plot_ccch_vs_cache_placement(
+    resultset, topology, alpha, cache_size_range, strategy, cache_placements, plotdir
+):
+    # ---------------------------
+    # 1. Precompute & inject CCCH
+    # ---------------------------
+    uniform_filtered = resultset.filter({
+        "topology": {"name": topology},
+        "workload": {"name": "STATIONARY", "alpha": alpha},
+        "strategy": {"name": strategy},
+        "cache_placement": {"name" : "UNIFORM"},
+        "CCHRP": {}
+    })
+    uniform_cf = {
+        res[0].get("cache_placement").get("network_cache"): res[1].get("CARBONFOOTPRINT").get("MEAN")
+        for res in uniform_filtered
+        if res[1].get("CARBONFOOTPRINT").get("MEAN") is not None
+    }
 
-#     # Color map for tiers
-#     tier_colors = {
-#         "DRAM": "#1f77b4",
-#         "SSD": "#ff7f0e",
-#         "NVDIMM": "#2ca02c",
-#         "HDD": "#d62728",
-#     }
+    alpha_filtered = resultset.filter({
+        "topology": {"name": topology},
+        "workload" :{"alpha":alpha},
+        "strategy": {"name": strategy},
+        "CCHRP": {}
+    })
 
-#     bar_width = 0.35
-#     group_spacing = 0.4
+    if not uniform_cf:
+        logger.error("No UNIFORM CCHRP values found for normalization.")
+        return
+    
+    # Step 3: Normalize the resultset based on LCE CHRCP values
+    for entry, metrics in alpha_filtered:
+        cache_size = entry.get("cache_placement", {}).get("network_cache")
+        if cache_size in uniform_cf and metrics.get("CCHRP", {}).get("MEAN") is not None:
+            normalized_value = metrics["CCHRP"]["MEAN"] / uniform_cf[cache_size]
+            metrics["CCHRP"]["MEAN"] = normalized_value
+    
+    # ---------------------------
+    # 2. Plot in standard Icarus format
+    # ---------------------------
+    desc = {
+        "xlabel": "Cache Proportion (%)",
+        "ylabel": "gCO₂ per hit ratio unit",
+        "xparam": ("cache_placement", "network_cache"),
+        "xvals": cache_size_range,
+        "filter": {
+            "topology": {"name": topology},
+            "workload": {"name": "STATIONARY", "alpha": alpha},
+        },
 
-#     def compute_scaled(per_tier, tier_stats):
-#         """Return tier-scaled OPEX/CAPEX dicts"""
-#         if not tier_stats:
-#             tier_stats = {t: 1 for t in per_tier.keys()}
+        # 🔥 Must match lengths = one entry per placement
+        "ymetrics":     [("CCHRP", "MEAN")] * len(cache_placements),
+        "ycondnames":   [("cache_placement", "name")] * len(cache_placements),
+        "ycondvals":     cache_placements,
+        "metric": ("CCHRP", "MEAN"),
 
-#         scaled_opex = {t: v.get("OPEX", 0) * tier_stats.get(t, 1) for t, v in per_tier.items()}
-#         scaled_capex = {t: v.get("CAPEX", 0) * tier_stats.get(t, 1) for t, v in per_tier.items()}
+        "errorbar": False,
+        "legend_loc": "upper left",
+        "line_style": PLACEMENT_STYLE,
+        "legend": PLACEMENT_LEGEND,
+        "plotempty": PLOT_EMPTY_GRAPHS,
+    }
 
-#         if mode == "global":
-#             total = sum(list(scaled_opex.values()) + list(scaled_capex.values()))
-#             if total > 0:
-#                 scaled_opex = {t: v / total for t, v in scaled_opex.items()}
-#                 scaled_capex = {t: v / total for t, v in scaled_capex.items()}
-#         elif mode == "per-tier":
-#             # normalize each tier internally
-#             for t in per_tier.keys():
-#                 total_tier = scaled_opex[t] + scaled_capex[t]
-#                 if total_tier > 0:
-#                     scaled_opex[t] /= total_tier
-#                     scaled_capex[t] /= total_tier
-#         return scaled_opex, scaled_capex
+    plot_lines(resultset, desc, f"CCCH_T={topology}@A={alpha}@S={strategy}.jpg", plotdir)
 
-#     # ---------- (A) FIX CACHE SIZE ----------
-#     for cache_size in cache_size_range:
-#         fig, ax = plt.subplots(figsize=(10, 5))
-#         x_positions, xtick_labels = [], []
-#         offset = 0
 
-#         for placement in placements:
-#             filtered = resultset.filter({
-#                 "topology": {"name": topology},
-#                 "cache_placement": {"network_cache": cache_size},
-#                 "cache_placement": {"name": placement},
-#                 "workload": {"name": "STATIONARY", "alpha": alpha},
-#             })
-#             if len(filtered) == 0:
-#                 continue
+# ============= CACHE SIZES =============
+def plot_cache_hits_vs_cache_size(
+    resultset, topology, alpha, cache_size_range, placements, plotdir
+):
+    desc = {}
+    desc["xlabel"] = "Cache Proportion (%)"
+    desc["ylabel"] = "Cache hit ratio"
+    desc["xparam"] = ("cache_placement", "network_cache")
+    desc["xvals"] = cache_size_range
+    desc["filter"] = {
+        "topology": {"name": topology},
+        "workload": {"name": "STATIONARY", "alpha": alpha},
+    }
+    desc["ymetrics"] = [("CACHE_HIT_RATIO", "MEAN")] * len(placements)
+    desc["ycondnames"] = [("cache_placement", "name")] * len(placements)
+    desc["ycondvals"] = placements
+    desc["errorbar"] = True
+    desc["legend_loc"] = "upper left"
+    desc["line_style"] = PLACEMENT_STYLE
+    desc["legend"] = PLACEMENT_LEGEND
+    desc["plotempty"] = PLOT_EMPTY_GRAPHS
+    plot_lines(
+        resultset,
+        desc,
+        "CACHE_HIT_RATIO_T={}@A={}.jpg".format(topology, alpha),
+        plotdir,
+    )
 
-#             result = filtered[0][1]
-#             cf_data = result.get("CARBONFOOTPRINT", {})
-#             per_tier = cf_data.get("PER_TIER", {})
-#             tier_stats = cf_data.get("TIER_STATS", result.get("TIER_STATS", {}))
+def plot_cf_vs_cache_size(
+    resultset, topology, alpha, cache_size_range, placements, plotdir
+):
+    desc = {}
+    desc["xlabel"] = "Cache Proportion (%)"
+    desc["ylabel"] = "Carbon Footprint g.CO2"
+    desc["xparam"] = ("cache_placement", "network_cache")
+    desc["xvals"] = cache_size_range
+    desc["filter"] = {
+        "topology": {"name": topology},
+        "workload": {"name": "STATIONARY", "alpha": alpha},
+    }
+    desc["ymetrics"] = [("CARBONFOOTPRINT", "TOTAL")] * len(placements)
+    desc["ycondnames"] = [("cache_placement", "name")] * len(placements)
+    desc["ycondvals"] = placements
+    desc["errorbar"] = True
+    desc["legend_loc"] = "upper left"
+    desc["line_style"] = PLACEMENT_STYLE
+    desc["legend"] = PLACEMENT_LEGEND
+    desc["plotempty"] = PLOT_EMPTY_GRAPHS
+    plot_lines(
+        resultset,
+        desc,
+        "CF_T={}@A={}.jpg".format(topology, alpha),
+        plotdir,
+    )
 
-#             if not per_tier:
-#                 continue
+def plot_cost_vs_cache_size(
+    resultset, topology, alpha, cache_size_range, placements, plotdir
+):
+    desc = {}
+    desc["xlabel"] = "Cache Proportion (%)"
+    desc["ylabel"] = "Cost per Request ($)"
+    desc["xparam"] = ("cache_placement", "network_cache")
+    desc["xvals"] = cache_size_range
+    desc["filter"] = {
+        "topology": {"name": topology},
+        "workload": {"name": "STATIONARY", "alpha" : alpha},
+    }
+    desc["ymetrics"] = [("COST", "MEAN")] * len(placements)
+    desc["ycondnames"] = [("cache_placement", "name")] * len(placements)
+    desc["ycondvals"] = placements
+    desc["errorbar"] = True
+    desc["legend_loc"] = "upper right"
+    desc["line_style"] = PLACEMENT_STYLE
+    desc["legend"] = PLACEMENT_LEGEND
+    desc["plotempty"] = PLOT_EMPTY_GRAPHS
+    plot_lines(
+        resultset, desc, "COST_T={}@A={}.jpg".format(topology, alpha), plotdir
+    )
 
-#             scaled_opex, scaled_capex = compute_scaled(per_tier, tier_stats)
+def plot_latency_vs_cache_size(
+    resultset, topology, alpha, cache_size_range, placements, plotdir
+):
+    desc = {}
+    # desc["title"] = "Content Popularity \u03b1 = {}".format(alpha)
+    desc["xlabel"] = "Cache Proportion (%)"
+    desc["ylabel"] = "Latency (ms)"
+    desc["xparam"] = ("cache_placement", "network_cache")
+    desc["xvals"] = cache_size_range 
+    desc["filter"] = {
+        "topology": {"name": topology},
+        "workload": {"name": "STATIONARY", "alpha": alpha},
+    }
+    desc["ymetrics"] = [("LATENCY", "MEAN")] * len(placements)
+    desc["ycondnames"] = [("cache_placement", "name")] * len(placements)
+    desc["ycondvals"] = placements
+    desc["metric"] = ("LATENCY", "MEAN")
+    desc["errorbar"] = True
+    desc["legend_loc"] = "upper right"
+    desc["line_style"] = PLACEMENT_STYLE
+    desc["legend"] = PLACEMENT_LEGEND
+    desc["plotempty"] = PLOT_EMPTY_GRAPHS
+    plot_lines(
+        resultset, desc, "LATENCY_T={}@A={}.jpg".format(topology, alpha), plotdir
+    )
 
-#             # OPEX bar (stacked)
-#             bottom_opex = 0
-#             for t, val in scaled_opex.items():
-#                 ax.bar(offset, val, bar_width,
-#                        bottom=bottom_opex,
-#                        color=tier_colors.get(t, None),
-#                        edgecolor='black',
-#                        label=f"{t} OPEX" if offset == 0 else "")
-#                 bottom_opex += val
+def plot_ccch_vs_cache_size(
+    resultset, topology, alpha, cache_size_range, placements, plotdir
+):
+    uniform_filtered = resultset.filter({
+        "topology": {"name": topology},
+        "workload": {"name": "STATIONARY", "alpha": alpha},\
+        "cache_placement": {"name" : "UNIFORM"},
+        "CCHRP": {}
+    })
+    uniform_cf = {
+        res[0].get("cache_placement").get("network_cache"): res[1].get("CCHRP").get("MEAN")
+        for res in uniform_filtered
+        if res[1].get("CCHRP").get("MEAN") is not None
+    }
 
-#             # CAPEX bar (stacked)
-#             bottom_capex = 0
-#             for t, val in scaled_capex.items():
-#                 ax.bar(offset + bar_width + 0.05, val, bar_width,
-#                        bottom=bottom_capex,
-#                        color=tier_colors.get(t, None),
-#                        edgecolor='black',
-#                        hatch='//',
-#                        label=f"{t} CAPEX" if offset == 0 else "")
-#                 bottom_capex += val
+    alpha_filtered = resultset.filter({
+        "topology": {"name": topology},
+        "workload" :{"alpha":alpha},
+        "CCHRP": {}
+    })
 
-#             xtick_labels.append(f"{placement}")
-#             x_positions.append(offset + bar_width / 2)
-#             offset += (2 * bar_width) + group_spacing
+    if not uniform_cf:
+        logger.error("No UNIFORM CCHRP values found for normalization.")
+        return
+    
+    # Step 3: Normalize the resultset based on LCE CHRCP values
+    for entry, metrics in alpha_filtered:
+        cache_size = entry.get("cache_placement", {}).get("network_cache")
+        if cache_size in uniform_cf and metrics.get("CCHRP", {}).get("MEAN") is not None:
+            normalized_value = metrics["CCHRP"]["MEAN"] / uniform_cf[cache_size]
+            metrics["CCHRP"]["MEAN"] = normalized_value
+    
+    desc = {}
+    desc["xlabel"] = "Cache Proportion (%)"
+    desc["ylabel"] = "Carbon Efficiency"
+    desc["xparam"] = ("cache_placement", "network_cache")
+    desc["xvals"] = cache_size_range 
+    desc["filter"] = {
+        "topology": {"name": topology},
+        "workload": {"name": "STATIONARY", "alpha": alpha},
+    }
+    desc["ymetrics"] = [("CCHRP", "MEAN")] * len(placements)
+    desc["ycondnames"] = [("cache_placement", "name")] * len(placements)
+    desc["ycondvals"] = placements
+    desc["errorbar"] = True
+    desc["legend_loc"] = "upper right"
+    desc["line_style"] = PLACEMENT_STYLE
+    desc["legend"] = PLACEMENT_LEGEND
+    desc["plotempty"] = PLOT_EMPTY_GRAPHS
+    plot_lines(
+        resultset, desc, "CCHRP_T={}@A={}.jpg".format(topology, alpha), plotdir
+    )
 
-#         ax.set_xticks(x_positions)
-#         ax.set_xticklabels(xtick_labels, rotation=45, ha='right', fontsize=9)
-#         ax.set_ylabel("Fraction of Total Carbon Footprint")
-#         ax.set_xlabel(f"Placement (Cache={cache_size})")
-#         ax.set_title(f"Stacked OPEX vs CAPEX per Tier – {topology} – α={alpha} – Cache={cache_size}")
-#         ax.grid(True, linestyle="--", alpha=0.6, axis="y")
+# ============= TOPOLOGY =============
+def plot_cache_hits_vs_topology(
+    resultset, alpha, cache_size, topology_range, placements, plotdir
+):
+    desc = {}
+    desc["xlabel"] = "Topologies"
+    desc["ylabel"] = "Cache hit ratio"
+    desc["xparam"] = ("topology", "name")
+    desc["xvals"] = topology_range
+    desc["filter"] = {
+        "cache_placement": {"network_cache": cache_size},
+        "workload": {"name": "STATIONARY", "alpha": alpha},
+    }
+    desc["ymetrics"] = [("CACHE_HIT_RATIO", "MEAN")] * len(placements)
+    desc["ycondnames"] = [("cache_placement", "name")] * len(placements)
+    desc["ycondvals"] = placements
+    desc["errorbar"] = True
+    desc["legend_loc"] = "lower right"
+    desc["bar_color"] = PLACEMENT_BAR_COLOR
+    desc["bar_hatch"] = PLACEMENT_BAR_HATCH
+    desc["legend"] = PLACEMENT_LEGEND
+    desc["plotempty"] = PLOT_EMPTY_GRAPHS
+    plot_bar_chart(
+        resultset, desc,
+        "CACHE_HIT_RATIO_A={}_C={}.jpg".format(alpha, cache_size),
+        plotdir,
+    )
 
-#         ax.set_ylim(0, 1.05)
-#         ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f"{int(y*100)}%"))
+def plot_cost_vs_topology(
+    resultset, alpha, cache_size, topology_range, placements, plotdir
+):
+    desc = {}
+    desc["xlabel"] = "Topologies"
+    desc["ylabel"] = "Cost per Request ($)"
+    desc["xparam"] = ("topology", "name")
+    desc["xvals"] = topology_range
+    desc["filter"] = {
+        "cache_placement": {"network_cache": cache_size},
+        "workload": {"name": "STATIONARY", "alpha": alpha},
+    }
+    desc["ymetrics"] = [("COST", "MEAN")] * len(placements)
+    desc["ycondnames"] = [("cache_placement", "name")] * len(placements)
+    desc["ycondvals"] = placements
+    desc["errorbar"] = True
+    desc["legend_loc"] = "lower right"
+    desc["bar_color"] = PLACEMENT_BAR_COLOR
+    desc["bar_hatch"] = PLACEMENT_BAR_HATCH
+    desc["legend"] = PLACEMENT_LEGEND
+    desc["plotempty"] = PLOT_EMPTY_GRAPHS
+    plot_bar_chart(
+        resultset,
+        desc,
+        "COST_A={}_C={}.jpg".format(alpha, cache_size),
+        plotdir,
+    )
 
-#         handles, labels = ax.get_legend_handles_labels()
-#         unique = dict(zip(labels, handles))
-#         ax.legend(unique.values(), unique.keys(), title="Tier/Component", fontsize=8)
+def plot_latency_vs_topology(
+    resultset, alpha, cache_size, topology_range, placements, plotdir
+):
+    desc = {}
+    desc["xlabel"] = "Topologies"
+    desc["ylabel"] = "Latency (ms)"
+    desc["xparam"] = ("topology", "name")
+    desc["xvals"] = topology_range
+    desc["filter"] = {
+        "cache_placement": {"network_cache": cache_size},
+        "workload": {"name": "STATIONARY", "alpha": alpha},
+    }
+    desc["ymetrics"] = [("LATENCY", "MEAN")] * len(placements)
+    desc["ycondnames"] = [("cache_placement", "name")] * len(placements)
+    desc["ycondvals"] = placements
+    desc["errorbar"] = True
+    desc["legend_loc"] = "lower right"
+    desc["bar_color"] = PLACEMENT_BAR_COLOR
+    desc["bar_hatch"] = PLACEMENT_BAR_HATCH
+    desc["legend"] = PLACEMENT_LEGEND
+    desc["plotempty"] = PLOT_EMPTY_GRAPHS
+    plot_bar_chart(
+        resultset,
+        desc,
+        "LATENCY_A={}_C={}.jpg".format(alpha, cache_size),
+        plotdir,
+    )
 
-#         plt.tight_layout()
-#         outname = f"STACKED_TIER_COMPONENTS_T={topology}_A={alpha}_Cache={cache_size}_{mode}.jpg"
-#         plt.savefig(os.path.join(plotdir, outname), bbox_inches="tight", dpi=300)
-#         plt.close()
-#         print(f"✅ Saved stacked plot (Cache={cache_size}): {outname}")
+def plot_cf_vs_topology(
+    resultset, alpha, cache_size, topology_range, placements, plotdir
+):
+    desc = {}
+    desc["xlabel"] = "Topologies"
+    desc["ylabel"] = "Carbon Footprint g.CO2"
+    desc["xparam"] = ("topology", "name")
+    desc["xvals"] = topology_range
+    desc["filter"] = {
+        "cache_placement": {"network_cache": cache_size},
+        "workload": {"name": "STATIONARY", "alpha": alpha},
+    }
+    desc["ymetrics"] = [("CARBONFOOTPRINT", "TOTAL")] * len(placements)
+    desc["ycondnames"] = [("cache_placement", "name")] * len(placements)
+    desc["ycondvals"] = placements
+    desc["errorbar"] = True
+    desc["legend_loc"] = "lower right"
+    desc["bar_color"] = PLACEMENT_BAR_COLOR
+    desc["bar_hatch"] = PLACEMENT_BAR_HATCH
+    desc["legend"] = PLACEMENT_LEGEND
+    desc["plotempty"] = PLOT_EMPTY_GRAPHS
+    plot_bar_chart(
+        resultset, desc, "CF_A={}@C={}.jpg".format(alpha, cache_size), plotdir
+    )
 
-# def plot_per_tier_opex_vs_capex_all_configs(resultset, topology, alpha, cache_size_range, placements, plotdir):
-#     import os
-#     import matplotlib.pyplot as plt
+def plot_ccch_vs_topology(
+    resultset, alpha, cache_size, topology_range, placements, plotdir
+):
+    uniform_filtered = resultset.filter({
+        "cache_placement": {"network_cache": cache_size},
+        "workload": {"name": "STATIONARY", "alpha": alpha},\
+        "cache_placement": {"name" : "UNIFORM"},
+        "CCHRP": {}
+    })
+    uniform_cf = {
+        res[0].get("cache_placement").get("network_cache"): res[1].get("CCHRP").get("MEAN")
+        for res in uniform_filtered
+        if res[1].get("CCHRP").get("MEAN") is not None
+    }
 
-#     tier_colors = {
-#         "DRAM": "#1f77b4",
-#         "SSD": "#ff7f0e",
-#         "NVDIMM": "#2ca02c",
-#         "HDD": "#d62728",
-#     }
+    alpha_filtered = resultset.filter({
+        "cache_placement": {"network_cache": cache_size},
+        "workload" :{"alpha":alpha},
+        "CCHRP": {}
+    })
 
-#     bar_width = 0.35
-#     group_spacing = 0.4
+    if not uniform_cf:
+        logger.error("No UNIFORM CCHRP values found for normalization.")
+        return
+    
+    # Step 3: Normalize the resultset based on LCE CHRCP values
+    for entry, metrics in alpha_filtered:
+        cache_size = entry.get("cache_placement", {}).get("network_cache")
+        if cache_size in uniform_cf and metrics.get("CCHRP", {}).get("MEAN") is not None:
+            normalized_value = metrics["CCHRP"]["MEAN"] / uniform_cf[cache_size]
+            metrics["CCHRP"]["MEAN"] = normalized_value
+    
+    desc = {}
+    desc["xlabel"] = "Topologies"
+    desc["ylabel"] = "Carbon Efficiency"
+    desc["xparam"] = ("topology", "name")
+    desc["xvals"] = topology_range
+    desc["filter"] = {
+        "cache_placement": {"network_cache": cache_size},
+        "workload": {"name": "STATIONARY", "alpha": alpha},
+    }
+    desc["ymetrics"] = [("CCHRP", "MEAN")] * len(placements)
+    desc["ycondnames"] = [("cache_placement", "name")] * len(placements)
+    desc["ycondvals"] = placements
+    desc["errorbar"] = True
+    desc["legend_loc"] = "lower right"
+    desc["bar_color"] = PLACEMENT_BAR_COLOR
+    desc["bar_hatch"] = PLACEMENT_BAR_HATCH
+    desc["legend"] = PLACEMENT_LEGEND
+    desc["plotempty"] = PLOT_EMPTY_GRAPHS
+    plot_bar_chart(
+        resultset, desc, "CCHRP_A={}@C={}.jpg".format(alpha, cache_size), plotdir
+    )
 
-#     for cache_size in cache_size_range:
-#         fig, ax = plt.subplots(figsize=(10, 5))
-#         x_positions, xtick_labels = [], []
-#         offset = 0
+# ============= ALPHA =============
+def plot_cache_hits_vs_alpha(
+    resultset, topology, cache_size, alpha_range, placements, plotdir
+):
+    desc = {}
+    desc["xlabel"] = "Content distribution \u03b1"
+    desc["ylabel"] = "Cache hit ratio"
+    desc["xparam"] = ("workload", "alpha")
+    desc["xvals"] = alpha_range
+    desc["filter"] = {
+        "topology": {"name": topology},
+        "cache_placement": {"network_cache": cache_size},
+    }
+    desc["ymetrics"] = [("CACHE_HIT_RATIO", "MEAN")] * len(placements)
+    desc["ycondnames"] = [("cache_placement", "name")] * len(placements)
+    desc["ycondvals"] = placements
+    desc["errorbar"] = True
+    desc["legend_loc"] = "upper left"
+    desc["line_style"] = PLACEMENT_STYLE
+    desc["legend"] = PLACEMENT_LEGEND
+    desc["plotempty"] = PLOT_EMPTY_GRAPHS
+    plot_lines(
+        resultset,
+        desc,
+        "CACHE_HIT_RATIO_T={}@C={}.jpg".format(topology, cache_size),
+        plotdir,
+    )
 
-#         for placement in placements:
-#             filtered = resultset.filter({
-#                 "topology": {"name": topology},
-#                 "cache_placement": {"network_cache": cache_size},
-#                 "cache_placement": {"name": placement},
-#                 "workload": {"name": "STATIONARY", "alpha": alpha},
-#             })
-#             if not filtered:
-#                 continue
+def plot_latency_vs_alpha(
+    resultset, topology, cache_size, alpha_range, placements, plotdir
+):
+    desc = {}
+    # desc["title"] = "Cache size = {}".format(cache_size)
+    desc["xlabel"] = "Content distribution \u03b1"
+    desc["ylabel"] = "Latency (ms)"
+    desc["xparam"] = ("workload", "alpha")
+    desc["xvals"] = alpha_range
+    desc["filter"] = {
+        "topology": {"name": topology},
+        "cache_placement": {"network_cache": cache_size},
+    }
+    desc["ymetrics"] = [("LATENCY", "MEAN")] * len(placements)
+    desc["ycondnames"] = [("cache_placement", "name")] * len(placements)
+    desc["ycondvals"] = placements
+    desc["errorbar"] = True
+    desc["legend_loc"] = "upper right"
+    desc["line_style"] = PLACEMENT_STYLE
+    desc["legend"] = PLACEMENT_LEGEND
+    desc["plotempty"] = PLOT_EMPTY_GRAPHS
+    plot_lines(
+        resultset, desc, "LATENCY_T={}@C={}.jpg".format(topology, cache_size), plotdir
+    )
 
-#             result = filtered[0][1]
-#             cf_data = result.get("CARBONFOOTPRINT", {})
-#             per_tier = cf_data.get("PER_TIER", {})
-#             tier_stats = cf_data.get("TIER_STATS", {})
+def plot_ccch_vs_alpha(
+    resultset, topology, cache_size, alpha_range, placements, plotdir
+):
+    uniform_filtered = resultset.filter({
+        "topology": {"name": topology},
+        "cache_placement": {"network_cache": cache_size},
+        "cache_placement": {"name" : "UNIFORM"},
+        "CCHRP": {}
+    })
+    uniform_cf = {
+        res[0].get("cache_placement").get("network_cache"): res[1].get("CCHRP").get("MEAN")
+        for res in uniform_filtered
+        if res[1].get("CCHRP").get("MEAN") is not None
+    }
 
-#             if not per_tier:
-#                 continue
+    alpha_filtered = resultset.filter({
+        "topology": {"name": topology},
+        "cache_placement": {"network_cache": cache_size},
+        "CCHRP": {}
+    })
 
-#             # Scale by number of nodes per tier
-#             scaled_opex = {t: v.get("OPEX", 0) * tier_stats.get(t, 1) for t, v in per_tier.items()}
-#             scaled_capex = {t: v.get("CAPEX", 0) * tier_stats.get(t, 1) for t, v in per_tier.items()}
+    if not uniform_cf:
+        logger.error("No UNIFORM CCHRP values found for normalization.")
+        return
+    
+    # Step 3: Normalize the resultset based on LCE CHRCP values
+    for entry, metrics in alpha_filtered:
+        cache_size = entry.get("cache_placement", {}).get("network_cache")
+        if cache_size in uniform_cf and metrics.get("CCHRP", {}).get("MEAN") is not None:
+            normalized_value = metrics["CCHRP"]["MEAN"] / uniform_cf[cache_size]
+            metrics["CCHRP"]["MEAN"] = normalized_value
 
-#             total_opex = sum(scaled_opex.values())
-#             total_capex = sum(scaled_capex.values())
+    desc = {}
+    desc["xlabel"] = "Content distribution \u03b1"
+    desc["ylabel"] = "Carbon Efficiency"
+    desc["xparam"] = ("workload", "alpha")
+    desc["xvals"] = alpha_range
+    desc["filter"] = {
+        "topology": {"name": topology},
+        "cache_placement": {"network_cache": cache_size},
+    }
+    desc["ymetrics"] = [("CCHRP", "MEAN")] * len(placements)
+    desc["ycondnames"] = [("cache_placement", "name")] * len(placements)
+    desc["ycondvals"] = placements
+    desc["errorbar"] = True
+    desc["legend_loc"] = "upper right"
+    desc["line_style"] = PLACEMENT_STYLE
+    desc["legend"] = PLACEMENT_LEGEND
+    desc["plotempty"] = PLOT_EMPTY_GRAPHS
+    plot_lines(
+        resultset, desc, "CCHRP_T={}@C={}.jpg".format(topology, cache_size), plotdir
+    )
 
-#             # Normalize each group separately to sum to 1 within each component
-#             if total_opex > 0:
-#                 scaled_opex = {t: v / total_opex for t, v in scaled_opex.items()}
-#             if total_capex > 0:
-#                 scaled_capex = {t: v / total_capex for t, v in scaled_capex.items()}
+def plot_cf_vs_alpha(
+    resultset, topology, cache_size, alpha_range, placements, plotdir
+):
+    desc = {}
+    desc["xlabel"] = "Content distribution \u03b1"
+    desc["ylabel"] = "Carbon Footprint g.CO2"
+    desc["xparam"] = ("workload", "alpha")
+    desc["xvals"] = alpha_range
+    desc["filter"] = {
+        "topology": {"name": topology},
+        "cache_placement": {"network_cache": cache_size},
+    }
+    desc["ymetrics"] = [("CARBONFOOTPRINT", "TOTAL")] * len(placements)
+    desc["ycondnames"] = [("cache_placement", "name")] * len(placements)
+    desc["ycondvals"] = placements
+    desc["errorbar"] = True
+    desc["legend_loc"] = "upper right"
+    desc["line_style"] = PLACEMENT_STYLE
+    desc["legend"] = PLACEMENT_LEGEND
+    desc["plotempty"] = PLOT_EMPTY_GRAPHS
+    plot_lines(
+        resultset, desc, "CF_T={}@C={}.jpg".format(topology, cache_size), plotdir
+    )
 
-#             # --- Draw OPEX (stacked)
-#             bottom = 0
-#             for t, val in scaled_opex.items():
-#                 ax.bar(offset, val, bar_width, bottom=bottom,
-#                        color=tier_colors.get(t, "#999"),
-#                        edgecolor='black', hatch='//',
-#                        label=f"{t} OPEX" if offset == 0 else "")
-#                 if val > 0.01:
-#                     ax.text(offset, bottom + val/2, f"{val*100:.1f}%", ha='center', va='center', fontsize=7)
-#                 bottom += val
+def plot_cost_vs_alpha(
+    resultset, topology, cache_size, alpha_range, placements, plotdir
+):
+    desc = {}
+    desc["xlabel"] = "Content distribution \u03b1"
+    desc["ylabel"] = "Cost per Request ($)"
+    desc["xparam"] = ("workload", "alpha")
+    desc["xvals"] = alpha_range
+    desc["filter"] = {
+        "topology": {"name": topology},
+        "cache_placement": {"network_cache": cache_size},
+    }
+    desc["ymetrics"] = [("COST", "MEAN")] * len(placements)
+    desc["ycondnames"] = [("cache_placement", "name")] * len(placements)
+    desc["ycondvals"] = placements
+    desc["errorbar"] = True
+    desc["legend_loc"] = "upper right"
+    desc["line_style"] = PLACEMENT_STYLE
+    desc["legend"] = PLACEMENT_LEGEND
+    desc["plotempty"] = PLOT_EMPTY_GRAPHS
+    plot_lines(
+        resultset, desc, "COST_T={}@C={}.jpg".format(topology, cache_size), plotdir
+    )
 
-#             # --- Draw CAPEX (stacked)
-#             bottom = 0
-#             for t, val in scaled_capex.items():
-#                 ax.bar(offset + bar_width + 0.05, val, bar_width, bottom=bottom,
-#                        color=tier_colors.get(t, "#999"),
-#                        edgecolor='black', hatch='\\\\',
-#                        label=f"{t} CAPEX" if offset == 0 else "")
-#                 if val > 0.01:
-#                     ax.text(offset + bar_width + 0.05, bottom + val/2, f"{val*100:.1f}%", ha='center', va='center', fontsize=7)
-#                 bottom += val
-
-#             xtick_labels.append(f"{placement}")
-#             x_positions.append(offset + bar_width / 2)
-#             offset += (2 * bar_width) + group_spacing
-
-#         ax.set_xticks(x_positions)
-#         ax.set_xticklabels(xtick_labels, rotation=45, ha='right', fontsize=9)
-#         ax.set_ylabel("Fraction (normalized within OPEX/CAPEX)")
-#         ax.set_xlabel(f"Placement (Cache={cache_size})")
-#         ax.set_title(f"Stacked OPEX vs CAPEX per Tier – {topology} – α={alpha} – Cache={cache_size}")
-#         ax.grid(True, linestyle="--", alpha=0.6, axis="y")
-
-#         ax.set_ylim(0, 1.05)
-#         ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f"{int(y*100)}%"))
-
-#         handles, labels = ax.get_legend_handles_labels()
-#         unique = dict(zip(labels, handles))
-#         ax.legend(unique.values(), unique.keys(), title="Tier/Component", fontsize=8)
-
-#         plt.tight_layout()
-#         outname = f"STACKED_TIER_COMPONENTS_FIXED_T={topology}_A={alpha}_Cache={cache_size}.jpg"
-#         plt.savefig(os.path.join(plotdir, outname), bbox_inches="tight", dpi=300)
-#         plt.close()
-#         print(f"✅ Saved fixed stacked plot: {outname}")
-
-# def plot_per_tier_opex_vs_capex_all_configs(resultset, topology, alpha, cache_size_range, placements, plotdir):
-#     import os
-#     import matplotlib.pyplot as plt
-
-#     # --- Define tier colors ---
-#     tier_colors = {
-#         "DRAM": "#1f77b4",
-#         "SSD": "#ff7f0e",
-#         "NVDIMM": "#2ca02c",
-#         "HDD": "#d62728",
-#     }
-
-#     bar_width = 0.35
-#     group_spacing = 0.4
-
-#     for cache_size in cache_size_range:
-#         fig, ax = plt.subplots(figsize=(10, 5))
-#         x_positions, xtick_labels = [], []
-#         offset = 0
-
-#         for placement in placements:
-#             filtered = resultset.filter({
-#                 "topology": {"name": topology},
-#                 "cache_placement": {"network_cache": cache_size},
-#                 "cache_placement": {"name": placement},
-#                 "workload": {"name": "STATIONARY", "alpha": alpha},
-#             })
-#             if not filtered:
-#                 continue
-
-#             result = filtered[0][1]
-#             cf_data = result.get("CARBONFOOTPRINT", {})
-#             per_tier = cf_data.get("PER_TIER", {})
-#             tier_stats = cf_data.get("TIER_STATS", {})
-#             duration = cf_data.get("duration", 0) or 1  # default fallback
-
-#             if not per_tier:
-#                 continue
-
-#             # -----------------------------
-#             # Scale by node count and lifetime
-#             # -----------------------------
-#             scaled_opex, scaled_capex = {}, {}
-
-#             for tier, vals in per_tier.items():
-#                 opex = vals.get("OPEX", 0)
-#                 capex = vals.get("CAPEX", 0)
-#                 n_nodes = tier_stats.get(tier, 1)
-#                 lifespan_years = 5 if "DRAM" in tier else (3 if "SSD" in tier else 5)
-#                 lifespan_sec = lifespan_years * 365 * 24 * 60 * 60
-#                 # Lifetime-aware scaling of CAPEX
-#                 scaled_opex[tier] = opex * n_nodes
-#                 scaled_capex[tier] = capex * n_nodes * (duration / lifespan_sec)
-
-#             total_opex = sum(scaled_opex.values())
-#             total_capex = sum(scaled_capex.values())
-
-#             # Normalize to within OPEX or CAPEX
-#             if total_opex > 0:
-#                 scaled_opex = {t: v / total_opex for t, v in scaled_opex.items()}
-#             if total_capex > 0:
-#                 scaled_capex = {t: v / total_capex for t, v in scaled_capex.items()}
-
-#             # -----------------------------
-#             # Plot OPEX (stacked)
-#             # -----------------------------
-#             bottom = 0
-#             for t, val in scaled_opex.items():
-#                 ax.bar(offset, val, bar_width, bottom=bottom,
-#                        color=tier_colors.get(t, "#999"),
-#                        edgecolor='black', hatch='//',
-#                        label=f"{t} OPEX" if offset == 0 else "")
-#                 if val > 0.01:
-#                     ax.text(offset, bottom + val / 2, f"{val*100:.1f}%", ha='center', va='center', fontsize=7)
-#                 bottom += val
-
-#             # -----------------------------
-#             # Plot CAPEX (stacked)
-#             # -----------------------------
-#             bottom = 0
-#             for t, val in scaled_capex.items():
-#                 ax.bar(offset + bar_width + 0.05, val, bar_width, bottom=bottom,
-#                        color=tier_colors.get(t, "#999"),
-#                        edgecolor='black', hatch='\\\\',
-#                        label=f"{t} CAPEX" if offset == 0 else "")
-#                 if val > 0.01:
-#                     ax.text(offset + bar_width + 0.05, bottom + val / 2, f"{val*100:.1f}%", ha='center', va='center', fontsize=7)
-#                 bottom += val
-
-#             xtick_labels.append(f"{placement}")
-#             x_positions.append(offset + bar_width / 2)
-#             offset += (2 * bar_width) + group_spacing
-
-#         # -----------------------------
-#         # Styling
-#         # -----------------------------
-#         ax.set_xticks(x_positions)
-#         ax.set_xticklabels(xtick_labels, rotation=45, ha='right', fontsize=9)
-#         ax.set_ylabel("Fraction (normalized within OPEX/CAPEX)")
-#         ax.set_xlabel(f"Placement (Cache={cache_size})")
-#         ax.set_title(f"Stacked OPEX vs CAPEX per Tier – {topology} – α={alpha} – Cache={cache_size}")
-#         ax.grid(True, linestyle="--", alpha=0.6, axis="y")
-
-#         ax.set_ylim(0, 1.05)
-#         ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f"{int(y*100)}%"))
-
-#         # Legend (deduplicated)
-#         handles, labels = ax.get_legend_handles_labels()
-#         unique = dict(zip(labels, handles))
-#         ax.legend(unique.values(), unique.keys(), title="Tier/Component", fontsize=8)
-
-#         plt.tight_layout()
-#         outname = f"STACKED_TIER_COMPONENTS_LIFETIME_T={topology}_A={alpha}_Cache={cache_size}.jpg"
-#         plt.savefig(os.path.join(plotdir, outname), bbox_inches="tight", dpi=300)
-#         plt.close()
-#         print(f"✅ Saved lifetime-scaled stacked plot: {outname}")
-
+# ==========================
 def run(config, results, plotdir):
     """Run the plot script
 
@@ -2264,7 +1749,7 @@ def run(config, results, plotdir):
     if not os.path.exists(plotdir):
         os.makedirs(plotdir)
     # Parse params from settings
-    topologies = settings.TOPOLOGIES
+    
     # cache_items = settings.NETWORK_CACHE
     # original_list = []
     # geant 19 caches
@@ -2280,112 +1765,103 @@ def run(config, results, plotdir):
     #     print(normalized_value)
     
     # cache_sizes = list(dict.fromkeys(original_list))
+    topologies = settings.TOPOLOGIES
     cache_sizes = settings.NETWORK_CACHE
     strategies = settings.STRATEGIES
     cache_placements = settings.CACHE_PLACEMENT
+    alphas = settings.ALPHA
+    
     # Reorder to put CLS2M first if it's in the list
     if "CLS2M" in strategies:
         strategies = ["CLS2M"] + [s for s in strategies if s != "CLS2M"]
-    alphas = settings.ALPHA
-    # Plot graphs
-    distributions = {
-        "CL2SM": {1: 4520, 2: 66, 3: 57, 4: 4, 5: 6, 6: 1, 7: 1, 8: 4, 9: 1, 10: 2},
-        "LCE": {2: 192, 3: 812, 4: 1222, 5: 1112, 6: 964, 7: 350, 8: 6, 9: 2, 10: 1, 11: 1},
-        "LCD": {2: 4590, 3: 45, 4: 11, 5: 6, 6: 4, 7: 3, 8: 1, 9: 1, 10: 1},
-        "PROB_CACHE": {1: 3373, 2: 1191, 3: 90, 4: 8, 6: 2, 7: 1, 8: 2, 9: 2},
-        "CPCache": {1: 183, 2: 792, 3: 1206, 4: 1110, 5: 974, 6: 368, 7: 20, 8: 6, 9: 1, 10: 2},
-        "CL4M": {2: 4617, 3: 31, 4: 5, 5: 2, 6: 1, 8: 2, 9: 2, 10: 2},
-    }
     
-    for topology in topologies:
-        for alpha in alphas:
-            for strategy in strategies:
-                plot_cf_vs_cache_placement(
-                    resultset, topology, alpha, cache_sizes, strategy, cache_placements, plotdir
-                )
-                plot_capex_vs_cache_placement(
-                    resultset, topology, alpha, cache_sizes, strategy, cache_placements, plotdir
-                )
-                plot_opex_vs_cache_placement(
-                    resultset, topology, alpha, cache_sizes, strategy, cache_placements, plotdir
-                )
-                plot_cache_hits_vs_cache_placement(
-                    resultset, topology, alpha, cache_sizes, strategy, cache_placements, plotdir
-                )
-                plot_cost_vs_cache_placement(
-                    resultset, topology, alpha, cache_sizes, strategy, cache_placements, plotdir
-                )
-                plot_chrcp_vs_cache_placement(
-                    resultset, topology, alpha, cache_sizes, strategy, cache_placements, plotdir
-                )
-                plot_latency_vs_cache_placement(
-                    resultset, topology, alpha, cache_sizes, strategy, cache_placements, plotdir
-                )
-                # plot_link_load_vs_cache_placement(
-                #     resultset, topology, alpha, cache_sizes, strategy, cache_placements, plotdir
-                # ) 
-            plot_opex_vs_capex_cache_size(
-                resultset, topology, alpha, cache_sizes, cache_placements, plotdir
-            )
-            plot_per_tier_opex_vs_capex_all_configs(
-                resultset, topology, alpha, cache_sizes, cache_placements, plotdir
-            )
-            plot_network_cf_components_vs_cache_size(
-                resultset, topology, alpha, cache_sizes, cache_placements, plotdir
-            )
-            plot_server_opex_vs_capex_cache_size(
-                resultset, topology, alpha, cache_sizes, cache_placements, plotdir
-            )
-            plot_cache_hits_vs_cache_size(
-                resultset, topology, alpha, cache_sizes, strategies, plotdir
-            )
-            plot_chrcp_vs_cache_size(
-                resultset, topology, alpha, cache_sizes, strategies, plotdir
-            )
-            plot_latency_vs_cache_size(
-                resultset, topology, alpha, cache_sizes, strategies, plotdir
-            )
-            plot_cost_vs_cache_size(
-                resultset, topology, alpha, cache_sizes, strategies, plotdir
-            )
-            plot_cost_components_vs_cache_size(
-            resultset, topology, alpha, cache_sizes, strategies, plotdir
-            )
-        for cache_size in cache_sizes:
-            plot_cache_hits_vs_alpha(
-                resultset, topology, cache_size, alphas, strategies, plotdir
-            )
-            plot_latency_vs_alpha(
-                resultset, topology, cache_size, alphas, strategies, plotdir
-            )
-            plot_cost_vs_alpha(
-                resultset, topology, cache_size, alphas, strategies, plotdir
-            )
-            plot_chrcp_vs_alpha(
-                resultset, topology, cache_size, alphas, strategies, plotdir
-            )
-            plot_cost_components_alpha(
-                resultset, topology, cache_size, alphas, strategies, plotdir
-            )
-        
-    plot_num_contents_vs_replicas(distributions, plotdir="./plots")
+    # Plot graphs
+    # distributions = {
+    #     "CL2SM": {1: 4520, 2: 66, 3: 57, 4: 4, 5: 6, 6: 1, 7: 1, 8: 4, 9: 1, 10: 2},
+    #     "LCE": {2: 192, 3: 812, 4: 1222, 5: 1112, 6: 964, 7: 350, 8: 6, 9: 2, 10: 1, 11: 1},
+    #     "LCD": {2: 4590, 3: 45, 4: 11, 5: 6, 6: 4, 7: 3, 8: 1, 9: 1, 10: 1},
+    #     "PROB_CACHE": {1: 3373, 2: 1191, 3: 90, 4: 8, 6: 2, 7: 1, 8: 2, 9: 2},
+    #     "CPCache": {1: 183, 2: 792, 3: 1206, 4: 1110, 5: 974, 6: 368, 7: 20, 8: 6, 9: 1, 10: 2},
+    #     "CL4M": {2: 4617, 3: 31, 4: 5, 5: 2, 6: 1, 8: 2, 9: 2, 10: 2},
+    # }
+    
+    cache_size = 0.015
+    # topology = "TELEKOM"
+    topology = "GEANT"
+    alpha = 0.6
+    # alpha = 0.8
+    
+    # CACHE SIZES
+    plot_cache_hits_vs_cache_size(
+        resultset, topology, alpha, cache_sizes, cache_placements, plotdir
+    )
+    plot_cf_vs_cache_size(
+        resultset, topology, alpha, cache_sizes, cache_placements, plotdir
+    )
+    plot_latency_vs_cache_size(
+        resultset, topology, alpha, cache_sizes, cache_placements, plotdir
+    )
+    plot_cost_vs_cache_size(
+        resultset, topology, alpha, cache_sizes, cache_placements, plotdir
+    )
+    plot_ccch_vs_cache_size(
+        resultset, topology, alpha, cache_sizes, cache_placements, plotdir
+    )
+    
+    # ALPHAS
+    plot_cache_hits_vs_alpha(
+        resultset, topology, cache_size, alphas, cache_placements, plotdir
+    )
+    plot_latency_vs_alpha(
+        resultset, topology, cache_size, alphas, cache_placements, plotdir
+    )
+    plot_cost_vs_alpha(
+        resultset, topology, cache_size, alphas, cache_placements, plotdir
+    )
+    plot_cf_vs_alpha(
+        resultset, topology, cache_size, alphas, cache_placements, plotdir
+    )
+    plot_ccch_vs_alpha(
+        resultset, topology, cache_size, alphas, cache_placements, plotdir
+    )
+    
+    # TOPOLOGIES
+    plot_cache_hits_vs_topology(
+        resultset, alpha, cache_size, topologies, cache_placements, plotdir
+    )
+    plot_latency_vs_topology(
+        resultset, alpha, cache_size, topologies, cache_placements, plotdir
+    )
+    plot_cost_vs_topology(
+        resultset, alpha, cache_size, topologies, cache_placements, plotdir
+    )
+    plot_cf_vs_topology(
+        resultset, alpha, cache_size, topologies, cache_placements, plotdir
+    )
+    plot_ccch_vs_topology(
+        resultset, alpha, cache_size, topologies, cache_placements, plotdir
+    )
+    
+    # for topology in topologies:
+    #     for alpha in alphas:
+    #         for strategy in strategies:
+    #             plot_cf_vs_cache_placement(
+    #                 resultset, topology, alpha, cache_sizes, strategy, cache_placements, plotdir
+    #             )
+    #             plot_capex_vs_cache_placement(
+    #                 resultset, topology, alpha, cache_sizes, strategy, cache_placements, plotdir
+    #             )
+    #             plot_opex_vs_cache_placement(
+    #                 resultset, topology, alpha, cache_sizes, strategy, cache_placements, plotdir
+    #             )
+            
+    #         plot_opex_vs_capex_cache_size(
+    #             resultset, topology, alpha, cache_sizes, cache_placements, plotdir
+    #         )
+    #         plot_per_tier_opex_vs_capex_all_configs(
+    #             resultset, topology, alpha, cache_sizes, cache_placements, plotdir
+    #         )
 
-    for cache_size in cache_sizes:
-        for alpha in alphas:
-            plot_cache_hits_vs_topology(
-                resultset, alpha, cache_size, topologies, strategies, plotdir
-            )
-            plot_latency_vs_topology(
-                resultset, alpha, cache_size, topologies, strategies, plotdir
-            )
-            plot_chrcp_vs_topology(
-                resultset, alpha, cache_size, topologies, strategies, plotdir
-            )
-            plot_cost_vs_topology(
-                resultset, alpha, cache_size, topologies, strategies, plotdir
-            )
-            
-            
     logger.info("Exit. Plots were saved in directory %s" % os.path.abspath(plotdir))
 
 

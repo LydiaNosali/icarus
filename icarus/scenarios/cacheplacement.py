@@ -23,7 +23,9 @@ __all__ = [
     "uniform_cache_placement",
     "degree_centrality_cache_placement",
     "betweenness_centrality_cache_placement",
+    "cache_craft_cache_placement",
     "uniform_consolidated_cache_placement",
+    "eigenvector_centrality_cache_placement",
     "random_cache_placement",
     "optimal_median_cache_placement",
     "optimal_hashrouting_cache_placement",
@@ -118,6 +120,72 @@ def betweenness_centrality_cache_placement(topology, cache_budget, **kwargs):
             if "cache_size" in topology.node[v]["stack"][1]:
                 del topology.node[v]["stack"][1]["cache_size"]
 
+@register_cache_placement("CACHECRAFT")
+def cache_craft_cache_placement(topology, cache_budget, **kwargs):
+    """
+    Cache placement based on PageRank centrality.
+
+    - Compute PageRank on the topology graph.
+    - Restrict to ICR candidates.
+    - Allocate cache proportionally to PageRank.
+    - Enforce integer sizes ≥ 1 and match total cache_budget.
+    """
+    # 1) Compute PageRank scores for all nodes
+    # You can pass damping factor, max_iter, tol via kwargs if desired.
+    pr_kwargs = {}
+    if "pagerank_alpha" in kwargs:
+        pr_kwargs["alpha"] = kwargs["pagerank_alpha"]
+    if "pagerank_max_iter" in kwargs:
+        pr_kwargs["max_iter"] = kwargs["pagerank_max_iter"]
+    if "pagerank_tol" in kwargs:
+        pr_kwargs["tol"] = kwargs["pagerank_tol"]
+
+    pagerank = nx.pagerank(topology, **pr_kwargs)
+
+    icr_candidates = list(topology.graph.get("icr_candidates", []))
+    if not icr_candidates or cache_budget <= 0:
+        return
+
+    # 2) Restrict to ICR candidates, drop zero-score nodes
+    centralities = {v: pagerank.get(v, 0.0) for v in icr_candidates}
+    centralities = {v: c for v, c in centralities.items() if c > 0.0}
+    if not centralities:
+        return
+
+    # 3) Allocate cache proportionally to PageRank
+    total_centrality = sum(centralities.values())
+    raw_alloc = {
+        v: cache_budget * centralities[v] / total_centrality
+        for v in centralities
+    }
+
+    # 4) Round, enforce ≥1, and adjust total back to cache_budget
+    rounded_alloc = {v: max(1, round(raw_alloc[v])) for v in raw_alloc}
+    total_allocated = sum(rounded_alloc.values())
+
+    # If we over-allocated, reduce from lowest-centrality nodes with alloc > 1
+    while total_allocated > cache_budget:
+        over_nodes = [v for v in rounded_alloc if rounded_alloc[v] > 1]
+        if not over_nodes:
+            break
+        victim = min(over_nodes, key=lambda v: centralities[v])
+        rounded_alloc[victim] -= 1
+        total_allocated -= 1
+
+    # If we under-allocated (rare), add units to highest-centrality nodes
+    while total_allocated < cache_budget:
+        beneficiary = max(rounded_alloc, key=lambda v: centralities[v])
+        rounded_alloc[beneficiary] += 1
+        total_allocated += 1
+
+    # 5) Apply allocation to topology stacks
+    for v in icr_candidates:
+        if v in rounded_alloc:
+            topology.node[v]["stack"][1]["cache_size"] = rounded_alloc[v]
+        else:
+            # Explicitly remove cache_size for non-selected candidates
+            if "cache_size" in topology.node[v]["stack"][1]:
+                del topology.node[v]["stack"][1]["cache_size"]
 
 @register_cache_placement("CONSOLIDATED")
 def uniform_consolidated_cache_placement(
@@ -169,6 +237,69 @@ def uniform_consolidated_cache_placement(
         return
     for v in target_nodes:
         topology.node[v]["stack"][1]["cache_size"] = cache_size
+
+@register_cache_placement("EIGENVECTOR_CENTRALITY")
+def eigenvector_centrality_cache_placement(topology, cache_budget, **kwargs):
+    """
+    Cache placement based on eigenvector centrality.
+
+    - Compute eigenvector centrality on the topology graph.
+    - Restrict to ICR candidates.
+    - Allocate cache proportionally to eigenvector centrality.
+    - Enforce integer sizes ≥ 1 and match total cache_budget.
+    """
+    # 1) Compute eigenvector centrality for all nodes
+    ec_kwargs = {}
+    if "max_iter" in kwargs:
+        ec_kwargs["max_iter"] = kwargs["max_iter"]
+    if "tol" in kwargs:
+        ec_kwargs["tol"] = kwargs["tol"]
+
+    centrality_all = nx.eigenvector_centrality(topology, **ec_kwargs)
+
+    icr_candidates = list(topology.graph.get("icr_candidates", []))
+    if not icr_candidates or cache_budget <= 0:
+        return
+
+    # 2) Restrict to ICR candidates, drop zero-score nodes
+    centralities = {v: centrality_all.get(v, 0.0) for v in icr_candidates}
+    centralities = {v: c for v, c in centralities.items() if c > 0.0}
+    if not centralities:
+        return
+
+    # 3) Allocate cache proportionally to eigenvector centrality
+    total_centrality = sum(centralities.values())
+    raw_alloc = {
+        v: cache_budget * centralities[v] / total_centrality
+        for v in centralities
+    }
+
+    # 4) Round, enforce ≥1, and adjust total back to cache_budget
+    rounded_alloc = {v: max(1, round(raw_alloc[v])) for v in raw_alloc}
+    total_allocated = sum(rounded_alloc.values())
+
+    # If we over-allocated, reduce from lowest-centrality nodes with alloc > 1
+    while total_allocated > cache_budget:
+        over_nodes = [v for v in rounded_alloc if rounded_alloc[v] > 1]
+        if not over_nodes:
+            break
+        victim = min(over_nodes, key=lambda v: centralities[v])
+        rounded_alloc[victim] -= 1
+        total_allocated -= 1
+
+    # If we under-allocated, add units to highest-centrality nodes
+    while total_allocated < cache_budget:
+        beneficiary = max(rounded_alloc, key=lambda v: centralities[v])
+        rounded_alloc[beneficiary] += 1
+        total_allocated += 1
+
+    # 5) Apply allocation to topology stacks
+    for v in icr_candidates:
+        if v in rounded_alloc:
+            topology.node[v]["stack"][1]["cache_size"] = rounded_alloc[v]
+        else:
+            if "cache_size" in topology.node[v]["stack"][1]:
+                del topology.node[v]["stack"][1]["cache_size"]
 
 
 @register_cache_placement("RANDOM")
@@ -570,19 +701,24 @@ def green_cache_placement(topology, cache_budget, **kwargs):
     settings = kwargs.get("settings")
     allocs = kwargs.get("allocs", [])
     max_evaluations = kwargs.get("max_evaluations")
-    deg = dict(nx.degree(topology))
-    betw = dict(nx.betweenness_centrality(topology))
+    period = kwargs.get("period")
+    prev_state_path = kwargs.get("prev_state_path")
+
     icr_candidates = topology.graph["icr_candidates"]
-    centralities = {v: betw[v] for v in icr_candidates}
+    params["network"]["nx_graph"] = topology
+    params["network"]["period"] = period
+    params["network"]["prev_state_path"] = prev_state_path
 
     ci = {
         node: topology.nodes[node].get("carbon_intensity", 400)
         for node in icr_candidates}
-
     if ci is not None:
         params["network"]["node_carbon_intensity"] = ci
-    params["network"]["node_betweenness"] = centralities
-    params["network"]["node_traffic"] = deg
+
+    params["network"]["hub_fraction"] = 0.3
+    params["network"]["hub_budget_share"] = 0.7
+    # params["network"]["carbon_weight"] = 1.0    # tune: 0=hit, 1=carbon
+
     if not icr_candidates:
         return
 
@@ -601,30 +737,35 @@ def green_cache_placement(topology, cache_budget, **kwargs):
     for sol, (h, c, cf) in pareto:
         allocs = sol["allocations"]
         logger.info(f"{allocs}, -> hit={h}, cost={c}, carbon={cf}")
-    
-    directions = [+1, -1, -1]
 
     values = []
     solutions = []
+    pareto_allocations = []
+
     for sol, (h, c, cf) in pareto:
         values.append([h, c, cf])   # no minus here
         solutions.append(sol)
+        pareto_allocations.append(sol["allocations"]) 
 
     # Convert to array
     values = np.array(values)
-    weights = np.array([0.3, 0.1, 0.6])
+    directions = [+1, -1, -1]
+    # weights = [0.1, 0.3, 0.6]
     # Run TOPSIS
-    best_idx, scores = topsis(values, directions, weights=weights)
+    # best_idx, scores, node_greenness = topsis(values, directions, weights=weights, pareto_allocations=pareto_allocations)
+    best_idx, scores, node_greenness = topsis(values, directions, nodes=icr_candidates, pareto_allocations=pareto_allocations)
     best_sol = solutions[best_idx]
 
     allocs = best_sol["allocations"]
-    nodes  = best_sol["icr_candidates"]
 
     logger.info(f"Scores:{scores}, Chosen allocations:{allocs}")
-    print(f"Scores:{scores}, Chosen allocations:{allocs}")
+    print(f"Chosen allocation:{allocs}")
+    # print(f"Node greenness: {node_greenness}")
+
+    topology.graph["node_greenness"] = node_greenness
 
     # Apply the allocations
-    for node, size in zip(nodes, allocs):
+    for node, size in zip(icr_candidates, allocs):
         if size > 0:
             topology.node[node]["stack"][1]["cache_size"] = size
         else:
@@ -632,4 +773,4 @@ def green_cache_placement(topology, cache_budget, **kwargs):
                 del topology.node[node]["stack"][1]["cache_size"]
     # Tag the topology
     topology.graph["paes"] = "PAES"
-
+    topology.graph["topsis_scores"] = scores.tolist() 

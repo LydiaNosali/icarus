@@ -49,7 +49,7 @@
       <data key="d28">0</data>
       <data key="d29">0</data>
       <data key="d30">Svizzera</data>
-      <data key="d31">20</data>
+      <data key="d31">50</data>
     </node>
     <node id="1">
       <data key="d28">1</data>
@@ -58,19 +58,19 @@
       <data key="d29">1</data>
       <data key="d34">9.13462</data>
       <data key="d30">CA</data>
-      <data key="d31">400</data>
+      <data key="d31">500</data>
     </node>
     <node id="2">
       <data key="d28">0</data>
       <data key="d29">2</data>
       <data key="d30">Global Crossing</data>
-      <data key="d31">600</data>
+      <data key="d31">900</data>
     </node>
     <node id="3">
       <data key="d28">0</data>
       <data key="d29">3</data>
       <data key="d30">GEANT</data>
-      <data key="d31">100</data>
+      <data key="d31">50</data>
     </node>
     <node id="4">
       <data key="d28">1</data>
@@ -79,7 +79,7 @@
       <data key="d29">4</data>
       <data key="d34">9.13462</data>
       <data key="d30">CA-1</data>
-      <data key="d31">600</data>
+      <data key="d31">900</data>
     </node>
     <node id="5">
       <data key="d28">0</data>
@@ -103,7 +103,7 @@
       <data key="d29">7</data>
       <data key="d34">8.56028</data>
       <data key="d30">SS</data>
-      <data key="d31">330</data>
+      <data key="d31">300</data>
     </node>
     <node id="8">
       <data key="d28">1</data>
@@ -112,7 +112,7 @@
       <data key="d29">8</data>
       <data key="d34">13.35976</data>
       <data key="d30">PA-2</data>
-      <data key="d31">325</data>
+      <data key="d31">300</data>
     </node>
     <node id="9">
       <data key="d28">1</data>
@@ -121,7 +121,7 @@
       <data key="d29">9</data>
       <data key="d34">9.16145</data>
       <data key="d30">Pv-1</data>
-      <data key="d31">285</data>
+      <data key="d31">120</data>
     </node>
     <node id="10">
       <data key="d28">1</data>
@@ -130,7 +130,7 @@
       <data key="d29">10</data>
       <data key="d34">12.4839</data>
       <data key="d30">RM-1</data>
-      <data key="d31">400</data>
+      <data key="d31">500</data>
     </node>
     <node id="11">
       <data key="d28">1</data>
@@ -139,7 +139,7 @@
       <data key="d29">11</data>
       <data key="d34">12.38286</data>
       <data key="d30">PG</data>
-      <data key="d31">400</data>
+      <data key="d31">500</data>
     </node>
     <node id="12">
       <data key="d28">1</data>
@@ -148,13 +148,13 @@
       <data key="d29">12</data>
       <data key="d34">16.5987</data>
       <data key="d30">CZ</data>
-      <data key="d31">295</data>
+      <data key="d31">300</data>
     </node>
     <node id="13">
       <data key="d28">0</data>
       <data key="d29">13</data>
       <data key="d30">TIX</data>
-      <data key="d31">295</data>
+      <data key="d31">300</data>
     </node>
     <node id="14">
       <data key="d28">1</data>
@@ -163,7 +163,7 @@
       <data key="d29">14</data>
       <data key="d34">11.33875</data>
       <data key="d30">BO</data>
-      <data key="d31">285</data>
+      <data key="d31">120</data>
     </node>
     <node id="15">
       <data key="d28">1</data>
@@ -172,13 +172,13 @@
       <data key="d29">15</data>
       <data key="d34">9.18951</data>
       <data key="d30">MI-3</data>
-      <data key="d31">280</data>
+      <data key="d31">120</data>
     </node>
     <node id="16">
       <data key="d28">0</data>
       <data key="d29">16</data>
       <data key="d30">VSIX</data>
-      <data key="d31">285</data>
+      <data key="d31">300</data>
     </node>
     <node id="17">
       <data key="d28">1</data>
@@ -187,7 +187,7 @@
       <data key="d29">17</data>
       <data key="d34">13.78</data>
       <data key="d30">TS-1</data>
-      <data key="d31">295</data>
+      <data key="d31">300</data>
     </node>
     <node id="18">
       <data key="d28">1</data>
@@ -196,7 +196,7 @@
       <data key="d29">18</data>
       <data key="d34">14.25</data>
       <data key="d30">NA</data>
-      <data key="d31">320</data>
+      <data key="d31">500</data>
     </node>
     <node id="19">
       <data key="d28">1</data>
@@ -205,7 +205,7 @@
       <data key="d29">19</data>
       <data key="d34">15.54969</data>
       <data key="d30">ME</data>
-      <data key="d31">325</data>
+      <data key="d31">300</data>
     </node>
     <node id="20">
       <data key="d28">1</data>
@@ -214,7 +214,7 @@
       <data key="d29">20</data>
       <data key="d34">16.25019</data>
       <data key="d30">CS</data>
-      <data key="d31">325</data>
+      <data key="d31">300</data>
     </node>
     <node id="21">
       <data key="d28">1</data>
@@ -223,7 +223,7 @@
       <data key="d29">21</data>
       <data key="d34">15.08719</data>
       <data key="d30">CT</data>
-      <data key="d31">325</data>
+      <data key="d31">300</data>
     </node>
     <node id="22">
       <data key="d28">1</data>
@@ -232,13 +232,13 @@
       <data key="d29">22</data>
       <data key="d34">13.35976</data>
       <data key="d30">PA</data>
-      <data key="d31">325</data>
+      <data key="d31">300</data>
     </node>
     <node id="23">
       <data key="d28">0</data>
       <data key="d29">23</data>
       <data key="d30">EUMED CONNECT</data>
-      <data key="d31">450</data>
+      <data key="d31">900</data>
     </node>
     <node id="24">
       <data key="d28">0</data>
@@ -250,7 +250,7 @@
       <data key="d28">0</data>
       <data key="d29">25</data>
       <data key="d30">Level 3</data>
-      <data key="d31">600</data>
+      <data key="d31">900</data>
     </node>
     <node id="26">
       <data key="d28">1</data>
@@ -259,13 +259,13 @@
       <data key="d29">26</data>
       <data key="d34">11.33875</data>
       <data key="d30">BO-3</data>
-      <data key="d31">285</data>
+      <data key="d31">120</data>
     </node>
     <node id="27">
       <data key="d28">0</data>
       <data key="d29">27</data>
       <data key="d30">Cogent</data>
-      <data key="d31">400</data>
+      <data key="d31">500</data>
     </node>
     <node id="28">
       <data key="d28">1</data>
@@ -274,7 +274,7 @@
       <data key="d29">28</data>
       <data key="d34">13.4388</data>
       <data key="d30">FUC</data>
-      <data key="d31">285</data>
+      <data key="d31">300</data>
     </node>
     <node id="29">
       <data key="d28">1</data>
@@ -283,7 +283,7 @@
       <data key="d29">29</data>
       <data key="d34">11.25</data>
       <data key="d30">FI</data>
-      <data key="d31">285</data>
+      <data key="d31">120</data>
     </node>
     <node id="30">
       <data key="d28">1</data>
@@ -292,7 +292,7 @@
       <data key="d29">30</data>
       <data key="d34">11.25</data>
       <data key="d30">Fi</data>
-      <data key="d31">285</data>
+      <data key="d31">120</data>
     </node>
     <node id="31">
       <data key="d28">1</data>
@@ -301,7 +301,7 @@
       <data key="d29">31</data>
       <data key="d34">11.88181</data>
       <data key="d30">PD-2</data>
-      <data key="d31">290</data>
+      <data key="d31">120</data>
     </node>
     <node id="32">
       <data key="d28">1</data>
@@ -310,7 +310,7 @@
       <data key="d29">32</data>
       <data key="d34">17.93682</data>
       <data key="d30">BR</data>
-      <data key="d31">290</data>
+      <data key="d31">300</data>
     </node>
     <node id="33">
       <data key="d28">1</data>
@@ -319,7 +319,7 @@
       <data key="d29">33</data>
       <data key="d34">12.32667</data>
       <data key="d30">VE</data>
-      <data key="d31">290</data>
+      <data key="d31">300</data>
     </node>
     <node id="34">
       <data key="d28">1</data>
@@ -328,7 +328,7 @@
       <data key="d29">34</data>
       <data key="d34">11.88181</data>
       <data key="d30">PD</data>
-      <data key="d31">290</data>
+      <data key="d31">120</data>
     </node>
     <node id="35">
       <data key="d28">1</data>
@@ -337,7 +337,7 @@
       <data key="d29">35</data>
       <data key="d34">9.18951</data>
       <data key="d30">MI-1</data>
-      <data key="d31">280</data>
+      <data key="d31">120</data>
     </node>
     <node id="36">
       <data key="d28">1</data>
@@ -346,7 +346,7 @@
       <data key="d29">36</data>
       <data key="d34">11.12108</data>
       <data key="d30">TN</data>
-      <data key="d31">280</data>
+      <data key="d31">300</data>
     </node>
     <node id="37">
       <data key="d28">1</data>
@@ -355,7 +355,7 @@
       <data key="d29">37</data>
       <data key="d34">9.18951</data>
       <data key="d30">MI-2</data>
-      <data key="d31">280</data>
+      <data key="d31">120</data>
     </node>
     <node id="38">
       <data key="d28">1</data>
@@ -364,7 +364,7 @@
       <data key="d29">38</data>
       <data key="d34">9.18951</data>
       <data key="d30">MI-4</data>
-      <data key="d31">280</data>
+      <data key="d31">120</data>
     </node>
     <node id="39">
       <data key="d28">1</data>
@@ -373,7 +373,7 @@
       <data key="d29">39</data>
       <data key="d34">8.93386</data>
       <data key="d30">GE</data>
-      <data key="d31">290</data>
+      <data key="d31">300</data>
     </node>
     <node id="40">
       <data key="d28">1</data>
@@ -382,7 +382,7 @@
       <data key="d29">40</data>
       <data key="d34">7.68682</data>
       <data key="d30">TO</data>
-      <data key="d31">285</data>
+      <data key="d31">120</data>
     </node>
     <node id="41">
       <data key="d28">1</data>
@@ -391,7 +391,7 @@
       <data key="d29">41</data>
       <data key="d34">14.76599</data>
       <data key="d30">SA</data>
-      <data key="d31">320</data>
+      <data key="d31">500</data>
     </node>
     <node id="42">
       <data key="d28">1</data>
@@ -400,7 +400,7 @@
       <data key="d29">42</data>
       <data key="d34">15.80857</data>
       <data key="d30">PZ</data>
-      <data key="d31">320</data>
+      <data key="d31">500</data>
     </node>
     <node id="43">
       <data key="d28">1</data>
@@ -427,7 +427,7 @@
       <data key="d29">45</data>
       <data key="d34">13.39954</data>
       <data key="d30">AQ</data>
-      <data key="d31">400</data>
+      <data key="d31">500</data>
     </node>
     <node id="46">
       <data key="d28">1</data>
@@ -445,7 +445,7 @@
       <data key="d29">47</data>
       <data key="d34">16.60158</data>
       <data key="d30">MT</data>
-      <data key="d31">400</data>
+      <data key="d31">500</data>
     </node>
     <node id="48">
       <data key="d28">1</data>
@@ -454,7 +454,7 @@
       <data key="d29">48</data>
       <data key="d34">18.17202</data>
       <data key="d30">LE</data>
-      <data key="d31">320</data>
+      <data key="d31">500</data>
     </node>
     <node id="49">
       <data key="d28">1</data>
@@ -463,7 +463,7 @@
       <data key="d29">49</data>
       <data key="d34">16.85118</data>
       <data key="d30">BA</data>
-      <data key="d31">320</data>
+      <data key="d31">500</data>
     </node>
     <node id="50">
       <data key="d28">1</data>
@@ -472,19 +472,19 @@
       <data key="d29">50</data>
       <data key="d34">15.54925</data>
       <data key="d30">FG</data>
-      <data key="d31">320</data>
+      <data key="d31">500</data>
     </node>
     <node id="51">
       <data key="d28">0</data>
       <data key="d29">51</data>
       <data key="d30">Google</data>
-      <data key="d31">450</data>
+      <data key="d31">500</data>
     </node>
     <node id="52">
       <data key="d28">0</data>
       <data key="d29">52</data>
       <data key="d30">GEANT</data>
-      <data key="d31">100</data>
+      <data key="d31">50</data>
     </node>
     <node id="53">
       <data key="d28">1</data>
@@ -499,7 +499,7 @@
       <data key="d28">0</data>
       <data key="d29">54</data>
       <data key="d30">TO-PIX</data>
-      <data key="d31">285</data>
+      <data key="d31">120</data>
     </node>
     <node id="55">
       <data key="d28">1</data>
@@ -508,7 +508,7 @@
       <data key="d29">55</data>
       <data key="d34">12.4839</data>
       <data key="d30">RM-2</data>
-      <data key="d31">400</data>
+      <data key="d31">500</data>
     </node>
     <node id="56">
       <data key="d28">1</data>
@@ -517,7 +517,7 @@
       <data key="d29">56</data>
       <data key="d34">9.18951</data>
       <data key="d30">CO</data>
-      <data key="d31">285</data>
+      <data key="d31">300</data>
     </node>
     <node id="57">
       <data key="d28">1</data>
@@ -526,7 +526,7 @@
       <data key="d29">57</data>
       <data key="d34">11.62071</data>
       <data key="d30">Fe</data>
-      <data key="d31">285</data>
+      <data key="d31">120</data>
     </node>
     <node id="58">
       <data key="d28">1</data>
@@ -535,7 +535,7 @@
       <data key="d29">58</data>
       <data key="d34">9.16145</data>
       <data key="d30">Pv</data>
-      <data key="d31">285</data>
+      <data key="d31">120</data>
     </node>
     <node id="59">
       <data key="d28">1</data>
@@ -544,7 +544,7 @@
       <data key="d29">59</data>
       <data key="d34">10.39659</data>
       <data key="d30">PI</data>
-      <data key="d31">290</data>
+      <data key="d31">300</data>
     </node>
     <node id="60">
       <data key="d28">1</data>

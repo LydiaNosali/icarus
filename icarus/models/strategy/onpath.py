@@ -469,19 +469,21 @@ class CacheLessToSaveMore(Strategy):
         self.request_counter = {}
         self.log_file_path = '../../examples/lce-vs-probcache/path_log.csv'
 
-    def restore_strategy_state(self, strategy_name=None, period=None, curr_exp=None):
+    def restore_strategy_state(self, filename_prefix, strategy_name):
         """
         Restore the saved state (gain_per_data, request_counter) for this strategy.
         Supports period-specific resumes (e.g. CL2SM_p2.pkl).
         """
+        if filename_prefix == None:
+            return
         strategy_name = strategy_name or self.__class__.__name__
+        
         saved_dir = Path("strategy_states")
-
+        
         # Choose filename based on period number if provided
-        filename = f"exp_{curr_exp}_{strategy_name}_p{period}.pkl"
-        saved_state_path = saved_dir / filename
+        saved_state_path = saved_dir / f"{filename_prefix}.pkl"
+        
         saved_json_path = saved_state_path.with_suffix(".json")
-
         restored = False
         if saved_state_path.exists():
             try:
@@ -489,7 +491,7 @@ class CacheLessToSaveMore(Strategy):
                     state = pickle.load(f)
                 self.gain_per_data = state.get("gain_per_data", {})
                 self.request_counter = state.get("request_counter", {})
-                print(f"[♻️] Restored {strategy_name} (period={period or 'latest'}) from {saved_state_path}")
+                print(f"[♻️] Restored {strategy_name} (period=latest) from {saved_state_path}")
                 restored = True
             except Exception as e:
                 print(f"[⚠️] Failed to restore {strategy_name} (pkl): {e}")
@@ -500,7 +502,7 @@ class CacheLessToSaveMore(Strategy):
                     state = json.load(jf)
                 self.gain_per_data = state.get("gain_per_data", {})
                 self.request_counter = state.get("request_counter", {})
-                print(f"[♻️] Restored {strategy_name} (period={period or 'latest'}) from {saved_json_path}")
+                print(f"[♻️] Restored {strategy_name} (latest) from {saved_json_path}")
                 restored = True
             except Exception as e:
                 print(f"[⚠️] Failed to restore {strategy_name} (json): {e}")
@@ -572,22 +574,25 @@ class CacheLessToSaveMore(Strategy):
             # No cache hits, get content from source
             self.controller.get_content(v, tier_index=0, size=size, priority=priority)
             serving_node = v
-        # Return content
+        # Return content    
         path = list(reversed(self.view.shortest_path(receiver, serving_node)))
         for u, v in path_links(path):
             self.controller.forward_content_hop(u, v, main_path=True, size=size, priority=priority)
-            
             if not self.view.has_cache(v):
                 continue
+            if v not in self.request_counter:
+                self.request_counter[v] = {}
+            if v not in self.gain_per_data:
+                self.gain_per_data[v] = {}
             
             tiers = self._tiers(v)
             if not tiers:
                 continue
-            
+
             new_value = self.request_counter[v].get(content) + 1 if self.request_counter[v].get(content) else 1
             self.request_counter[v].update({content: new_value})
             reaccess_prob = self.get_probability_estimate(content, self.request_counter[v]) 
-            # print(f"is_reaccessed probability for content {content} at node {v}: {is_reaccessed}")
+            # print(f"is_reaccessed probability for content {content} at node {v}: {reaccess_prob}")
             # print(f"reaccess_prob for content {content} at node {v}: {reaccess_prob}")
             # print(f"is_reaccessed:{is_reaccessed}")
             # if is_reaccessed:

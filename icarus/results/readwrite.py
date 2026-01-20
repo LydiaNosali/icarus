@@ -209,7 +209,46 @@ class ResultSet:
             if parameters.match(condition):
                 filtered_resultset.add(parameters, results)
         return filtered_resultset
+    
 
+from icarus.util import Tree
+
+def tree_delta(current, previous):
+    """
+    Recursively compute element-wise (current - previous) over a Tree.
+    Works safely with icarus.util.Tree objects.
+    Returns a new Tree with the same structure.
+    """
+    # --- Case 1: both are numbers ---
+    if isinstance(current, (int, float)) and isinstance(previous, (int, float)):
+        return current - previous
+
+    # --- Case 2: one is missing or None, treat as 0 ---
+    if current is None:
+        current = 0
+    if previous is None:
+        previous = 0
+
+    # --- Case 3: current or previous is a leaf number while the other is a Tree ---
+    if isinstance(current, (int, float)) and hasattr(previous, 'keys'):
+        return tree_delta(Tree({None: current}), previous)
+    if isinstance(previous, (int, float)) and hasattr(current, 'keys'):
+        return tree_delta(current, Tree({None: previous}))
+
+    # --- Case 4: both are Trees/dicts ---
+    result = Tree()
+    keys = set()
+    if hasattr(current, 'keys'):
+        keys |= set(current.keys())
+    if hasattr(previous, 'keys'):
+        keys |= set(previous.keys())
+
+    for key in keys:
+        cur_val = current.get(key, 0) if hasattr(current, 'get') else 0
+        prev_val = previous.get(key, 0) if hasattr(previous, 'get') else 0
+        result[key] = tree_delta(cur_val, prev_val)
+
+    return result
 
 @register_results_writer("PICKLE")
 def write_results_pickle(results, path):

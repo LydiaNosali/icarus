@@ -32,6 +32,7 @@ __all__ = [
     "topology_garr",
     "topology_rocketfuel_latency",
     "topology_carbon8",
+    "topology_telekom",
 ]
 
 
@@ -314,6 +315,59 @@ def topology_geant(**kwargs):
     # 240 nodes in the main component
     topology = fnss.parse_topology_zoo(
         path.join(TOPOLOGY_RESOURCES_DIR, "Geant2012_with_carbon.graphml")
+    ).to_undirected()
+    topology = largest_connected_component_subgraph(topology)
+    deg = nx.degree(topology)
+    receivers = [v for v in topology.nodes() if deg[v] == 1]  # 8 nodes
+    icr_candidates = [v for v in topology.nodes() if deg[v] > 2]  # 19 nodes
+    # attach sources to topology
+    source_attachments = [v for v in topology.nodes() if deg[v] == 2]  # 13 nodes
+    sources = []
+    for v in source_attachments:
+        u = v + 1000  # node ID of source
+        topology.add_edge(v, u)
+        sources.append(u)
+    routers = [v for v in topology.nodes() if v not in sources + receivers]
+    # add stacks to nodes
+    topology.graph["icr_candidates"] = set(icr_candidates)
+    for v in sources:
+        fnss.add_stack(topology, v, "source")
+    for v in receivers:
+        fnss.add_stack(topology, v, "receiver")
+    for v in routers:
+        fnss.add_stack(topology, v, "router")
+    # set weights and delays on all links
+    fnss.set_weights_constant(topology, 1.0)
+    fnss.set_delays_constant(topology, INTERNAL_LINK_DELAY, "ms")
+    # label links as internal or external
+    for u, v in topology.edges():
+        if u in sources or v in sources:
+            topology.adj[u][v]["type"] = "external"
+            # this prevents sources to be used to route traffic
+            fnss.set_weights_constant(topology, 1000.0, [(u, v)])
+            fnss.set_delays_constant(topology, EXTERNAL_LINK_DELAY, "ms", [(u, v)])
+        else:
+            topology.adj[u][v]["type"] = "internal"
+    return IcnTopology(topology)
+
+
+@register_topology_factory("TELEKOM")
+def topology_telekom(**kwargs):
+    """Return a scenario based on TELEKOM topology
+
+    Parameters
+    ----------
+    seed : int, optional
+        The seed used for random number generation
+
+    Returns
+    -------
+    topology : fnss.Topology
+        The topology object
+    """
+    # 240 nodes in the main component
+    topology = fnss.parse_topology_zoo(
+        path.join(TOPOLOGY_RESOURCES_DIR, "DeutscheTelekom_with_carbon.graphml")
     ).to_undirected()
     topology = largest_connected_component_subgraph(topology)
     deg = nx.degree(topology)
@@ -882,8 +936,71 @@ def topology_carbon8(delay_int=1, delay_ext=5, **kwargs):
     for v in routers:
         fnss.add_stack(topology, v, "router")
 
-
     # Set weights and delays
+    fnss.set_weights_constant(topology, 1.0)
+    fnss.set_delays_constant(topology, INTERNAL_LINK_DELAY, "ms")
+    for u, v in topology.edges():
+        if u in sources or v in sources:
+            topology.adj[u][v]["type"] = "external"
+            # this prevents sources to be used to route traffic
+            fnss.set_weights_constant(topology, 1000.0, [(u, v)])
+            fnss.set_delays_constant(topology, EXTERNAL_LINK_DELAY, "ms", [(u, v)])
+        else:
+            topology.adj[u][v]["type"] = "internal"
+
+    return IcnTopology(topology)
+
+import matplotlib.pyplot as plt
+
+@register_topology_factory("CARBON")
+def topology_carbon(n=50, m=1, **kwargs):
+    # 1) Deterministic BA graph
+    G = nx.barabasi_albert_graph(n=n, m=m, seed=1)
+
+    topology = fnss.Topology()
+    topology.add_nodes_from(G.nodes())
+    topology.add_edges_from(G.edges())
+
+    # 2) Degree-based, deterministic sources
+    degrees = sorted(topology.degree(), key=lambda x: (x[1], x[0]), reverse=True)
+    num_sources = max(1, int(0.05 * n))  # 5% of nodes as sources
+    sources = {v for v, _ in degrees[:num_sources]}
+    # print(f"sources;{sources}")
+
+    # 3) Edge nodes (low degree) as receivers
+    receivers = {
+        v for v in topology.nodes()
+        if v not in sources and topology.degree(v) == 1
+    }
+    # print(f"receivers;{receivers}")
+
+    # Ensure at least 1 receiver to avoid IndexError in workload
+    if not receivers:
+        # Pick the lowest-degree non-source node as a receiver
+        remaining = [v for v, d in degrees if v not in sources]
+        if remaining:
+            receivers.add(remaining[-1])
+
+    # 4) Routers: nodes that are neither sources nor receivers
+    routers = [
+        v for v in topology.nodes()
+        if v not in sources and v not in receivers
+    ]
+    # print(f"routers;{routers}")
+
+    icr_candidates = [v for v in topology.nodes() if topology.degree(v) > 2] 
+    topology.graph["icr_candidates"] = set(icr_candidates)
+    # print(f"icr_candidates;{icr_candidates}")
+
+    # 6) Add stacks
+    for v in sources:
+        fnss.add_stack(topology, v, "source")
+    for v in receivers:
+        fnss.add_stack(topology, v, "receiver")
+    for v in routers:
+        fnss.add_stack(topology, v, "router")
+
+    # 7) Link weights/delays
     fnss.set_weights_constant(topology, 1.0)
     fnss.set_delays_constant(topology, INTERNAL_LINK_DELAY, "ms")
     for u, v in topology.edges():

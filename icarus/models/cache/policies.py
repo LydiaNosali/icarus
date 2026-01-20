@@ -2405,7 +2405,7 @@ class QMARCCache(Cache):
                     dq.append_left(item)
             self.p = global_state.get("p", 0)
             self._cache = dict(global_state.get("_cache"))
-            print(f"[♻️] QMARC restored successfully (tiers: {len(tiers)})")
+            # print(f"[♻️] QMARC restored successfully (tiers: {len(tiers)})")
         except Exception as e:
             print(f"[⚠️] Failed to restore QMARC cache: {e}")
 

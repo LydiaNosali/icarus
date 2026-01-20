@@ -2,7 +2,8 @@ import networkx as nx
 import matplotlib.pyplot as plt
 
 # Load the graph
-graph_path = '/home/lydia/icarus/resources/topologies/Geant2012.graphml'
+# graph_path = '/Users/lydia/Desktop/icarus/resources/topologies/Geant2012.graphml'
+graph_path = '/Users/lydia/Desktop/icarus/resources/topologies/DeutscheTelekom.graphml'
 G = nx.read_graphml(graph_path)
 
 # Generate positions for each node using a layout
@@ -29,7 +30,7 @@ significant_edges = {k: v for k, v in edge_labels.items() if 'Gbps' in v}  # Exa
 nx.draw_networkx_edge_labels(G, pos, edge_labels=significant_edges, font_color='red', font_size=10)
 
 # Save the figure
-output_path = '/home/lydia/icarus/resources/topologies/Graph_Visualization.png'
+output_path = '/Users/lydia/Desktop/icarus/resources/topologies/DeutscheTelekom_Graph_Visualization.png'
 # plt.title('Improved Graph Visualization with Transmission Capacity')
 plt.axis('off')  # Turn off the axis
 plt.savefig(output_path)

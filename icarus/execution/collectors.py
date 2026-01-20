@@ -35,6 +35,7 @@ __all__ = [
 ]
 
 chrcp = {}
+cchrp = {}
 
 class DataCollector:
     """Object collecting notifications about simulation events and measuring
@@ -624,6 +625,7 @@ class CHRCPCollector(DataCollector):
             })
         return results
 
+
 @register_data_collector("CARBONFOOTPRINT")
 class CarbonFootprintCollector(DataCollector):
     """Data collector measuring Carbon footprint
@@ -796,7 +798,6 @@ class CarbonFootprintCollector(DataCollector):
             self.device_times[tier_name]["idle"] += idle_time
             self.device_times[tier_name]["active"] += write_time
 
-            # print(f"[{tier_name}] last_end:{last_end_time:.6f}, curr:{curr_time:.6f}, idle:{idle_time:.6f}, active:{write_time}")
             tier_idle_power_density = tier['idle_power_density_per_bit']
             tier_active_power_density  = tier['active_caching_power_density']
 
@@ -817,8 +818,6 @@ class CarbonFootprintCollector(DataCollector):
         self.server_opex += self.sess_server_opex
         self.opex += self.sess_opex
         self.end_time = self.timestamp
-        logger.info(f"opex:{self.opex}")
-        logger.info(f"session_count:{self.sess_count}")
 
     @inheritdoc(DataCollector)
     def results(self):
@@ -852,9 +851,11 @@ class CarbonFootprintCollector(DataCollector):
             total_opex += self.tier_active_opex[tier]
             total_capex += capex
         # --------------- BUILD RESULTS TREE -----------------
+        total = total_opex + total_capex + self.server_opex +self.routers_opex + self.links_opex
         results = Tree(
             {
-                "TOTAL": (total_opex + total_capex + self.server_opex +self.routers_opex + self.links_opex) * 1000,
+                "TOTAL": total * 1000,
+                "MEAN": total * 1000 / self.sess_count,
                 "TOTAL_OPEX": total_opex * 1000,
                 "TOTAL_CAPEX": total_capex * 1000,
                 "SERVER_OPEX": self.server_opex * 1000,
@@ -864,7 +865,35 @@ class CarbonFootprintCollector(DataCollector):
                 "TIER_STATS": self.view.get_tier_stats(),
             }
         )
+        cchrp["cf"] = total * 1000 / self.sess_count
         return results
+
+
+@register_data_collector("CCHRP")
+class CCHRPCollector(DataCollector):
+    """Data collector measuring CARBON, i.e. the gco2 from delivering a
+    content.
+    """
+
+    def __init__(self, view, **params):
+        """Constructor
+
+        Parameters
+        ----------
+        view : NetworkView
+        The network view instance
+        params : cost model and tiers info
+        """
+        self.view = view
+
+    @inheritdoc(DataCollector)
+    def results(self):
+        results = Tree(
+            {
+            "MEAN": cchrp["cf"]/cchrp["chr"] if cchrp["chr"] != 0 else 0
+            })
+        return results
+
 
 @register_data_collector("CACHE_HIT_RATIO")
 class CacheHitRatioCollector(DataCollector):
@@ -936,6 +965,7 @@ class CacheHitRatioCollector(DataCollector):
         hit_ratio = self.cache_hits / n_sess
         results = Tree(**{"MEAN": hit_ratio})
         chrcp["chr"] = hit_ratio
+        cchrp["chr"] = hit_ratio
         if self.off_path_hits:
             results["MEAN_OFF_PATH"] = self.off_path_hit_count / n_sess
             results["MEAN_ON_PATH"] = results["MEAN"] - results["MEAN_OFF_PATH"]
