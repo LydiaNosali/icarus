@@ -1,81 +1,47 @@
 import numpy as np
 
-def topsis(values, directions, weights=None, nodes=None, pareto_allocations=None):
-    """
-    values:    numpy array of shape (n_solutions, n_objectives)
-    directions: list of 1 or -1 for each objective
-    weights:   optional weight vector, default equal
-    pareto_allocations: list of allocation vectors [optional, for Jalil's node greenness]
-    """
-    values = np.array(values, dtype=float)
 
-    if values.shape[0] == 1:
-        return 0, np.array([1.0]), {}
+def topsis(values, directions, nodes, pareto_allocations, weights=None):
+    n_solutions = values.shape[0]
+    n_criteria = values.shape[1]
 
-    n, m = values.shape
-
-    # Step 1: Normalize
-    norm = values / np.sqrt((values ** 2).sum(axis=0))
-
-    # Step 2: Weights
     if weights is None:
-        weights = np.ones(m) / m
-    wnorm = norm * weights
+        weights = np.ones(n_criteria) / n_criteria
 
-    # Step 3: Ideal best & worst
-    ideal_best  = np.zeros(m)
-    ideal_worst = np.zeros(m)
+    # 🔴 FIX: map node IDs → allocation indices
+    node_to_idx = {node: i for i, node in enumerate(nodes)}
 
-    for j in range(m):
-        if directions[j] == 1:   # maximize
-            ideal_best[j]  = wnorm[:, j].max()
-            ideal_worst[j] = wnorm[:, j].min()
-        else:                    # minimize
-            ideal_best[j]  = wnorm[:, j].min()
-            ideal_worst[j] = wnorm[:, j].max()
+    # Normalize decision matrix
+    norm = np.sqrt((values ** 2).sum(axis=0))
+    norm[norm == 0] = 1
+    norm_values = values / norm
 
-    # Step 4: Distances
-    d_best  = np.sqrt(((wnorm - ideal_best)  ** 2).sum(axis=1))
-    d_worst = np.sqrt(((wnorm - ideal_worst) ** 2).sum(axis=1))
+    weighted = norm_values * weights
 
-    # Step 5: TOPSIS score
-    # print(f"d_worst:{d_worst}, d_best:{d_best}")
-    score = d_worst / (d_best + d_worst)
+    ideal = np.zeros(n_criteria)
+    anti_ideal = np.zeros(n_criteria)
 
-    # Step 6: JALIL'S NODE GREENNESS [NEW]
+    for j in range(n_criteria):
+        if directions[j] > 0:
+            ideal[j] = weighted[:, j].max()
+            anti_ideal[j] = weighted[:, j].min()
+        else:
+            ideal[j] = weighted[:, j].min()
+            anti_ideal[j] = weighted[:, j].max()
+
+    dist_ideal = np.sqrt(((weighted - ideal) ** 2).sum(axis=1))
+    dist_anti = np.sqrt(((weighted - anti_ideal) ** 2).sum(axis=1))
+
+    scores = dist_anti / (dist_ideal + dist_anti + 1e-12)
+
+    # Optional: node greenness computation
     node_greenness = {}
-    # if pareto_allocations is not None and len(pareto_allocations) == n:
-    #     n_nodes = len(pareto_allocations[0])  # Assume all same length
-        
-    #     for node_idx in range(n_nodes):
-    #         # TOPSIS scores where this node has >0 cache
-    #         relevant_scores = [
-    #             score[i] for i in range(n) 
-    #             if pareto_allocations[i][node_idx] > 0
-    #         ]
-    #         node_greenness[node_idx] = np.mean(relevant_scores) if relevant_scores else 0.0
-    # else:
-    #     node_greenness = {}
-    
-    if pareto_allocations is not None and nodes is not None and len(pareto_allocations) == n:
-        for node_idx, node in enumerate(nodes):
-            # TOPSIS scores where this node has >0 cache
-            weighted_sum = 0.0
-            total_alloc  = 0.0
 
-            for i in range(n):
-                alloc_amount = pareto_allocations[i][node_idx]
-                if alloc_amount > 0:
-                    weighted_sum += score[i] * alloc_amount
-                    total_alloc  += alloc_amount
+    for node_id in nodes:
+        idx = node_to_idx[node_id]
+        node_greenness[node_id] = np.mean(
+            [pareto_allocations[i][idx] for i in range(n_solutions)]
+        )
 
-            node_greenness[node] = 1 - (
-                weighted_sum / total_alloc if total_alloc > 0 else 0.0
-            )
-    else:
-        node_greenness = {}
-    
-    # Best solution index
-    best_idx = np.argmax(score)
-
-    return best_idx, score, node_greenness
+    best_idx = int(np.argmax(scores))
+    return best_idx, scores, node_greenness
