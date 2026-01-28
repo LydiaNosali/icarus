@@ -83,10 +83,12 @@ class AdaptiveGridArchive:
 class PAES:
     def __init__(self, init_fn, mutate_fn, eval_fn,
                  archive_size=40, grid_divisions=12,
-                 max_evaluations=120, seed: int | None = 0):
+                 max_evaluations=120, seed: int | None = 0,
+                 init_fns_extra=None):
         if seed is not None:
             self.local_random = random.Random(seed)
         self.init_fn = init_fn
+        self.init_fns_extra = init_fns_extra or []  # 👈 NEW
         self.mutate_fn = mutate_fn
         self.eval_fn = eval_fn
         self.archive = AdaptiveGridArchive(archive_size, grid_divisions)
@@ -113,62 +115,66 @@ class PAES:
         return objs
 
     def run(self):
-        parent = self.init_fn()
-        f_parent = self._get_or_eval(parent)
-        self.archive.consider(parent, f_parent)
-        evaluations = 1
+        # =====================================================
+        # 1) Explicit archive seeding (CRITICAL FIX)
+        # =====================================================
+        init_solutions = []
 
+        # baseline
+        init_solutions.append(self.init_fn())
+
+        # additional extremes
+        for fn in self.init_fns_extra:
+            init_solutions.append(fn())
+
+        evaluations = 0
+        parent = None
+        f_parent = None
+
+        for sol in init_solutions:
+            k = self._key(sol)
+
+            if k in self._evaluated:
+                f = self._evaluated[k]
+            else:
+                f = self.eval_fn(sol)
+                self._evaluated[k] = f
+                evaluations += 1
+
+            self.archive.consider(sol, f)
+
+            # pick first solution as parent
+            if parent is None:
+                parent, f_parent = sol, f
+
+        # =====================================================
+        # 2) Standard PAES loop (unchanged)
+        # =====================================================
         while evaluations < self.max_evaluations:
-            # mutate; allow duplicates but do not re-evaluate them
             child = self.mutate_fn(parent, self.local_random)
 
             parent_key = self._key(parent)
             child_key = self._key(child)
 
-            l1_dist = sum(abs(a-b) for a,b in zip(parent['allocations'], child['allocations']))
-            # print(f"L1: {l1_dist}, Nodes changed: {sum(1 for a,b in zip(parent['allocations'], child['allocations']) if a != b)}")
-
             if parent_key == child_key:
-                # print("❌ IDENTICAL - skipping")
                 continue
 
-            k_child = self._key(child)
-
-            # check cache BEFORE calling _get_or_eval
-            if k_child in self._evaluated:
-                f_child = self._evaluated[k_child]
-                is_new = False
+            if child_key in self._evaluated:
+                f_child = self._evaluated[child_key]
             else:
                 f_child = self.eval_fn(child)
-                self._evaluated[k_child] = f_child
+                self._evaluated[child_key] = f_child
                 evaluations += 1
-                is_new = True
 
-            # # dominance logic
-            # if dominates(f_child, f_parent):
-            #     parent, f_parent = child, f_child
-            #     self.archive.consider(child, f_child)
-            #     continue
-            # if dominates(f_parent, f_child):
-            #     self.archive.consider(child, f_child)
-            #     continue
-            # ✅ FIXED: Always consider child for archive first
+            # always consider for archive
             self.archive.consider(child, f_child)
 
-            # grid-density rule + random side-step
             dens_child = self.archive.cell_density(f_child)
             dens_parent = self.archive.cell_density(f_parent)
 
             if dens_child < dens_parent or self.local_random.random() < 0.10:
-                # print(f"✅ Parent updated (density child={dens_child} < parent={dens_parent})")
                 parent, f_parent = child, f_child
             elif self.local_random.random() < 0.05:
-                # print("🎲 Random walk: parent updated")
                 parent, f_parent = child, f_child
-            # else:
-            #     print(f"❌ Parent rejected (dens_child={dens_child} >= dens_parent={dens_parent})")
-
-            # self.archive.consider(child, f_child)
 
         return self.archive.as_pareto_set()
-

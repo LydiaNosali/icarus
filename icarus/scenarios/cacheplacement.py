@@ -5,10 +5,13 @@ a cumulative cache size and a topology where each possible node candidate is
 labelled, these functions deploy caching space to the nodes of the topology.
 """
 import logging
+import os
 import random
 import networkx as nx
+import pandas as pd
 import numpy as np
 
+from icarus.scenarios.nsga2.nsga2 import run_nsga2
 from icarus.scenarios.paes.topsis import topsis
 from icarus.scenarios.paes.paes_icarus_2obj import run_paes
 from icarus.util import iround
@@ -722,16 +725,24 @@ def green_cache_placement(topology, cache_budget, **kwargs):
     if not icr_candidates:
         return
 
-    pareto = run_paes(icr_candidates=icr_candidates,
+    # pareto = run_paes(icr_candidates=icr_candidates,
+    #                   params=params,
+    #                   metrics=metrics,
+    #                   settings = settings,
+    #                   cache_budget=cache_budget,
+    #                   archive_size=40,
+    #                   grid_divisions=30,
+    #                   max_evaluations=max_evaluations,  # small for test, increase later
+    #                   seed=0,
+    #                   allocs=allocs)
+    pareto = run_nsga2(icr_candidates=icr_candidates,
                       params=params,
                       metrics=metrics,
                       settings = settings,
                       cache_budget=cache_budget,
                       archive_size=40,
-                      grid_divisions=30,
                       max_evaluations=max_evaluations,  # small for test, increase later
-                      seed=0,
-                      allocs=allocs)
+                      seed=0)
     
     logger.info(f"Found {len(pareto)} Pareto solutions (max Hit, min Cost, min Carbon):")
     for sol, (h, c, cf) in pareto:
@@ -750,10 +761,10 @@ def green_cache_placement(topology, cache_budget, **kwargs):
     # Convert to array
     values = np.array(values)
     directions = [+1, -1, -1]
-    # weights = [0.1, 0.3, 0.6]
+    weights = [0.2, 0.1, 0.7]
     # Run TOPSIS
     # best_idx, scores, node_greenness = topsis(values, directions, weights=weights, pareto_allocations=pareto_allocations)
-    best_idx, scores, node_greenness = topsis(values, directions, nodes=icr_candidates, pareto_allocations=pareto_allocations)
+    best_idx, scores, node_greenness = topsis(values, directions, weights=weights, nodes=icr_candidates, pareto_allocations=pareto_allocations)
     best_sol = solutions[best_idx]
 
     allocs = best_sol["allocations"]
@@ -774,3 +785,38 @@ def green_cache_placement(topology, cache_budget, **kwargs):
     # Tag the topology
     topology.graph["paes"] = "PAES"
     topology.graph["topsis_scores"] = scores.tolist() 
+    
+    pareto_records = []
+    for sol, (h, c, cf) in pareto:
+        pareto_records.append({
+            "hit": h,
+            "cost": c,
+            "carbon": cf,
+            "allocations": sol["allocations"]
+        })
+
+    df = pd.DataFrame(pareto_records)
+    output_path = f"/Users/lydia/Desktop/icarus/examples/lce-vs-probcache/pareto_fronts_ci_only/period_{period + 1}.csv"
+    df.to_csv(output_path, index=False)
+
+    topsis_path = "/Users/lydia/Desktop/icarus/examples/lce-vs-probcache/pareto_fronts_ci_only/topsis_ci_only.csv"
+
+    # TOPSIS objectives
+    best_h, best_c, best_cf = values[best_idx]
+
+    topsis_record = {
+        "period": period + 1,
+        "hit": best_h,
+        "cost": best_c,
+        "carbon": best_cf,
+        "allocations": best_sol["allocations"]
+    }
+
+    # Append safely only if file exists and is not empty
+    if os.path.exists(topsis_path) and os.path.getsize(topsis_path) > 0:
+        df_topsis = pd.read_csv(topsis_path)
+        df_topsis = pd.concat([df_topsis, pd.DataFrame([topsis_record])], ignore_index=True)
+    else:
+        df_topsis = pd.DataFrame([topsis_record])
+
+    df_topsis.to_csv(topsis_path, index=False)

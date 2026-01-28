@@ -1,12 +1,16 @@
+# icarus/scenarios/nsga2/nsga2.py
+from __future__ import annotations
+
+import copy
 import logging
+import networkx as nx
+import random
 import os
 import pickle
 from pathlib import Path
-import copy
-
-from icarus.scenarios.paes.paes import PAES
 from icarus.runner import run
-import networkx as nx
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from icarus.util import iround
 
@@ -14,9 +18,18 @@ EXAMPLES_DIR = Path(__file__).parent
 
 logger = logging.getLogger("babel")
 
+Objectives = Tuple[float, float, float]   # (hit, cost, carbon)
+Solution = Dict[str, Any]
+
+# -----------------------------
+# Dominance with mixed directions
+# directions: +1 maximize, -1 minimize
+# Here: hit maximize, cost minimize, carbon minimize
+# -----------------------------
+DIRECTIONS = (+1, -1, -1)
 
 # ================== base init ========================
-def init_fn(icr_candidates, params, allocs, cache_budget):
+def init_fn_uniform(icr_candidates, params, allocs, cache_budget):
     cache_size = iround(cache_budget / len(icr_candidates))
     
     raw_alloc = {
@@ -100,7 +113,7 @@ def init_fn_ci_only(icr_candidates, params, allocs, cache_budget):
         "centralities": central
     }
 
-# ================== centrality only init ========================
+# ================== bc only init ========================
 def init_fn_bc_only(icr_candidates, params, allocs, cache_budget):
     net_params = params.get("network", {})
     topology = net_params.get("nx_graph")
@@ -108,6 +121,62 @@ def init_fn_bc_only(icr_candidates, params, allocs, cache_budget):
     # pr_kwargs = {}
     # betw = dict(nx.pagerank(topology, **pr_kwargs))
     betw = dict(nx.betweenness_centrality(topology))
+
+    centralities = {v: betw[v] for v in icr_candidates}
+    # centralities = {v: betw[v] for v in icr_candidates if betw[v] > 0}
+    if not centralities:
+        raise ValueError("No centralities")
+
+    total_centrality = sum(centralities.values())
+
+    raw_alloc = {
+        v: cache_budget * centralities[v] / total_centrality
+        for v in centralities
+    }
+    
+    # Initial rounding with minimum 1
+    rounded_alloc = {v: max(0, int(round(a))) for v, a in raw_alloc.items()}
+    total_allocated = sum(rounded_alloc.values())
+    while total_allocated > cache_budget:
+        # Find the node with the smallest allocation > 1 to reduce
+        over_nodes = [v for v in rounded_alloc if rounded_alloc[v] > 1]
+        if not over_nodes:
+            break  # Can't reduce anymore without violating ≥1 constraint
+        # Reduce the one with the smallest centrality
+        victim = min(over_nodes, key=lambda v: centralities[v])
+        rounded_alloc[victim] -= 1
+        total_allocated -= 1
+    
+    allocs[:] = rounded_alloc.values()
+    # print(allocs)
+
+    # 8) Tier setup (unchanged from your pattern)
+    tiers_template = params.get("cache_policy", {}).get("tiers", {})
+    tiers_per_node = {node: copy.deepcopy(tiers_template) for node in icr_candidates}
+    
+    ci = params.get("network").get("node_carbon_intensity")
+    ci = dict(ci)
+    if not ci:
+        raise ValueError("Carbon-aware init requires 'network.node_carbon_intensity'")
+
+    return {
+        "allocations": allocs[:],
+        "cache_budget": cache_budget,
+        "actual_total": sum(rounded_alloc.values()),
+        "icr_candidates": icr_candidates,
+        "tiers_per_node": tiers_per_node,
+        "node_carbon_intensity": ci,
+        "centralities": centralities
+    }
+
+# ================== pr only init ========================
+def init_fn_pr_only(icr_candidates, params, allocs, cache_budget):
+    pr_kwargs = {}
+    net_params = params.get("network", {})
+    topology = net_params.get("nx_graph")
+    # betw = dict(nx.betweenness_centrality(topology))
+    # pr_kwargs = {}
+    betw = dict(nx.pagerank(topology, **pr_kwargs))
 
     centralities = {v: betw[v] for v in icr_candidates}
     # centralities = {v: betw[v] for v in icr_candidates if betw[v] > 0}
@@ -383,98 +452,10 @@ def init_fn_hub(icr_candidates, params, allocs, cache_budget):
         "centralities": centralities
     }
 
-# --- Mutation function ---
-# def mutate_fn(sol, rng):
-#     new_sol = copy.deepcopy(sol)
-#     alloc_list = new_sol["allocations"][:]
-#     n_nodes = len(alloc_list)
-#     budget = sol["cache_budget"]
-
-#     move_fraction = rng.uniform(0.1, 0.25)  # 10-25% budget
-#     amount_to_move = int(budget * move_fraction)  # 20-50 units!
-    
-#     # 1) Find non-zero nodes (always safe)
-#     non_zero = [i for i in range(n_nodes) if alloc_list[i] > 0]
-#     n_non_zero = len(non_zero)
-
-#     if n_non_zero >= 2 and amount_to_move > 0:
-#         # STEAL: Take 1-3 from 3-5 donors (SIMPLE arithmetic, NO randint)
-#         # n_donors = min(5, len(non_zero))
-#         # donors = non_zero[:n_donors]
-#         total_donor_alloc = sum(alloc_list[i] for i in non_zero)
-#         donor_probs = [alloc_list[i] / total_donor_alloc for i in non_zero]
-#         donors = rng.choices(non_zero, weights=donor_probs, k=3)
-
-#         # donor_pct = rng.uniform(0.2, 0.5) 
-#         # n_donors = max(3, min(int(n_non_zero * donor_pct), n_non_zero // 2))
-#         # donors = rng.sample(non_zero, n_donors) # random subset
-#         # donors = non_zero[:n_donors]
-#         # print(f"donora:{donors}")
-
-#         for donor in donors:
-#             steal = min(amount_to_move//3 + 1, alloc_list[donor]//2)
-#             alloc_list[donor] = max(0, alloc_list[donor] - steal)
-#             amount_to_move -= steal
-#             # if alloc_list[donor] >= 4:  # Safe threshold
-#             #     steal = min(3, alloc_list[donor]//4 + 1)  # 1-3, NO randint
-#             #     alloc_list[donor] -= steal
-
-#         # 2) GIVE to 6-10 random nodes
-#         # n_receivers = rng.randint(6, min(10, n_nodes))
-        
-#         # receiver_pct = rng.uniform(0.2, 0.5) 
-#         # n_receivers = max(6, int(n_nodes * receiver_pct))
-#         # n_receivers = min(n_receivers, n_nodes)
-        
-#         # receivers = rng.sample(range(n_nodes), n_receivers)
-#         # print(f"receivers:{receivers}")
-#         # total_stolen = sum(max(0, min(3, alloc_list[i]//4 + 1)) for i in donors)
-#         # chunk = max(1, total_stolen // n_receivers)
-#         # Give to diverse receivers (favor zero nodes for exploration)
-#         zero_nodes = [i for i in range(n_nodes) if alloc_list[i] == 0]
-#         non_zero_nodes = [i for i in non_zero if alloc_list[i] > 0]
-        
-#         if zero_nodes:
-#             receivers = (rng.sample(zero_nodes, min(2, len(zero_nodes))) + 
-#                         rng.sample(non_zero_nodes, min(3, len(non_zero_nodes))))
-#         else:
-#             receivers = rng.sample(range(n_nodes), 5)
-#         for receiver in receivers:
-#             give = min(amount_to_move // len(receivers) + 1, amount_to_move)
-#             alloc_list[receiver] += give
-#             amount_to_move -= give
-#             # alloc_list[receiver] += chunk
-    
-#     # Floor + exact budget (bulletproof)
-#     # for i in range(n_nodes):
-#     #     alloc_list[i] = max(0, alloc_list[i])
-    
-#     # total = sum(alloc_list)
-#     # while total > budget:
-#     #     donor = next((i for i in range(n_nodes) if alloc_list[i] > 0), None)
-#     #     if donor is not None:
-#     #         alloc_list[donor] -= 1
-#     #         total -= 1
-#     # while total < budget:
-#     #     idx = rng.choice(range(n_nodes))
-#     #     alloc_list[idx] += 1
-#     #     total += 1
-    
-#     # # Convert back
-#     # if hasattr(new_sol["allocations"], 'get'):
-#     #     new_sol["allocations"] = {i: v for i, v in enumerate(alloc_list) if v > 0}
-#     # else:
-#     #     new_sol["allocations"] = alloc_list
-#     # Exact budget snapback
-#     total = sum(alloc_list)
-#     while total > budget: alloc_list[rng.choice(non_zero)] -= 1; total -= 1
-#     while total < budget: alloc_list[rng.choice(range(n_nodes))] += 1; total += 1
-    
-#     new_sol["allocations"] = [max(0, x) for x in alloc_list]
-
-#     return new_sol
-
 def mutate_fn(sol, rng):
+    # ==========================================================
+    # MODE 0 — STRUCTURAL RESET (rare, but critical)
+    # ==========================================================
     new_sol = copy.deepcopy(sol)
     alloc = new_sol["allocations"][:]
     n = len(alloc)
@@ -482,7 +463,20 @@ def mutate_fn(sol, rng):
     budget = new_sol["cache_budget"]
     icr = new_sol["icr_candidates"]
     icr = list(icr)
+    if rng.random() < 0.07:   # 7% probability
+        alloc = [0] * n
 
+        # choose a random subset of nodes (not necessarily central)
+        k = rng.randint(3, max(3, n // 3))
+        chosen = rng.sample(nodes, k)
+
+        # redistribute entire budget randomly
+        for _ in range(int(budget)):
+            alloc[rng.choice(chosen)] += 1
+
+        new_sol["allocations"] = alloc
+        return new_sol
+    
     # ---- parameters ----
     modes = ["carbon"]*3 + ["centrality"]*3 + ["random"]*1  
     mode = rng.choice(modes)
@@ -565,7 +559,6 @@ def mutate_fn(sol, rng):
     new_sol["allocations"] = alloc
     return new_sol
 
-
 def build_experiment(icr_candidates, params, metrics, allocations, tiers_per_node, cache_placement="ALLOCATED"):
     exp = copy.deepcopy(params)
     exp["data_collectors"] = copy.deepcopy(metrics)
@@ -587,7 +580,6 @@ def build_experiment(icr_candidates, params, metrics, allocations, tiers_per_nod
         exp["cache_policy"]["tiers_per_node"] = tiers_per_node
     
     return exp
-
 
 def eval_fn(sol, **kwargs):
     params  = kwargs["params"]
@@ -681,80 +673,379 @@ def eval_fn(sol, **kwargs):
         return (None, None)
 
 
-def run_paes(icr_candidates, params, metrics, settings, cache_budget, archive_size, grid_divisions, max_evaluations, seed, allocs):
-    logger.info("Run PAES")
-    def init_baseline():
-        return init_fn(icr_candidates, params, allocs, cache_budget)
+def _dominates(a: Objectives, b: Objectives, directions=DIRECTIONS) -> bool:
+    """
+    True if 'a' Pareto-dominates 'b' with mixed objective directions.
+    """
+    better_or_equal = True
+    strictly_better = False
 
-    def init_centrality():
-        return init_fn_bc_only(icr_candidates, params, allocs, cache_budget)
+    for (va, vb, d) in zip(a, b, directions):
+        if d == +1:  # maximize
+            if va < vb:
+                better_or_equal = False
+                break
+            if va > vb:
+                strictly_better = True
+        else:        # minimize
+            if va > vb:
+                better_or_equal = False
+                break
+            if va < vb:
+                strictly_better = True
 
-    def init_carbon():
-        return init_fn_ci_only(icr_candidates, params, allocs, cache_budget)
+    return better_or_equal and strictly_better
+
+
+def _key(sol: Solution) -> Tuple[int, ...]:
+    return tuple(sol["allocations"])
+
+
+@dataclass
+class _Individual:
+    sol: Solution
+    obj: Objectives
+    rank: int = 10**9
+    crowd: float = 0.0
+
+
+class NSGA2:
+    """
+    Minimal NSGA-II specialized for your solution shape:
+      - sol["allocations"] : list[int]
+      - objectives: (hit, cost, carbon) with mixed directions
+    """
+
+    def __init__(
+        self,
+        init_solutions: List[Callable[[], Solution]],
+        mutate: Callable[[Solution, random.Random], Solution],
+        evaluate: Callable[[Solution], Objectives],
+        pop_size: int = 40,
+        max_evaluations: int = 200,
+        seed: Optional[int] = 0,
+        crossover_prob: float = 0.9,
+        mutation_prob: float = 1.0,
+        tournament_k: int = 2,
+    ):
+        self.rng = random.Random(seed)
+        self.init_solutions = init_solutions
+        self.mutate = mutate
+        self.evaluate = evaluate
+
+        self.pop_size = pop_size
+        self.max_evaluations = max_evaluations
+
+        self.crossover_prob = crossover_prob
+        self.mutation_prob = mutation_prob
+        self.tournament_k = tournament_k
+
+        # cache evaluations (very important since eval runs Icarus)
+        self._eval_cache: Dict[Tuple[int, ...], Objectives] = {}
+
+        self._eval_count = 0
+
+    def _get_or_eval(self, sol: Solution) -> Objectives:
+        k = _key(sol)
+        if k in self._eval_cache:
+            return self._eval_cache[k]
+
+        obj = self.evaluate(sol)
+        self._eval_cache[k] = obj
+        self._eval_count += 1
+        return obj
+
+    # -----------------------------
+    # Fast non-dominated sorting
+    # -----------------------------
+    def _fast_nondominated_sort(self, pop: List[_Individual]) -> List[List[_Individual]]:
+        S: Dict[int, List[int]] = {}
+        n: Dict[int, int] = {}
+        fronts: List[List[int]] = [[]]
+
+        for p_i, p in enumerate(pop):
+            S[p_i] = []
+            n[p_i] = 0
+            for q_i, q in enumerate(pop):
+                if p_i == q_i:
+                    continue
+                if _dominates(p.obj, q.obj):
+                    S[p_i].append(q_i)
+                elif _dominates(q.obj, p.obj):
+                    n[p_i] += 1
+
+            if n[p_i] == 0:
+                p.rank = 0
+                fronts[0].append(p_i)
+
+        i = 0
+        while fronts[i]:
+            next_front: List[int] = []
+            for p_i in fronts[i]:
+                for q_i in S[p_i]:
+                    n[q_i] -= 1
+                    if n[q_i] == 0:
+                        pop[q_i].rank = i + 1
+                        next_front.append(q_i)
+            i += 1
+            fronts.append(next_front)
+
+        # convert indices → individuals and drop last empty
+        ind_fronts: List[List[_Individual]] = []
+        for f in fronts:
+            if not f:
+                break
+            ind_fronts.append([pop[idx] for idx in f])
+        return ind_fronts
+
+    # -----------------------------
+    # Crowding distance
+    # -----------------------------
+    def _crowding_distance(self, front: List[_Individual]) -> None:
+        if not front:
+            return
+        m = 3  # objectives count
+        for ind in front:
+            ind.crowd = 0.0
+
+        # for each objective, sort and add normalized distance
+        for j in range(m):
+            front.sort(key=lambda x: x.obj[j])
+            front[0].crowd = float("inf")
+            front[-1].crowd = float("inf")
+
+            lo = front[0].obj[j]
+            hi = front[-1].obj[j]
+            denom = (hi - lo) if hi != lo else 1.0
+
+            for i in range(1, len(front) - 1):
+                prev_v = front[i - 1].obj[j]
+                next_v = front[i + 1].obj[j]
+                front[i].crowd += (next_v - prev_v) / denom
+
+    # -----------------------------
+    # Tournament selection (rank, then crowding)
+    # -----------------------------
+    def _tournament(self, pop: List[_Individual]) -> _Individual:
+        contenders = [pop[self.rng.randrange(len(pop))] for _ in range(self.tournament_k)]
+        contenders.sort(key=lambda ind: (ind.rank, -ind.crowd))
+        return contenders[0]
+
+    # -----------------------------
+    # Crossover for integer allocations + repair budget
+    # -----------------------------
+    def _crossover(self, a: Solution, b: Solution) -> Tuple[Solution, Solution]:
+        # Uniform crossover on allocations; keep other fields from parents (same anyway)
+        ca = copy.deepcopy(a)
+        cb = copy.deepcopy(b)
+
+        alloc_a = ca["allocations"][:]
+        alloc_b = cb["allocations"][:]
+        n = len(alloc_a)
+
+        for i in range(n):
+            if self.rng.random() < 0.5:
+                alloc_a[i], alloc_b[i] = alloc_b[i], alloc_a[i]
+
+        ca["allocations"] = self._repair_budget(ca, alloc_a)
+        cb["allocations"] = self._repair_budget(cb, alloc_b)
+        return ca, cb
+
+    def _repair_budget(self, template_sol: Solution, alloc: List[int]) -> List[int]:
+        # Ensures all >=0 and sum == cache_budget (exactly),
+        # same constraint your mutate_fn enforces. :contentReference[oaicite:4]{index=4}
+        alloc = [max(0, int(x)) for x in alloc]
+        budget = int(template_sol["cache_budget"])
+        n = len(alloc)
+        total = sum(alloc)
+
+        if n == 0:
+            return alloc
+
+        # If everything is zero but budget > 0, seed something
+        if total == 0 and budget > 0:
+            alloc[self.rng.randrange(n)] = budget
+            return alloc
+
+        # Normalize to budget by random +/-1 moves
+        while total > budget:
+            candidates = [i for i in range(n) if alloc[i] > 0]
+            if not candidates:
+                break
+            i = self.rng.choice(candidates)
+            alloc[i] -= 1
+            total -= 1
+
+        while total < budget:
+            i = self.rng.randrange(n)
+            alloc[i] += 1
+            total += 1
+
+        return alloc
+
+    # -----------------------------
+    # Main run
+    # -----------------------------
+    def run(self) -> List[Tuple[Solution, Objectives]]:
+        # ---- 1) build initial population (seed with your extreme heuristics)
+        pop: List[_Individual] = []
+
+        # Ensure we have enough seed generators to fill pop
+        seed_fns = self.init_solutions[:]
+        if not seed_fns:
+            raise ValueError("NSGA2 requires at least one init solution generator.")
+
+        seen = set()
+        while len(pop) < self.pop_size and self._eval_count < self.max_evaluations:
+            fn = seed_fns[len(pop) % len(seed_fns)]
+            sol = fn()
+
+            # If duplicates, perturb a bit
+            k = _key(sol)
+            if k in seen:
+                sol = self.mutate(sol, self.rng)
+                k = _key(sol)
+                if k in seen:
+                    continue
+
+            obj = self._get_or_eval(sol)
+            if obj[0] is None or obj[1] is None or obj[2] is None:
+                continue
+
+            pop.append(_Individual(sol=sol, obj=obj))
+            seen.add(k)
+
+        # If still short (e.g. due to failed evals), keep mutating last valid
+        while len(pop) < self.pop_size and self._eval_count < self.max_evaluations and pop:
+            base = pop[-1].sol
+            sol = self.mutate(base, self.rng)
+            k = _key(sol)
+            if k in seen:
+                continue
+            obj = self._get_or_eval(sol)
+            if obj[0] is None or obj[1] is None or obj[2] is None:
+                continue
+            pop.append(_Individual(sol=sol, obj=obj))
+            seen.add(k)
+
+        # ---- 2) evolve until we hit max_evaluations
+        while self._eval_count < self.max_evaluations:
+            # Rank + crowding for selection
+            fronts = self._fast_nondominated_sort(pop)
+            for f in fronts:
+                self._crowding_distance(f)
+
+            # Create offspring
+            offspring: List[_Individual] = []
+            while len(offspring) < self.pop_size and self._eval_count < self.max_evaluations:
+                p1 = self._tournament(pop)
+                p2 = self._tournament(pop)
+
+                c1_sol = copy.deepcopy(p1.sol)
+                c2_sol = copy.deepcopy(p2.sol)
+
+                if self.rng.random() < self.crossover_prob:
+                    c1_sol, c2_sol = self._crossover(p1.sol, p2.sol)
+
+                if self.rng.random() < self.mutation_prob:
+                    c1_sol = self.mutate(c1_sol, self.rng)
+                if self.rng.random() < self.mutation_prob:
+                    c2_sol = self.mutate(c2_sol, self.rng)
+
+                for child_sol in (c1_sol, c2_sol):
+                    k = _key(child_sol)
+                    if k in seen:
+                        continue
+                    obj = self._get_or_eval(child_sol)
+                    if obj[0] is None or obj[1] is None or obj[2] is None:
+                        continue
+                    offspring.append(_Individual(sol=child_sol, obj=obj))
+                    seen.add(k)
+                    if len(offspring) >= self.pop_size:
+                        break
+
+            # Combine and select next generation
+            combined = pop + offspring
+            fronts = self._fast_nondominated_sort(combined)
+
+            next_pop: List[_Individual] = []
+            for f in fronts:
+                self._crowding_distance(f)
+                if len(next_pop) + len(f) <= self.pop_size:
+                    next_pop.extend(f)
+                else:
+                    # take most diverse
+                    f.sort(key=lambda ind: -ind.crowd)
+                    next_pop.extend(f[: self.pop_size - len(next_pop)])
+                    break
+
+            pop = next_pop
+
+            # If we couldn’t create new individuals, break (avoid infinite loops)
+            if not offspring:
+                break
+
+        # ---- 3) return final non-dominated set (front 0) as (sol, obj)
+        fronts = self._fast_nondominated_sort(pop)
+        pareto_front = fronts[0] if fronts else []
+        return [(ind.sol, ind.obj) for ind in pareto_front]
+
+
+# -------------------------------------------------------
+# Public entry point called by cacheplacement.py
+# -------------------------------------------------------
+def run_nsga2(
+        icr_candidates: List[int],
+        params: Dict[str, Any],
+        metrics: Any,
+        settings: Any,
+        cache_budget: int,
+        archive_size: int = 40,
+        max_evaluations: int = 120,
+        seed: int = 0,
+    ) -> List[Tuple[Solution, Objectives]]:
+    """
+    Mirrors your old run_paes(...) signature but runs NSGA-II.
+
+    Returns: List[(sol_dict, (hit, cost, carbon))] to match what your
+    green_cache_placement expects. :contentReference[oaicite:5]{index=5}
+    """
+    def init_uniform() -> Solution:
+        return init_fn_uniform(icr_candidates, params, allocs=[], cache_budget=cache_budget)
     
-    def init_alpha():
-        return init_fn_alpha(icr_candidates, params, allocs, cache_budget)
+    def init_pr() -> Solution:
+        return init_fn_pr_only(icr_candidates, params, allocs=[], cache_budget=cache_budget)
     
-    def init_hub():
-        return init_fn_hub(icr_candidates, params, allocs, cache_budget)
-    
-    def mutate_fn_local(sol, rng):
+    def init_bc() -> Solution:
+        return init_fn_bc_only(icr_candidates, params, allocs=[], cache_budget=cache_budget)
+
+    def init_carbon() -> Solution:
+        return init_fn_ci_only(icr_candidates, params, allocs=[], cache_budget=cache_budget)
+
+    def init_alpha() -> Solution:
+        return init_fn_alpha(icr_candidates, params, allocs=[], cache_budget=cache_budget)
+
+    def init_hub() -> Solution:
+        return init_fn_hub(icr_candidates, params, allocs=[], cache_budget=cache_budget)
+
+    def mutate_local(sol: Solution, rng: random.Random) -> Solution:
         return mutate_fn(sol, rng)
 
-    opt = PAES(
-        init_fn=init_centrality,
-        init_fns_extra=[init_carbon, init_alpha, init_hub],
-        mutate_fn=mutate_fn_local,
-        eval_fn=lambda sol: eval_fn(sol, params=params, metrics=metrics, settings=settings),
-        archive_size=archive_size,
-        grid_divisions=grid_divisions,
-        max_evaluations=max_evaluations,
+    def eval_local(sol: Solution) -> Objectives:
+        return eval_fn(sol, params=params, metrics=metrics, settings=settings)
+
+    pop_size = int(archive_size)  # use archive_size as population size (simple mapping)
+
+    nsga2 = NSGA2(
+        init_solutions=[init_uniform, init_bc, init_pr, init_carbon, init_alpha, init_hub],
+        mutate=mutate_local,
+        evaluate=eval_local,
+        pop_size=pop_size,
+        max_evaluations=int(max_evaluations),
         seed=seed,
+        crossover_prob=0.9,
+        mutation_prob=1.0,
+        tournament_k=2,
     )
 
-    pareto = opt.run()
-
-    return pareto
-
-# if __name__ == "__main__":
-#     # Find Pareto solutions
-#     ICR_CANDIDATES = [
-#         4, 6, 10, 14, 15, 17, 18, 20, 21, 22,
-#         29, 31, 34, 35, 36, 37, 38, 39, 40, 44,
-#         45, 46, 49, 55, 56, 58, 59
-#     ]
-#     pareto = run_paes(icr_candidates=ICR_CANDIDATES,
-#                     topology="GARR",
-#                     alpha=1.2,
-#                     strategy="CL2SM",
-#                     network_cache=0.015,
-#                     cache_placement="UNIFORM",
-#                     archive_size=40,
-#                     grid_divisions=30,
-#                     max_evaluations=2,  # small for test, increase later
-#                     seed=0)
-    
-#     print("Found", len(pareto), "Pareto solutions (max Hit, min Cost, min Carbon):")
-#     for sol, (h, c, cf) in pareto:
-#         print(sol["allocations"], " -> hit=%.6g, cost=%.6f, carbon=%.6f" % (-h, c, cf))
-    
-#     # Combined plot
-#     hits = [-obj[0] for _, obj in pareto]  # invert -hit for plot
-#     costs = [obj[1] for _, obj in pareto]
-#     carbons = [obj[2] for _, obj in pareto]
-
-    # fig = plt.figure(figsize=(10, 7))
-    # ax = fig.add_subplot(111, projection="3d")
-    # ax.scatter(hits, costs, carbons, c="royalblue", s=60, label="PAES Pareto")
-
-    # ax.set_xlabel("Hit Rate (maximize)")
-    # ax.set_ylabel("Cost (minimize)")
-    # ax.set_zlabel("Carbon (minimize)")
-    # ax.set_title("PAES Pareto Front vs Baselines")
-    # ax.legend()
-    # plt.tight_layout()
-
-    # out_path = EXAMPLES_DIR / "paes_logs/paes_vs_baselines_3d.png"
-    # fig.savefig(out_path, dpi=300)
-    # plt.close()
-    # print(f"\n📌 3D plot saved to: {out_path}")
+    return nsga2.run()

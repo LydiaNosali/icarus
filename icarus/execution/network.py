@@ -14,7 +14,6 @@ of all relevant events.
 """
 import copy
 import logging
-import math
 import random
 
 import networkx as nx

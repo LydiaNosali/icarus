@@ -4,7 +4,6 @@ The orchestrator is responsible for scheduling experiments specified in the
 user-provided settings.
 """
 import math
-from pathlib import Path
 import random
 import time
 import collections
