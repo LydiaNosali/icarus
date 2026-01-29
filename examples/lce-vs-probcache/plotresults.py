@@ -1364,19 +1364,22 @@ def plot_ccch_vs_cache_size(
     uniform_filtered = resultset.filter({
         "topology": {"name": topology},
         "workload": {"name": "STATIONARY", "alpha": alpha},\
-        "cache_placement": {"name" : "UNIFORM"},
-        "CCHRP": {}
+        "cache_placement": {"name" : "CACHECRAFT"},
+        "CCHRP": {},
+        "CARBONFOOTPRINT": {}
     })
     uniform_cf = {
         res[0].get("cache_placement").get("network_cache"): res[1].get("CCHRP").get("MEAN")
         for res in uniform_filtered
-        if res[1].get("CCHRP").get("MEAN") is not None
+        if res[1].get("CARBONFOOTPRINT").get("TOTAL") is not None
     }
 
     alpha_filtered = resultset.filter({
         "topology": {"name": topology},
         "workload" :{"alpha":alpha},
-        "CCHRP": {}
+        "CCHRP": {},
+        "CARBONFOOTPRINT":{},
+        "CACHE_HIT_RATIO":{}
     })
 
     if not uniform_cf:
@@ -1387,7 +1390,7 @@ def plot_ccch_vs_cache_size(
     for entry, metrics in alpha_filtered:
         cache_size = entry.get("cache_placement", {}).get("network_cache")
         if cache_size in uniform_cf and metrics.get("CCHRP", {}).get("MEAN") is not None:
-            normalized_value = metrics["CCHRP"]["MEAN"] / uniform_cf[cache_size]
+            normalized_value = (metrics["CARBONFOOTPRINT"]["TOTAL"] / uniform_cf[cache_size]) / (metrics["CACHE_HIT_RATIO"]["MEAN"] * 400000)
             metrics["CCHRP"]["MEAN"] = normalized_value
     
     desc = {}
@@ -1522,36 +1525,7 @@ def plot_cf_vs_topology(
 
 def plot_ccch_vs_topology(
     resultset, alpha, cache_size, topology_range, placements, plotdir
-):
-    uniform_filtered = resultset.filter({
-        "cache_placement": {"network_cache": cache_size},
-        "workload": {"name": "STATIONARY", "alpha": alpha},\
-        "cache_placement": {"name" : "UNIFORM"},
-        "CCHRP": {}
-    })
-    uniform_cf = {
-        res[0].get("cache_placement").get("network_cache"): res[1].get("CCHRP").get("MEAN")
-        for res in uniform_filtered
-        if res[1].get("CCHRP").get("MEAN") is not None
-    }
-
-    alpha_filtered = resultset.filter({
-        "cache_placement": {"network_cache": cache_size},
-        "workload" :{"alpha":alpha},
-        "CCHRP": {}
-    })
-
-    if not uniform_cf:
-        logger.error("No UNIFORM CCHRP values found for normalization.")
-        return
-    
-    # Step 3: Normalize the resultset based on LCE CHRCP values
-    for entry, metrics in alpha_filtered:
-        cache_size = entry.get("cache_placement", {}).get("network_cache")
-        if cache_size in uniform_cf and metrics.get("CCHRP", {}).get("MEAN") is not None:
-            normalized_value = metrics["CCHRP"]["MEAN"] / uniform_cf[cache_size]
-            metrics["CCHRP"]["MEAN"] = normalized_value
-    
+):    
     desc = {}
     desc["xlabel"] = "Topologies"
     desc["ylabel"] = "Carbon Efficiency"
@@ -1630,34 +1604,33 @@ def plot_latency_vs_alpha(
 def plot_ccch_vs_alpha(
     resultset, topology, cache_size, alpha_range, placements, plotdir
 ):
-    uniform_filtered = resultset.filter({
-        "topology": {"name": topology},
-        "cache_placement": {"network_cache": cache_size},
-        "cache_placement": {"name" : "UNIFORM"},
-        "CCHRP": {}
-    })
-    uniform_cf = {
-        res[0].get("cache_placement").get("network_cache"): res[1].get("CCHRP").get("MEAN")
-        for res in uniform_filtered
-        if res[1].get("CCHRP").get("MEAN") is not None
-    }
+    # uniform_filtered = resultset.filter({
+    #     "topology": {"name": topology},
+    #     "cache_placement": {"network_cache": cache_size},
+    #     "cache_placement": {"name" : "UNIFORM"},
+    #     "CCHRP": {}
+    # })
+    # uniform_cf = {
+    #     res[0].get("cache_placement").get("network_cache"): res[1].get("CCHRP").get("MEAN")
+    #     for res in uniform_filtered
+    #     if res[1].get("CCHRP").get("MEAN") is not None
+    # }
 
-    alpha_filtered = resultset.filter({
-        "topology": {"name": topology},
-        "cache_placement": {"network_cache": cache_size},
-        "CCHRP": {}
-    })
+    # alpha_filtered = resultset.filter({
+    #     "topology": {"name": topology},
+    #     "cache_placement": {"network_cache": cache_size},
+    #     "CCHRP": {},
+    #     "CACHE_HIT_RATIO" : {},
+    #     "CARBONFOOTPRINT" : {}
+    # })
 
-    if not uniform_cf:
-        logger.error("No UNIFORM CCHRP values found for normalization.")
-        return
+    # if not uniform_cf:
+    #     logger.error("No UNIFORM CCHRP values found for normalization.")
+    #     return
     
     # Step 3: Normalize the resultset based on LCE CHRCP values
-    for entry, metrics in alpha_filtered:
-        cache_size = entry.get("cache_placement", {}).get("network_cache")
-        if cache_size in uniform_cf and metrics.get("CCHRP", {}).get("MEAN") is not None:
-            normalized_value = metrics["CCHRP"]["MEAN"] / uniform_cf[cache_size]
-            metrics["CCHRP"]["MEAN"] = normalized_value
+    # for entry, metrics in alpha_filtered:
+    #     metrics["CCHRP"]["MEAN"] = metrics["CARBONFOOTPRINT"]["MEAN"] / metrics["CACHE_HIT_RATIO"]["MEAN"] 
 
     desc = {}
     desc["xlabel"] = "Content distribution \u03b1"
@@ -1766,6 +1739,7 @@ def run(config, results, plotdir):
     
     # cache_sizes = list(dict.fromkeys(original_list))
     topologies = settings.TOPOLOGIES
+    print(f"topologies:{topologies}")
     cache_sizes = settings.NETWORK_CACHE
     strategies = settings.STRATEGIES
     cache_placements = settings.CACHE_PLACEMENT
@@ -1786,10 +1760,10 @@ def run(config, results, plotdir):
     # }
     
     cache_size = 0.015
-    # topology = "TELEKOM"
-    topology = "GEANT"
+    topology = "TELEKOM"
+    # topology = "GEANT"
+    # alpha = 1.0
     alpha = 0.6
-    # alpha = 0.8
     
     # CACHE SIZES
     plot_cache_hits_vs_cache_size(

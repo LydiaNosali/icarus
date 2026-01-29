@@ -7,6 +7,7 @@ labelled, these functions deploy caching space to the nodes of the topology.
 import logging
 import os
 import random
+import re
 import networkx as nx
 import pandas as pd
 import numpy as np
@@ -745,23 +746,23 @@ def green_cache_placement(topology, cache_budget, **kwargs):
                       seed=0)
     
     logger.info(f"Found {len(pareto)} Pareto solutions (max Hit, min Cost, min Carbon):")
-    for sol, (h, c, cf) in pareto:
+    for sol, (cf, h, c) in pareto:
         allocs = sol["allocations"]
-        logger.info(f"{allocs}, -> hit={h}, cost={c}, carbon={cf}")
+        logger.info(f"sol : {allocs}, -> carbon={cf}, hit={h}, cost={c}")
 
     values = []
     solutions = []
     pareto_allocations = []
 
-    for sol, (h, c, cf) in pareto:
-        values.append([h, c, cf])   # no minus here
+    for sol, (cf, h, c) in pareto:
+        values.append([cf, h, c])   # no minus here
         solutions.append(sol)
         pareto_allocations.append(sol["allocations"]) 
 
     # Convert to array
     values = np.array(values)
-    directions = [+1, -1, -1]
-    weights = [0.2, 0.1, 0.7]
+    directions = [-1, +1, -1]
+    weights=[0.95, 0.025, 0.025]
     # Run TOPSIS
     # best_idx, scores, node_greenness = topsis(values, directions, weights=weights, pareto_allocations=pareto_allocations)
     best_idx, scores, node_greenness = topsis(values, directions, weights=weights, nodes=icr_candidates, pareto_allocations=pareto_allocations)
@@ -787,28 +788,32 @@ def green_cache_placement(topology, cache_budget, **kwargs):
     topology.graph["topsis_scores"] = scores.tolist() 
     
     pareto_records = []
-    for sol, (h, c, cf) in pareto:
+    for sol, (cf, h, c) in pareto:
         pareto_records.append({
+            "carbon": cf,
             "hit": h,
             "cost": c,
-            "carbon": cf,
             "allocations": sol["allocations"]
         })
 
     df = pd.DataFrame(pareto_records)
-    output_path = f"/Users/lydia/Desktop/icarus/examples/lce-vs-probcache/pareto_fronts_ci_only/period_{period + 1}.csv"
+    if prev_state_path == None :
+        prev_state_path = "one"
+    output_path = f"/Users/lydia/Desktop/icarus/examples/lce-vs-probcache/pareto_fronts/{prev_state_path}.csv"
     df.to_csv(output_path, index=False)
 
-    topsis_path = "/Users/lydia/Desktop/icarus/examples/lce-vs-probcache/pareto_fronts_ci_only/topsis_ci_only.csv"
+    if prev_state_path != None :
+        prev_state_path = re.sub(r'_p\d+$', '', prev_state_path)
+    topsis_path = f"/Users/lydia/Desktop/icarus/examples/lce-vs-probcache/pareto_fronts/{prev_state_path}_topsis.csv"
 
     # TOPSIS objectives
-    best_h, best_c, best_cf = values[best_idx]
+    best_cf, best_h, best_c = values[best_idx]
 
     topsis_record = {
-        "period": period + 1,
+        "period": period,
+        "carbon": best_cf,
         "hit": best_h,
         "cost": best_c,
-        "carbon": best_cf,
         "allocations": best_sol["allocations"]
     }
 

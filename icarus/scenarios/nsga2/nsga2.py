@@ -18,7 +18,7 @@ EXAMPLES_DIR = Path(__file__).parent
 
 logger = logging.getLogger("babel")
 
-Objectives = Tuple[float, float, float]   # (hit, cost, carbon)
+Objectives = Tuple[float, float, float]   # (carbon, hit, cost)
 Solution = Dict[str, Any]
 
 # -----------------------------
@@ -26,7 +26,7 @@ Solution = Dict[str, Any]
 # directions: +1 maximize, -1 minimize
 # Here: hit maximize, cost minimize, carbon minimize
 # -----------------------------
-DIRECTIONS = (+1, -1, -1)
+DIRECTIONS = (-1, +1, -1)
 
 # ================== base init ========================
 def init_fn_uniform(icr_candidates, params, allocs, cache_budget):
@@ -478,7 +478,7 @@ def mutate_fn(sol, rng):
         return new_sol
     
     # ---- parameters ----
-    modes = ["carbon"]*3 + ["centrality"]*3 + ["random"]*1  
+    modes = ["carbon"]*6 + ["centrality"]*2 + ["random"]*1  
     mode = rng.choice(modes)
     print(f"{mode} MUTATE")
 
@@ -572,8 +572,8 @@ def build_experiment(icr_candidates, params, metrics, allocations, tiers_per_nod
     else:
         # Baseline mode: keep original params unchanged
         pass
-    exp["workload"]["n_warmup"] /= 50
-    exp["workload"]["n_measured"] /= 3
+    exp["workload"]["n_warmup"] /= 5
+    exp["workload"]["n_measured"] /= 5
     exp["workload"]["n_measured"] = int(exp["workload"]["n_measured"])
      # tiers logic unchanged
     if tiers_per_node is not None:
@@ -667,7 +667,7 @@ def eval_fn(sol, **kwargs):
         #             logger.warning(f"Hard elimination penalty applied (dirty_ratio={dirty_ratio:.3f})")
         # except Exception as e:
         #     logger.warning(f"Carbon penalty skipped due to error: {e}")
-        return (hit, cost, carbon)
+        return (carbon, hit, cost)
     except Exception as e:
         print("Error reading results:", e)
         return (None, None)
@@ -713,7 +713,7 @@ class NSGA2:
     """
     Minimal NSGA-II specialized for your solution shape:
       - sol["allocations"] : list[int]
-      - objectives: (hit, cost, carbon) with mixed directions
+      - objectives: (carbon, hit, cost) with mixed directions
     """
 
     def __init__(
@@ -802,33 +802,46 @@ class NSGA2:
     # Crowding distance
     # -----------------------------
     def _crowding_distance(self, front: List[_Individual]) -> None:
-        if not front:
+        if len(front) <= 2:
+            for ind in front:
+                ind.crowd = float("inf")
             return
-        m = 3  # objectives count
+        
+        n_obj = 3  # carbon, hit, cost
+        
+        # Initialize crowding distances
         for ind in front:
             ind.crowd = 0.0
-
-        # for each objective, sort and add normalized distance
-        for j in range(m):
+        
+        # For each objective: sort, normalize, compute distances
+        for j in range(n_obj):
+            # Sort front by objective j
             front.sort(key=lambda x: x.obj[j])
-            front[0].crowd = float("inf")
+            front[0].crowd = float("inf")   # boundary points
             front[-1].crowd = float("inf")
-
-            lo = front[0].obj[j]
-            hi = front[-1].obj[j]
-            denom = (hi - lo) if hi != lo else 1.0
-
+            
+            # Get range of THIS objective in THIS front for normalization
+            f_min = front[0].obj[j]
+            f_max = front[-1].obj[j]
+            f_range = f_max - f_min if f_max != f_min else 1.0
+            
+            # Compute normalized crowding for interior points
             for i in range(1, len(front) - 1):
-                prev_v = front[i - 1].obj[j]
-                next_v = front[i + 1].obj[j]
-                front[i].crowd += (next_v - prev_v) / denom
+                f_prev = front[i-1].obj[j]
+                f_next = front[i+1].obj[j]
+                front[i].crowd += (f_next - f_prev) / f_range
+        
+        # CARBON BIAS: slightly favor low-carbon solutions
+        for ind in front:
+            ind.crowd *= (1.0 + 1.0 / (1.0 + ind.obj[0]))  # lower carbon → bonus
 
     # -----------------------------
     # Tournament selection (rank, then crowding)
     # -----------------------------
     def _tournament(self, pop: List[_Individual]) -> _Individual:
         contenders = [pop[self.rng.randrange(len(pop))] for _ in range(self.tournament_k)]
-        contenders.sort(key=lambda ind: (ind.rank, -ind.crowd))
+        # rank first, then crowding, then LOWEST carbon breaks ties
+        contenders.sort(key=lambda ind: (ind.rank, -ind.crowd, ind.obj[0]))
         return contenders[0]
 
     # -----------------------------
@@ -1007,7 +1020,7 @@ def run_nsga2(
     """
     Mirrors your old run_paes(...) signature but runs NSGA-II.
 
-    Returns: List[(sol_dict, (hit, cost, carbon))] to match what your
+    Returns: List[(sol_dict, (carbon, hit, cost))] to match what your
     green_cache_placement expects. :contentReference[oaicite:5]{index=5}
     """
     def init_uniform() -> Solution:
@@ -1047,5 +1060,9 @@ def run_nsga2(
         mutation_prob=1.0,
         tournament_k=2,
     )
-
-    return nsga2.run()
+    pareto_solutions = nsga2.run()
+    
+    carbon_first = sorted(pareto_solutions, key=lambda x: x[1][0])
+    
+    print(f"✅ Top 3 green: carbon={carbon_first[0][1][0]:.1f}, hit={carbon_first[0][1][1]:.3f}")
+    return carbon_first
