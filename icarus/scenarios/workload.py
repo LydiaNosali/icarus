@@ -113,15 +113,10 @@ class StationaryWorkload:
         ]
         self.zipf = TruncatedZipfDist(alpha, n_contents, seed=seed)
         self.n_contents = n_contents
-        # self.contents = range(1, n_contents + 1)
         
         self.priority_values = kwargs["priority_values"]
         self.high_priority_rate = kwargs["high_priority_rate"]
         self.data_size_range =kwargs["data_size_range"]
-        # self.contents = {content_id: {
-        #                     "priority": random.choices(self.priority_values, weights=[1 - self.high_priority_rate, self.high_priority_rate])[0],
-        #                     "size": random.randint(self.data_size_range[0], self.data_size_range[1])
-        #                  } for content_id in range(1, n_contents + 1)}
         self.contents = {content_id: {
             "priority": self.local_random.choices(self.priority_values, weights=[1 - self.high_priority_rate, self.high_priority_rate])[0],
             "size": self.local_random.randint(self.data_size_range[0], self.data_size_range[1])

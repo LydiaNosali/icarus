@@ -1286,7 +1286,7 @@ def plot_cf_vs_cache_size(
 ):
     desc = {}
     desc["xlabel"] = "Cache Proportion (%)"
-    desc["ylabel"] = "Carbon Footprint g.CO2"
+    desc["ylabel"] = "Carbon Footprint gCO2"
     desc["xparam"] = ("cache_placement", "network_cache")
     desc["xvals"] = cache_size_range
     desc["filter"] = {
@@ -1363,13 +1363,12 @@ def plot_ccch_vs_cache_size(
 ):
     uniform_filtered = resultset.filter({
         "topology": {"name": topology},
-        "workload": {"name": "STATIONARY", "alpha": alpha},\
-        "cache_placement": {"name" : "CACHECRAFT"},
-        "CCHRP": {},
+        "workload": {"name": "STATIONARY", "alpha": alpha},
+        "cache_placement": {"name" : "UNIFORM"},
         "CARBONFOOTPRINT": {}
     })
     uniform_cf = {
-        res[0].get("cache_placement").get("network_cache"): res[1].get("CCHRP").get("MEAN")
+        res[0].get("cache_placement").get("network_cache"): res[1].get("CARBONFOOTPRINT").get("TOTAL")
         for res in uniform_filtered
         if res[1].get("CARBONFOOTPRINT").get("TOTAL") is not None
     }
@@ -1378,8 +1377,6 @@ def plot_ccch_vs_cache_size(
         "topology": {"name": topology},
         "workload" :{"alpha":alpha},
         "CCHRP": {},
-        "CARBONFOOTPRINT":{},
-        "CACHE_HIT_RATIO":{}
     })
 
     if not uniform_cf:
@@ -1390,12 +1387,12 @@ def plot_ccch_vs_cache_size(
     for entry, metrics in alpha_filtered:
         cache_size = entry.get("cache_placement", {}).get("network_cache")
         if cache_size in uniform_cf and metrics.get("CCHRP", {}).get("MEAN") is not None:
-            normalized_value = (metrics["CARBONFOOTPRINT"]["TOTAL"] / uniform_cf[cache_size]) / (metrics["CACHE_HIT_RATIO"]["MEAN"] * 400000)
+            normalized_value = metrics["CCHRP"]["MEAN"] / uniform_cf[cache_size]
             metrics["CCHRP"]["MEAN"] = normalized_value
     
     desc = {}
     desc["xlabel"] = "Cache Proportion (%)"
-    desc["ylabel"] = "Carbon Efficiency"
+    desc["ylabel"] = "Carbon Efficiency gCO2"
     desc["xparam"] = ("cache_placement", "network_cache")
     desc["xvals"] = cache_size_range 
     desc["filter"] = {
@@ -1503,7 +1500,7 @@ def plot_cf_vs_topology(
 ):
     desc = {}
     desc["xlabel"] = "Topologies"
-    desc["ylabel"] = "Carbon Footprint g.CO2"
+    desc["ylabel"] = "Carbon Footprint gCO2"
     desc["xparam"] = ("topology", "name")
     desc["xvals"] = topology_range
     desc["filter"] = {
@@ -1528,7 +1525,7 @@ def plot_ccch_vs_topology(
 ):    
     desc = {}
     desc["xlabel"] = "Topologies"
-    desc["ylabel"] = "Carbon Efficiency"
+    desc["ylabel"] = "Carbon Efficiency gCO2"
     desc["xparam"] = ("topology", "name")
     desc["xvals"] = topology_range
     desc["filter"] = {
@@ -1634,7 +1631,7 @@ def plot_ccch_vs_alpha(
 
     desc = {}
     desc["xlabel"] = "Content distribution \u03b1"
-    desc["ylabel"] = "Carbon Efficiency"
+    desc["ylabel"] = "Carbon Efficiency gCO2"
     desc["xparam"] = ("workload", "alpha")
     desc["xvals"] = alpha_range
     desc["filter"] = {
@@ -1759,11 +1756,12 @@ def run(config, results, plotdir):
     #     "CL4M": {2: 4617, 3: 31, 4: 5, 5: 2, 6: 1, 8: 2, 9: 2, 10: 2},
     # }
     
-    cache_size = 0.015
-    topology = "TELEKOM"
-    # topology = "GEANT"
-    # alpha = 1.0
-    alpha = 0.6
+    cache_size = 0.05
+    # topology = "TELEKOM"
+    topology = "GEANT"
+    # topology = "GARR"
+    alpha = 0.8
+    # alpha = 0.6
     
     # CACHE SIZES
     plot_cache_hits_vs_cache_size(

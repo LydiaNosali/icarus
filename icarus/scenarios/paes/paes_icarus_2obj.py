@@ -3,20 +3,93 @@ import os
 import pickle
 from pathlib import Path
 import copy
+import random
 
 from icarus.scenarios.paes.paes import PAES
 from icarus.runner import run
 import networkx as nx
 
 from icarus.util import iround
+from multiprocessing import Pool
+
 
 EXAMPLES_DIR = Path(__file__).parent
 
 logger = logging.getLogger("babel")
 
 
-# ================== base init ========================
-def init_fn(icr_candidates, params, allocs, cache_budget):
+# ================== top3 init ========================
+def init_fn_top3(icr_candidates, params, allocs, cache_budget):
+    net_params = params.get("network", {})
+    ci = dict(net_params.get("node_carbon_intensity", {}))
+    if not ci:
+        raise ValueError("Carbon-aware init requires 'network.node_carbon_intensity'")
+
+    topology = net_params.get("nx_graph")
+    betw = nx.betweenness_centrality(topology)
+
+    centralities = {n: betw.get(n, 0.0) for n in icr_candidates}
+
+    scores = []
+    for idx, node in enumerate(icr_candidates):
+        carbon_score = -ci.get(node, 1.0)      # lower CI = better
+        cent_score = centralities[node]
+        score = 0.6 * carbon_score + 0.4 * cent_score
+        scores.append((idx, score))
+
+    k = min(3, len(scores))
+    topk = sorted(scores, key=lambda x: x[1], reverse=True)[:k]
+
+    allocs = [0] * len(icr_candidates)
+    base = cache_budget // k
+    remainder = cache_budget % k
+
+    for j, (idx, _) in enumerate(topk):
+        allocs[idx] = base + (remainder if j == 0 else 0)
+
+    tiers_template = params.get("cache_policy", {}).get("tiers", {})
+    tiers_per_node = {n: copy.deepcopy(tiers_template) for n in icr_candidates}
+
+    return {
+        "allocations": allocs,
+        "cache_budget": cache_budget,
+        "actual_total": sum(allocs),
+        "icr_candidates": icr_candidates,
+        "tiers_per_node": tiers_per_node,
+        "node_carbon_intensity": ci,
+        "centralities": centralities,
+    }
+
+# ================== one shot init ========================
+def init_fn_one_shot(icr_candidates, params, allocs, cache_budget):
+    allocs = [0] * len(icr_candidates)
+    winner_idx = random.randrange(len(icr_candidates))
+    allocs[winner_idx] = cache_budget
+
+    net_params = params.get("network", {})
+    ci = dict(net_params.get("node_carbon_intensity", {}))
+    if not ci:
+        raise ValueError("Carbon-aware init requires 'network.node_carbon_intensity'")
+
+    topology = net_params.get("nx_graph")
+    betw = nx.betweenness_centrality(topology)
+    centralities = {n: betw.get(n, 0.0) for n in icr_candidates}
+
+    tiers_template = params.get("cache_policy", {}).get("tiers", {})
+    tiers_per_node = {n: copy.deepcopy(tiers_template) for n in icr_candidates}
+
+    return {
+        "allocations": allocs,
+        "cache_budget": cache_budget,
+        "actual_total": sum(allocs),
+        "icr_candidates": icr_candidates,
+        "tiers_per_node": tiers_per_node,
+        "node_carbon_intensity": ci,
+        "centralities": centralities,
+    }
+
+# ================== uniform init ========================
+def init_fn_uniform(icr_candidates, params, allocs, cache_budget):
     cache_size = iround(cache_budget / len(icr_candidates))
     
     raw_alloc = {
@@ -24,8 +97,8 @@ def init_fn(icr_candidates, params, allocs, cache_budget):
         for v in icr_candidates
     }
     
-    # Initial rounding with minimum 1
-    rounded_alloc = {v: max(1, int(round(a))) for v, a in raw_alloc.items()}
+    # Initial rounding with minimum 0
+    rounded_alloc = {v: max(0, int(round(a))) for v, a in raw_alloc.items()}
     
     allocs[:] = rounded_alloc.values()
 
@@ -67,8 +140,8 @@ def init_fn_ci_only(icr_candidates, params, allocs, cache_budget):
         for v in centralities
     }
     
-    # Initial rounding with minimum 1
-    rounded_alloc = {v: max(1, int(round(a))) for v, a in raw_alloc.items()}
+    # Initial rounding with minimum 0
+    rounded_alloc = {v: max(0, int(round(a))) for v, a in raw_alloc.items()}
     total_allocated = sum(rounded_alloc.values())
     while total_allocated > cache_budget:
         # Find the node with the smallest allocation > 1 to reduce
@@ -100,7 +173,7 @@ def init_fn_ci_only(icr_candidates, params, allocs, cache_budget):
         "centralities": central
     }
 
-# ================== centrality only init ========================
+# ================== betweenness centrality only init ========================
 def init_fn_bc_only(icr_candidates, params, allocs, cache_budget):
     net_params = params.get("network", {})
     topology = net_params.get("nx_graph")
@@ -121,7 +194,117 @@ def init_fn_bc_only(icr_candidates, params, allocs, cache_budget):
         for v in centralities
     }
     
-    # Initial rounding with minimum 1
+    # Initial rounding with minimum 0
+    rounded_alloc = {v: max(0, int(round(a))) for v, a in raw_alloc.items()}
+    total_allocated = sum(rounded_alloc.values())
+    while total_allocated > cache_budget:
+        # Find the node with the smallest allocation > 1 to reduce
+        over_nodes = [v for v in rounded_alloc if rounded_alloc[v] > 1]
+        if not over_nodes:
+            break  # Can't reduce anymore without violating ≥1 constraint
+        # Reduce the one with the smallest centrality
+        victim = min(over_nodes, key=lambda v: centralities[v])
+        rounded_alloc[victim] -= 1
+        total_allocated -= 1
+    
+    allocs[:] = rounded_alloc.values()
+    # print(allocs)
+
+    # 8) Tier setup (unchanged from your pattern)
+    tiers_template = params.get("cache_policy", {}).get("tiers", {})
+    tiers_per_node = {node: copy.deepcopy(tiers_template) for node in icr_candidates}
+    
+    ci = params.get("network").get("node_carbon_intensity")
+    ci = dict(ci)
+    if not ci:
+        raise ValueError("Carbon-aware init requires 'network.node_carbon_intensity'")
+
+    return {
+        "allocations": allocs[:],
+        "cache_budget": cache_budget,
+        "actual_total": sum(rounded_alloc.values()),
+        "icr_candidates": icr_candidates,
+        "tiers_per_node": tiers_per_node,
+        "node_carbon_intensity": ci,
+        "centralities": centralities
+    }
+
+# ================== degree centrality only init ========================
+def init_fn_dc_only(icr_candidates, params, allocs, cache_budget):
+    net_params = params.get("network", {})
+    topology = net_params.get("nx_graph")
+    # betw = dict(nx.betweenness_centrality(topology))
+    # pr_kwargs = {}
+    # betw = dict(nx.pagerank(topology, **pr_kwargs))
+    betw = dict(nx.degree(topology))
+
+    centralities = {v: betw[v] for v in icr_candidates}
+    # centralities = {v: betw[v] for v in icr_candidates if betw[v] > 0}
+    if not centralities:
+        raise ValueError("No centralities")
+
+    total_centrality = sum(centralities.values())
+
+    raw_alloc = {
+        v: cache_budget * centralities[v] / total_centrality
+        for v in centralities
+    }
+    
+    # Initial rounding with minimum 0
+    rounded_alloc = {v: max(0, int(round(a))) for v, a in raw_alloc.items()}
+    total_allocated = sum(rounded_alloc.values())
+    while total_allocated > cache_budget:
+        # Find the node with the smallest allocation > 1 to reduce
+        over_nodes = [v for v in rounded_alloc if rounded_alloc[v] > 1]
+        if not over_nodes:
+            break  # Can't reduce anymore without violating ≥1 constraint
+        # Reduce the one with the smallest centrality
+        victim = min(over_nodes, key=lambda v: centralities[v])
+        rounded_alloc[victim] -= 1
+        total_allocated -= 1
+    
+    allocs[:] = rounded_alloc.values()
+    # print(allocs)
+
+    # 8) Tier setup (unchanged from your pattern)
+    tiers_template = params.get("cache_policy", {}).get("tiers", {})
+    tiers_per_node = {node: copy.deepcopy(tiers_template) for node in icr_candidates}
+    
+    ci = params.get("network").get("node_carbon_intensity")
+    ci = dict(ci)
+    if not ci:
+        raise ValueError("Carbon-aware init requires 'network.node_carbon_intensity'")
+
+    return {
+        "allocations": allocs[:],
+        "cache_budget": cache_budget,
+        "actual_total": sum(rounded_alloc.values()),
+        "icr_candidates": icr_candidates,
+        "tiers_per_node": tiers_per_node,
+        "node_carbon_intensity": ci,
+        "centralities": centralities
+    }
+
+# ================== pagerank centrality only init ========================
+def init_fn_pr_only(icr_candidates, params, allocs, cache_budget):
+    net_params = params.get("network", {})
+    topology = net_params.get("nx_graph")
+    pr_kwargs = {}
+    betw = dict(nx.pagerank(topology, **pr_kwargs))
+
+    centralities = {v: betw[v] for v in icr_candidates}
+    # centralities = {v: betw[v] for v in icr_candidates if betw[v] > 0}
+    if not centralities:
+        raise ValueError("No centralities")
+
+    total_centrality = sum(centralities.values())
+
+    raw_alloc = {
+        v: cache_budget * centralities[v] / total_centrality
+        for v in centralities
+    }
+    
+    # Initial rounding with minimum 0
     rounded_alloc = {v: max(0, int(round(a))) for v, a in raw_alloc.items()}
     total_allocated = sum(rounded_alloc.values())
     while total_allocated > cache_budget:
@@ -224,7 +407,7 @@ def init_fn_alpha(icr_candidates, params, allocs, cache_budget):
         for v in scores
     }
 
-    rounded_alloc = {v: max(1, int(round(a))) for v, a in raw_alloc.items()}
+    rounded_alloc = {v: max(0, int(round(a))) for v, a in raw_alloc.items()}
     total_allocated = sum(rounded_alloc.values())
 
     # if we overshoot the budget, decrement lowest-score nodes first
@@ -341,7 +524,7 @@ def init_fn_hub(icr_candidates, params, allocs, cache_budget):
     if not raw_alloc:
         raise ValueError("No raw_alloc")
 
-    rounded_alloc = {v: max(1, int(round(a))) for v, a in raw_alloc.items()}
+    rounded_alloc = {v: max(0, int(round(a))) for v, a in raw_alloc.items()}
     total_allocated = sum(rounded_alloc.values())
 
     # 7) adjust down if over budget: remove from lowest-priority nodes
@@ -386,185 +569,304 @@ def init_fn_hub(icr_candidates, params, allocs, cache_budget):
 # --- Mutation function ---
 # def mutate_fn(sol, rng):
 #     new_sol = copy.deepcopy(sol)
-#     alloc_list = new_sol["allocations"][:]
-#     n_nodes = len(alloc_list)
-#     budget = sol["cache_budget"]
+#     alloc = new_sol["allocations"][:]
+#     n = len(alloc)
+#     nodes = list(range(n))
+#     budget = new_sol["cache_budget"]
+#     icr = new_sol["icr_candidates"]
+#     icr = list(icr)
 
-#     move_fraction = rng.uniform(0.1, 0.25)  # 10-25% budget
-#     amount_to_move = int(budget * move_fraction)  # 20-50 units!
-    
-#     # 1) Find non-zero nodes (always safe)
-#     non_zero = [i for i in range(n_nodes) if alloc_list[i] > 0]
-#     n_non_zero = len(non_zero)
+#     # ---- parameters ----
+#     modes = ["carbon"]*3 + ["centrality"]*3 + ["random"]*1  
+#     mode = rng.choice(modes)
+#     print(f"{mode} MUTATE")
 
-#     if n_non_zero >= 2 and amount_to_move > 0:
-#         # STEAL: Take 1-3 from 3-5 donors (SIMPLE arithmetic, NO randint)
-#         # n_donors = min(5, len(non_zero))
-#         # donors = non_zero[:n_donors]
-#         total_donor_alloc = sum(alloc_list[i] for i in non_zero)
-#         donor_probs = [alloc_list[i] / total_donor_alloc for i in non_zero]
-#         donors = rng.choices(non_zero, weights=donor_probs, k=3)
+#     # mode-dependent mutation strength
+#     if mode == "random":
+#         move_frac = rng.uniform(0.15, 0.35)   # strong exploration
+#     elif mode == "carbon":
+#         move_frac = rng.uniform(0.08, 0.2)
+#     else:  # hit
+#         move_frac = rng.uniform(0.05, 0.15)
 
-#         # donor_pct = rng.uniform(0.2, 0.5) 
-#         # n_donors = max(3, min(int(n_non_zero * donor_pct), n_non_zero // 2))
-#         # donors = rng.sample(non_zero, n_donors) # random subset
-#         # donors = non_zero[:n_donors]
-#         # print(f"donora:{donors}")
+#     amount = max(0, int(budget * move_frac))
 
-#         for donor in donors:
-#             steal = min(amount_to_move//3 + 1, alloc_list[donor]//2)
-#             alloc_list[donor] = max(0, alloc_list[donor] - steal)
-#             amount_to_move -= steal
-#             # if alloc_list[donor] >= 4:  # Safe threshold
-#             #     steal = min(3, alloc_list[donor]//4 + 1)  # 1-3, NO randint
-#             #     alloc_list[donor] -= steal
+#     # ---- helpers ----
+#     non_zero = [i for i in nodes if alloc[i] > 0]
+#     if len(non_zero) < 2:
+#         return new_sol
 
-#         # 2) GIVE to 6-10 random nodes
-#         # n_receivers = rng.randint(6, min(10, n_nodes))
-        
-#         # receiver_pct = rng.uniform(0.2, 0.5) 
-#         # n_receivers = max(6, int(n_nodes * receiver_pct))
-#         # n_receivers = min(n_receivers, n_nodes)
-        
-#         # receivers = rng.sample(range(n_nodes), n_receivers)
-#         # print(f"receivers:{receivers}")
-#         # total_stolen = sum(max(0, min(3, alloc_list[i]//4 + 1)) for i in donors)
-#         # chunk = max(1, total_stolen // n_receivers)
-#         # Give to diverse receivers (favor zero nodes for exploration)
-#         zero_nodes = [i for i in range(n_nodes) if alloc_list[i] == 0]
-#         non_zero_nodes = [i for i in non_zero if alloc_list[i] > 0]
-        
-#         if zero_nodes:
-#             receivers = (rng.sample(zero_nodes, min(2, len(zero_nodes))) + 
-#                         rng.sample(non_zero_nodes, min(3, len(non_zero_nodes))))
-#         else:
-#             receivers = rng.sample(range(n_nodes), 5)
-#         for receiver in receivers:
-#             give = min(amount_to_move // len(receivers) + 1, amount_to_move)
-#             alloc_list[receiver] += give
-#             amount_to_move -= give
-#             # alloc_list[receiver] += chunk
-    
-#     # Floor + exact budget (bulletproof)
-#     # for i in range(n_nodes):
-#     #     alloc_list[i] = max(0, alloc_list[i])
-    
-#     # total = sum(alloc_list)
-#     # while total > budget:
-#     #     donor = next((i for i in range(n_nodes) if alloc_list[i] > 0), None)
-#     #     if donor is not None:
-#     #         alloc_list[donor] -= 1
-#     #         total -= 1
-#     # while total < budget:
-#     #     idx = rng.choice(range(n_nodes))
-#     #     alloc_list[idx] += 1
-#     #     total += 1
-    
-#     # # Convert back
-#     # if hasattr(new_sol["allocations"], 'get'):
-#     #     new_sol["allocations"] = {i: v for i, v in enumerate(alloc_list) if v > 0}
-#     # else:
-#     #     new_sol["allocations"] = alloc_list
-#     # Exact budget snapback
-#     total = sum(alloc_list)
-#     while total > budget: alloc_list[rng.choice(non_zero)] -= 1; total -= 1
-#     while total < budget: alloc_list[rng.choice(range(n_nodes))] += 1; total += 1
-    
-#     new_sol["allocations"] = [max(0, x) for x in alloc_list]
+#     # ==========================================================
+#     # MODE 1 — CARBON-AWARE (push cache toward clean nodes)
+#     # ==========================================================
+#     if mode == "carbon":
+#         ci = new_sol["node_carbon_intensity"]
+#         ranked = sorted(non_zero, key=lambda i: ci.get(icr[i]))
+#         donors = ranked[-max(2, len(ranked)//4):]     # dirty nodes
+#         receivers = ranked[:max(2, len(ranked)//4)]   # clean nodes
 
+#     # ==========================================================
+#     # MODE 2 — HIT-ORIENTED (reinforce strong caches)
+#     # ==========================================================
+#     elif mode == "centrality":
+#         centralities = new_sol["centralities"]
+#         ranked = sorted(non_zero, key=lambda i: centralities.get(icr[i]))
+#         donors = ranked[:max(2, len(ranked)//4)]      # low-central nodes
+#         receivers = ranked[-max(2, len(ranked)//4):]  # high-central nodes
+
+#     # ==========================================================
+#     # MODE 3 — RANDOM / SHAKE (escape local basin)
+#     # ==========================================================
+#     else:
+#         # occasionally kill a node entirely
+#         if rng.random() < 0.3:
+#             victim = rng.choice(non_zero)
+#             amount += alloc[victim]
+#             alloc[victim] = 0
+#             non_zero.remove(victim)
+
+#         donors = rng.sample(non_zero, min(5, len(non_zero)))
+#         receivers = rng.sample(nodes, rng.randint(4, n))
+
+#     # ---- MOVE CACHE MASS ----
+#     # steal
+#     for d in donors:
+#         if amount <= 0:
+#             break
+#         steal = min(alloc[d], max(1, amount // len(donors)))
+#         alloc[d] -= steal
+#         amount -= steal
+
+#     # give
+#     for r in receivers:
+#         if amount <= 0:
+#             break
+#         give = max(1, amount // len(receivers))
+#         alloc[r] += give
+#         amount -= give
+
+#     # ---- SNAP BUDGET EXACTLY ----
+#     total = sum(alloc)
+#     while total > budget:
+#         i = rng.choice([i for i in nodes if alloc[i] > 0])
+#         alloc[i] -= 1
+#         total -= 1
+#     while total < budget:
+#         alloc[rng.choice(nodes)] += 1
+#         total += 1
+
+#     new_sol["allocations"] = alloc
 #     return new_sol
+
+def mutate_ci_strata_fixed(sol, rng):
+    new = copy.deepcopy(sol)
+    n = len(new["allocations"])
+    nodes = list(range(n))
+    budget = int(new["cache_budget"])
+    icr = list(new["icr_candidates"])
+    ci = new["node_carbon_intensity"]
+
+    sorted_nodes = sorted(nodes, key=lambda i: ci[icr[i]])
+    k = max(1, n // 3)
+    low, mid, high = sorted_nodes[:k], sorted_nodes[k:2*k], sorted_nodes[2*k:]
+    
+    strata = {"low": low, "mid": mid, "high": high, "low_mid": low+mid, "all": nodes}
+    target = strata[rng.choice(list(strata))]
+    
+    # 70% sparse (1-3 nodes), 30% dense
+    if rng.random() < 0.7 and len(target) > 3:
+        active = rng.sample(target, rng.randint(1, 3))
+    else:
+        active = target
+    
+    alloc = [0] * n
+    for _ in range(budget):
+        alloc[rng.choice(active)] += 1
+    new["allocations"] = alloc
+    return new
+
+def mutate_centrality_shells_fixed(sol, rng):
+    new = copy.deepcopy(sol)
+    alloc = new["allocations"][:]
+    n = len(alloc)
+    nodes = list(range(n))
+    budget = int(new["cache_budget"])
+    icr = list(new["icr_candidates"])
+    centralities = new["centralities"]
+    
+    ranked = sorted(nodes, key=lambda i: centralities[icr[i]], reverse=True)
+    k = max(1, n // 3)
+    core, ring, fringe = ranked[:k], ranked[k:2*k], ranked[2*k:]
+    
+    shells = {"core": core, "ring": ring, "fringe": fringe}
+    src_shell = rng.choice(list(shells))
+    dst_shell = rng.choice([s for s in shells if s != src_shell] or list(shells))
+    
+    src, dst = shells[src_shell], shells[dst_shell]
+    move_frac = rng.uniform(0.4, 0.7)  # MORE AGGRESSIVE
+    amount = max(1, int(budget * move_frac))
+    
+    src_nonzero = [i for i in src if alloc[i] > 0]
+    if not src_nonzero: return new
+    
+    for d in src_nonzero:
+        if amount <= 0: break
+        steal = min(alloc[d], max(1, amount // max(1, len(src_nonzero))))
+        alloc[d] -= steal
+        amount -= steal
+    
+    while amount > 0 and dst:
+        alloc[rng.choice(dst)] += 1
+        amount -= 1
+    
+    new["allocations"] = alloc
+    return new
 
 def mutate_fn(sol, rng):
     new_sol = copy.deepcopy(sol)
     alloc = new_sol["allocations"][:]
     n = len(alloc)
     nodes = list(range(n))
-    budget = new_sol["cache_budget"]
-    icr = new_sol["icr_candidates"]
-    icr = list(icr)
-
-    # ---- parameters ----
-    modes = ["carbon"]*3 + ["centrality"]*3 + ["random"]*1  
-    mode = rng.choice(modes)
-    print(f"{mode} MUTATE")
-
-    # mode-dependent mutation strength
-    if mode == "random":
-        move_frac = rng.uniform(0.15, 0.35)   # strong exploration
-    elif mode == "carbon":
-        move_frac = rng.uniform(0.08, 0.2)
-    else:  # hit
-        move_frac = rng.uniform(0.05, 0.15)
-
-    amount = max(1, int(budget * move_frac))
-
-    # ---- helpers ----
-    non_zero = [i for i in nodes if alloc[i] > 0]
-    if len(non_zero) < 2:
+    budget = int(new_sol["cache_budget"])
+    icr = list(new_sol["icr_candidates"])
+    ci = new_sol["node_carbon_intensity"]
+    centralities = new_sol["centralities"]
+    
+    # ===== NUCLEAR EXPLORATION (50% total) =====
+    r = rng.random()
+    
+    # # 🔥 20% ONE-HOT NUCLEAR (up from 15%)
+    # if r < 0.20:
+    #     winner = rng.choice(nodes)
+    #     alloc = [0] * n
+    #     alloc[winner] = budget
+    #     print(f"💥 ONEHOT idx={winner}")
+    #     new_sol["allocations"] = alloc
+    #     return new_sol
+    
+    # # 🏆 15% TOP-3 DOMINATION (up from 10%)
+    # elif r < 0.35:
+    #     scores = []
+    #     for i in nodes:
+    #         c = -ci.get(icr[i], 1.0)
+    #         cent = centralities.get(icr[i], 0)
+    #         scores.append((i, 0.6*c + 0.4*cent))  # more CI bias
+        
+    #     top3 = sorted(scores, key=lambda x: x[1], reverse=True)[:3]
+    #     alloc = [0] * n
+    #     base = budget // 3
+    #     alloc[top3[0][0]] = base + budget % 3
+    #     alloc[top3[1][0]] = base
+    #     alloc[top3[2][0]] = base
+    #     print("💣 TOP3 DOMINATION")
+    #     new_sol["allocations"] = alloc
+    #     return new_sol
+    
+    # 🌪️ 15% NEW: ZERO-5 ZONES (kill 14/19 nodes!)
+    # elif r < 0.50:
+    #     # Keep ONLY 1-5 nodes alive, random survivors
+    #     survivors = rng.sample(nodes, rng.randint(1, 5))
+    #     alloc = [0] * n
+    #     for _ in range(budget):
+    #         i = rng.choice(survivors)
+    #         alloc[i] += 1
+    #     print(f"☢️ ZERO-5: {len(survivors)} survivors")
+    #     new_sol["allocations"] = alloc
+    #     return new_sol
+    
+    # ===== CHAOS MUTATIONS (50% total) =====
+    
+    # NEW #1: INVERT ORDER (reverse allocation ranking)
+    if rng.random() < 0.15:
+        ranked = sorted(range(n), key=lambda i: alloc[i], reverse=True)
+        inverted = ranked[::-1]  # worst become best
+        alloc = [0] * n
+        for rank, i in enumerate(inverted):
+            share = max(1, budget // max(1, n-rank))
+            alloc[i] = min(share, budget - sum(alloc))
+            if sum(alloc) >= budget: break
+        print("🔄 INVERT ORDER")
+    
+    # NEW #2: OPPOSITE EXTREMES (dirty+fringe vs clean+core)
+    elif rng.random() < 0.15:
+        ci_clean = sorted(nodes, key=lambda i: ci[icr[i]])[:3]
+        ci_dirty = sorted(nodes, key=lambda i: ci[icr[i]], reverse=True)[:3]
+        cent_core = sorted(nodes, key=lambda i: centralities[icr[i]], reverse=True)[:3]
+        cent_fringe = sorted(nodes, key=lambda i: centralities[icr[i]])[:3]
+        
+        # 50/50: clean+fringe OR dirty+core (anti-intuitive!)
+        if rng.random() < 0.5:
+            targets = ci_clean + cent_fringe
+            print("🧪 CLEAN+FRINGE")
+        else:
+            targets = ci_dirty + cent_core  
+            print("🧪 DIRTY+CORE")
+        
+        alloc = [0] * n
+        for _ in range(budget):
+            i = rng.choice(list(set(targets)))
+            alloc[i] += 1
+        new_sol["allocations"] = alloc
         return new_sol
-
-    # ==========================================================
-    # MODE 1 — CARBON-AWARE (push cache toward clean nodes)
-    # ==========================================================
-    if mode == "carbon":
-        ci = new_sol["node_carbon_intensity"]
-        ranked = sorted(non_zero, key=lambda i: ci.get(icr[i]))
-        donors = ranked[-max(2, len(ranked)//4):]     # dirty nodes
-        receivers = ranked[:max(2, len(ranked)//4)]   # clean nodes
-
-    # ==========================================================
-    # MODE 2 — HIT-ORIENTED (reinforce strong caches)
-    # ==========================================================
-    elif mode == "centrality":
-        centralities = new_sol["centralities"]
-        ranked = sorted(non_zero, key=lambda i: centralities.get(icr[i]))
-        donors = ranked[:max(2, len(ranked)//4)]      # low-central nodes
-        receivers = ranked[-max(2, len(ranked)//4):]  # high-central nodes
-
-    # ==========================================================
-    # MODE 3 — RANDOM / SHAKE (escape local basin)
-    # ==========================================================
+    
+    # FIXED: ci_strata (no more undefined alpha)
+    elif rng.random() < 0.10:
+        return mutate_ci_strata_fixed(sol, rng)
+    
+    # FIXED: centrality_shells  
+    elif rng.random() < 0.10:
+        return mutate_centrality_shells_fixed(sol, rng)
+    
+    # MASSIVE SHAKE (40% budget moves!)
     else:
-        # occasionally kill a node entirely
-        if rng.random() < 0.3:
-            victim = rng.choice(non_zero)
-            amount += alloc[victim]
-            alloc[victim] = 0
-            non_zero.remove(victim)
+        move_frac = rng.uniform(0.35, 0.60)  # WAY more aggressive
+        amount = max(1, int(budget * move_frac))
+        
+        # KILL 30% of active nodes completely
+        non_zero = [i for i in nodes if alloc[i] > 0]
+        victims = rng.sample(non_zero, max(0, int(len(non_zero) * 0.3)))
+        for v in victims:
+            amount += alloc[v]
+            alloc[v] = 0
+        
+        # Donors: worst by combined score
+        scores = {i: -ci.get(icr[i],1.0) + 0.3*centralities.get(icr[i],0) 
+                 for i in non_zero if i not in victims}
+        donors = sorted(scores, key=scores.get)[:max(6, n//3)]
+        
+        # Receivers: best by combined score + some chaos
+        receivers = sorted(scores, key=scores.get, reverse=True)[:8]
+        receivers += rng.sample(nodes, 4)  # chaos injection
+        
+        # Steal aggressively
+        for d in donors:
+            if amount <= 0: break
+            steal = min(alloc[d], max(1, amount // max(1, len(donors))))
+            alloc[d] -= steal
+            amount -= steal
+        
+        # Distribute wildly
+        for r in receivers:
+            if amount <= 0: break
+            give = max(1, amount // max(1, len(receivers)))
+            alloc[r] += give
+            amount -= give
 
-        donors = rng.sample(non_zero, min(5, len(non_zero)))
-        receivers = rng.sample(nodes, rng.randint(4, n))
-
-    # ---- MOVE CACHE MASS ----
-    # steal
-    for d in donors:
-        if amount <= 0:
-            break
-        steal = min(alloc[d], max(1, amount // len(donors)))
-        alloc[d] -= steal
-        amount -= steal
-
-    # give
-    for r in receivers:
-        if amount <= 0:
-            break
-        give = max(1, amount // len(receivers))
-        alloc[r] += give
-        amount -= give
-
-    # ---- SNAP BUDGET EXACTLY ----
+    # SNAP BUDGET (allow zeros!)
     total = sum(alloc)
     while total > budget:
-        i = rng.choice([i for i in nodes if alloc[i] > 0])
-        alloc[i] -= 1
-        total -= 1
+        candidates = [i for i in nodes if alloc[i] > 0]
+        if candidates:
+            i = rng.choice(candidates)
+            alloc[i] -= 1
+            total -= 1
     while total < budget:
-        alloc[rng.choice(nodes)] += 1
+        i = rng.choice(nodes)
+        alloc[i] += 1
         total += 1
-
+    
     new_sol["allocations"] = alloc
     return new_sol
-
 
 def build_experiment(icr_candidates, params, metrics, allocations, tiers_per_node, cache_placement="ALLOCATED"):
     exp = copy.deepcopy(params)
@@ -579,15 +881,29 @@ def build_experiment(icr_candidates, params, metrics, allocations, tiers_per_nod
     else:
         # Baseline mode: keep original params unchanged
         pass
-    exp["workload"]["n_warmup"] /= 50
-    exp["workload"]["n_measured"] /= 3
-    exp["workload"]["n_measured"] = int(exp["workload"]["n_measured"])
+    # exp["workload"]["n_warmup"] /= 2
+    # exp["workload"]["n_measured"] /= 2
+    # exp["workload"]["n_measured"] = int(exp["workload"]["n_measured"])
      # tiers logic unchanged
     if tiers_per_node is not None:
         exp["cache_policy"]["tiers_per_node"] = tiers_per_node
     
     return exp
 
+def _call_init_worker(args):
+    init_fn, icr_candidates, params, cache_budget = args
+    allocs = [0] * len(icr_candidates)
+    return init_fn(icr_candidates, params, allocs, cache_budget)
+
+def batch_init_wrapper(pool, icr_candidates, params, cache_budget):
+    def batch_init(init_fns):
+        tasks = [(fn, icr_candidates, params, cache_budget) for fn in init_fns]
+        async_results = [
+            pool.apply_async(_call_init_worker, (t,))
+            for t in tasks
+        ]
+        return [r.get() for r in async_results]
+    return batch_init
 
 def eval_fn(sol, **kwargs):
     params  = kwargs["params"]
@@ -653,8 +969,8 @@ def eval_fn(sol, **kwargs):
         hit = metrics.get("CACHE_HIT_RATIO").get("MEAN")
         cost = metrics.get("COST").get("MEAN")
         carbon = metrics.get("CARBONFOOTPRINT").get("TOTAL")
-        logger.info(f"hit : {hit}, cost : {cost}, carbon : {carbon}")
-        print(f"hit : {hit}, cost : {cost}, carbon : {carbon}")
+        logger.info(f"carbon : {carbon}, hit : {hit}, cost : {cost}, ")
+        print(f"carbon : {carbon}, hit : {hit}, cost : {cost} ")
 
         # GREEN PENALTY: if too much cache on dirty nodes
         # try:
@@ -675,44 +991,59 @@ def eval_fn(sol, **kwargs):
         #             logger.warning(f"Hard elimination penalty applied (dirty_ratio={dirty_ratio:.3f})")
         # except Exception as e:
         #     logger.warning(f"Carbon penalty skipped due to error: {e}")
-        return (hit, cost, carbon)
+        return (carbon, hit, cost)
     except Exception as e:
         print("Error reading results:", e)
-        return (None, None)
+        return (None, None, None)
 
+def eval_wrapper(args):
+    sol, params, metrics, settings = args
+    return eval_fn(sol, params=params, metrics=metrics, settings=settings)
+
+def batch_eval_wrapper(pool, params, metrics, settings):
+    """Top-level picklable batch evaluator. Takes a POOL instance."""
+    def batch_eval(sols):
+        futures = [pool.apply_async(eval_wrapper, ((sol, params, metrics, settings),)) 
+                  for sol in sols]
+        return [f.get() for f in futures]
+    return batch_eval
 
 def run_paes(icr_candidates, params, metrics, settings, cache_budget, archive_size, grid_divisions, max_evaluations, seed, allocs):
     logger.info("Run PAES")
-    def init_baseline():
-        return init_fn(icr_candidates, params, allocs, cache_budget)
 
-    def init_centrality():
-        return init_fn_bc_only(icr_candidates, params, allocs, cache_budget)
-
-    def init_carbon():
-        return init_fn_ci_only(icr_candidates, params, allocs, cache_budget)
-    
-    def init_alpha():
-        return init_fn_alpha(icr_candidates, params, allocs, cache_budget)
-    
-    def init_hub():
-        return init_fn_hub(icr_candidates, params, allocs, cache_budget)
-    
     def mutate_fn_local(sol, rng):
         return mutate_fn(sol, rng)
+    
+    # n_proc = getattr(settings, 'N_PROCESSES', 2)  # fallback to 2
+    n_proc = 10  # fallback to 2
+    pool = Pool(processes=n_proc)
+    
+    def single_eval(sol):
+        return eval_fn(sol, params=params, metrics=metrics, settings=settings)
+    
+    batch_eval = batch_eval_wrapper(pool, params, metrics, settings)
 
+    init_fns_extra = [init_fn_alpha, init_fn_hub, init_fn_ci_only, init_fn_pr_only, init_fn_dc_only, init_fn_uniform, init_fn_one_shot, init_fn_top3]
+    batch_init = batch_init_wrapper(pool, icr_candidates, params, cache_budget)
+    
     opt = PAES(
-        init_fn=init_centrality,
-        init_fns_extra=[init_carbon, init_alpha, init_hub],
+        init_fn=init_fns_extra,
         mutate_fn=mutate_fn_local,
-        eval_fn=lambda sol: eval_fn(sol, params=params, metrics=metrics, settings=settings),
+        eval_fn=single_eval,           # for single fallback
+        batch_eval_fn=batch_eval,      # enables parallel batches
+        batch_init_fn=batch_init,
+        batch_size=9,                 # tune this
         archive_size=archive_size,
         grid_divisions=grid_divisions,
         max_evaluations=max_evaluations,
         seed=seed,
     )
 
-    pareto = opt.run()
+    try:
+        pareto = opt.run()
+    finally:
+        pool.close()
+        pool.join()
 
     return pareto
 

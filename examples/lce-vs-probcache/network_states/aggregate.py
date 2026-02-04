@@ -16,11 +16,13 @@ from icarus.results import ResultSet
 
 # JSON_PATTERN = "examples/lce-vs-probcache/network_states/exp*_TELEKOM_p*.json"
 JSON_PATTERN = "examples/lce-vs-probcache/network_states/exp*_GEANT_p*.json"
+# JSON_PATTERN = "examples/lce-vs-probcache/network_states/exp*_GARR_p*.json"
 FNAME_RE = re.compile(r"exp(?P<exp>\d+)_GEANT_p(?P<period>\d+)\.json")
+# FNAME_RE = re.compile(r"exp(?P<exp>\d+)_GARR_p(?P<period>\d+)\.json")
 # FNAME_RE = re.compile(r"exp(?P<exp>\d+)_TELEKOM_p(?P<period>\d+)\.json")
 
-# ORIG_RESULTS_PKL = "examples/lce-vs-probcache/results.pickle"
-ORIG_RESULTS_PKL = "/Users/lydia/Desktop/icarus/examples/lce-vs-probcache/results.pickle"
+ORIG_RESULTS_PKL = "examples/lce-vs-probcache/results.pickle"
+# ORIG_RESULTS_PKL = "/Users/lydia/Desktop/icarus/examples/lce-vs-probcache/results_aggregated.pickle"
 OUT_RESULTS_PKL  = "/Users/lydia/Desktop/icarus/examples/lce-vs-probcache/results_aggregated.pickle"
 
 

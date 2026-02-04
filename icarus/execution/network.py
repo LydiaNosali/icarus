@@ -134,6 +134,24 @@ class NetworkView:
         """
         return self.model.shortest_path[s][t]
 
+    def shortest_path2(self, s, t):
+        """Return the shortest path from *s* to *t*
+
+        Parameters
+        ----------
+        s : any hashable type
+            Origin node
+        t : any hashable type
+            Destination node
+
+        Returns
+        -------
+        shortest_path : list
+            List of nodes of the shortest path (origin and destination
+            included)
+        """
+        return self.model.shortest_path2[s][t]
+
     def all_pairs_shortest_paths(self):
         """Return all pairs shortest paths
 
@@ -412,7 +430,7 @@ class NetworkModel:
         
         saved_state_file = kwargs.get("saved_state_file")
         for node, data in topology.nodes(data=True):
-            self.node_carbon_intensity[node] = data.get("carbon_intensity", random.randint(50,900)) / 1000
+            self.node_carbon_intensity[node] = data.get("carbon_intensity", random.randint(50,900))
             stack_name, stack_props = fnss.get_stack(topology, node)
 
             if stack_name == "router":
@@ -430,13 +448,13 @@ class NetworkModel:
                         # 1️⃣ Compute raw sizes
                         logger.info(f"size:{size}")
                         floored_sizes = [round(tier["size_factor"] * size) for tier in tiers_src]
-                        logger.info(f"floored_sizes:{floored_sizes}")
+                        # logger.info(f"floored_sizes:{floored_sizes}")
                         
                         remainder = int(size - sum(floored_sizes))  # remaining units to distribute
-                        logger.info(f"remainder:{remainder}")
+                        # logger.info(f"remainder:{remainder}")
                         
                         floored_sizes[len(floored_sizes)-1]+=remainder
-                        logger.info(f"floored_sizes:{floored_sizes}")
+                        # logger.info(f"floored_sizes:{floored_sizes}")
                         
                         # 3️⃣ Build tier list
                         for tier, actual_size in zip(tiers_src, floored_sizes):
@@ -459,7 +477,7 @@ class NetworkModel:
 
                         node_tier_list = [t for t in node_tier_list if t["actual_size"] > 0]
                         logger.info(f"node:{node}")
-                        logger.info(f"node_tier_list:{node_tier_list}")
+                        # logger.info(f"node_tier_list:{node_tier_list}")
                         self.per_node_tiers[node] = node_tier_list
                         node_policy_args = {k: v for k, v in policy_args.items() if k != "tiers"}
                         node_policy_args["tiers"] = node_tier_list
@@ -531,32 +549,36 @@ class NetworkModel:
             except Exception as e:
                 print(f"[⚠️] Failed to load saved network state: {e}")
 
+        # GREEN ROUTING - always use cleanest nodes
+        # logger.info("before shortest path")
+        # self.shortest_path = (
+        #     dict(shortest_path)
+        #     if shortest_path is not None
+        #     else self.compute_carbon_aware_paths(topology, self.node_carbon_intensity)
+        # )
         # Shortest paths of the network
-        self.shortest_path = (
+        # print(f"USING LATENCIES")
+        # self.shortest_path = (
+        #         dict(shortest_path)
+        #         if shortest_path is not None
+        #         else symmetrify_paths(dict(nx.all_pairs_dijkstra_path(topology)))
+        #     )
+        # logger.info(f"{self.shortest_path}")
+        # logger.info(f"{self.shortest_path2}")
+        node_greenness = topology.graph.get("node_greenness", {})
+        if node_greenness  == {}:
+            self.shortest_path = (
             dict(shortest_path)
             if shortest_path is not None
             else symmetrify_paths(dict(nx.all_pairs_dijkstra_path(topology)))
-        )
-        # node_greenness = topology.graph.get("node_greenness", {})
-        # if node_greenness  == {}:
-        #     # print(f"USING LATENCIES")
-        #     # self.shortest_path = (
-        #     #         dict(shortest_path)
-        #     #         if shortest_path is not None
-        #     #         else self.build_carbon_aware_paths(topology, self.node_carbon_intensity)
-        #     #     )
-        #     self.shortest_path = (
-        #     dict(shortest_path)
-        #     if shortest_path is not None
-        #     else symmetrify_paths(dict(nx.all_pairs_dijkstra_path(topology)))
-        #     )
-        # else:
-        #     # print(f"USING TOPSIS SCORES")
-        #     self.shortest_path = (
-        #         dict(shortest_path)
-        #         if shortest_path is not None
-        #         else self.build_carbon_aware_paths(topology, node_greenness)
-        #     )
+            )
+        else:
+            # print(f"USING TOPSIS SCORES")
+            self.shortest_path = (
+                dict(shortest_path)
+                if shortest_path is not None
+                else self.build_carbon_aware_paths(topology, node_greenness)
+            )
 
     def build_carbon_aware_paths(self, topology, node_greenness):
         def weight(u, v, data):
@@ -564,6 +586,33 @@ class NetworkModel:
         return symmetrify_paths(
             dict(nx.all_pairs_dijkstra_path(topology, weight=weight))
         )
+
+    def compute_carbon_aware_paths(self, G, carbon_intensity):
+        """Single best path: shortest in hops + carbon cost."""
+        self.shortest_path = {}
+        nodes = list(G.nodes())
+        
+        # Create weighted graph for carbon-aware routing
+        G_weighted = G.copy()
+        for u, v, data in G.edges(data=True):
+            # Weight = hops (1.0) + carbon cost of target node
+            carbon_cost = carbon_intensity.get(v, 1.0)
+            G_weighted[u][v]['weight'] = 1.0 + 0.5 * carbon_cost  # Tune 0.5 factor
+        
+        for source in nodes:
+            self.shortest_path[source] = {}
+            for target in nodes:
+                if source == target:
+                    self.shortest_path[source][target] = [source]
+                    continue
+                try:
+                    # Single BEST path (lowest total weight = hops + carbon)
+                    path = nx.shortest_path(G_weighted, source, target, weight='weight')
+                    self.shortest_path[source][target] = list(path)
+                except nx.NetworkXNoPath:
+                    self.shortest_path[source][target] = []
+        
+        return self.shortest_path  # Same structure: {0: {30: [0, 30], ...}}
 
     def rebuild_tiers(self, old_cache_tiers_per_node, new_cache_sizes):
         new_per_node_tiers = {}

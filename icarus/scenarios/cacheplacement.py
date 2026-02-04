@@ -726,24 +726,24 @@ def green_cache_placement(topology, cache_budget, **kwargs):
     if not icr_candidates:
         return
 
-    # pareto = run_paes(icr_candidates=icr_candidates,
-    #                   params=params,
-    #                   metrics=metrics,
-    #                   settings = settings,
-    #                   cache_budget=cache_budget,
-    #                   archive_size=40,
-    #                   grid_divisions=30,
-    #                   max_evaluations=max_evaluations,  # small for test, increase later
-    #                   seed=0,
-    #                   allocs=allocs)
-    pareto = run_nsga2(icr_candidates=icr_candidates,
+    pareto = run_paes(icr_candidates=icr_candidates,
                       params=params,
                       metrics=metrics,
                       settings = settings,
                       cache_budget=cache_budget,
                       archive_size=40,
+                      grid_divisions=30,
                       max_evaluations=max_evaluations,  # small for test, increase later
-                      seed=0)
+                      seed=0,
+                      allocs=allocs)
+    # pareto = run_nsga2(icr_candidates=icr_candidates,
+    #                   params=params,
+    #                   metrics=metrics,
+    #                   settings = settings,
+    #                   cache_budget=cache_budget,
+    #                   archive_size=40,
+    #                   max_evaluations=max_evaluations,  # small for test, increase later
+    #                   seed=0)
     
     logger.info(f"Found {len(pareto)} Pareto solutions (max Hit, min Cost, min Carbon):")
     for sol, (cf, h, c) in pareto:

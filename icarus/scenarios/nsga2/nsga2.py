@@ -645,8 +645,8 @@ def eval_fn(sol, **kwargs):
         hit = metrics.get("CACHE_HIT_RATIO").get("MEAN")
         cost = metrics.get("COST").get("MEAN")
         carbon = metrics.get("CARBONFOOTPRINT").get("TOTAL")
-        logger.info(f"hit : {hit}, cost : {cost}, carbon : {carbon}")
-        print(f"hit : {hit}, cost : {cost}, carbon : {carbon}")
+        logger.info(f"carbon : {carbon}, hit : {hit}, cost : {cost}")
+        print(f"carbon : {carbon}, hit : {hit}, cost : {cost}")
 
         # GREEN PENALTY: if too much cache on dirty nodes
         # try:

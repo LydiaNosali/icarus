@@ -4,13 +4,17 @@ import matplotlib.pyplot as plt
 
 N_PERIOD = 24
 plotdir = "/Users/lydia/Desktop/icarus/examples/lce-vs-probcache/pareto_fronts"
-topsis_path = "/Users/lydia/Desktop/icarus/examples/lce-vs-probcache/pareto_fronts/exp1_TELEKOM_topsis.csv"
+# topsis_path = "/Users/lydia/Desktop/icarus/examples/lce-vs-probcache/pareto_fronts/exp1_TELEKOM_topsis.csv"
+topsis_path = "/Users/lydia/Desktop/icarus/examples/lce-vs-probcache/pareto_fronts/exp1_GEANT_topsis.csv"
+# topsis_path = "/Users/lydia/Desktop/icarus/examples/lce-vs-probcache/pareto_fronts/exp1_GARR_topsis.csv"
 
 os.makedirs(plotdir, exist_ok=True)
 records = []
 
 for period in range(N_PERIOD):
-    df = pd.read_csv(f"{plotdir}/exp1_TELEKOM_p{period}.csv")
+    # df = pd.read_csv(f"{plotdir}/exp1_GARR_p{period}.csv")
+    df = pd.read_csv(f"{plotdir}/exp1_GEANT_p{period}.csv")
+    # df = pd.read_csv(f"{plotdir}/exp1_TELEKOM_p{period}.csv")
     
     df_topsis = pd.read_csv(topsis_path)
     topsis_point = df_topsis[df_topsis["period"] == period].iloc[0]
@@ -133,11 +137,11 @@ for period in range(N_PERIOD):
 
 
 extreme_df = pd.DataFrame(records)
-extreme_df.to_csv("/Users/lydia/Desktop/icarus/examples/lce-vs-probcache/pareto_fronts_ci_only/extreme_solutions_ci_only.csv", index=False)
+extreme_df.to_csv("/Users/lydia/Desktop/icarus/examples/lce-vs-probcache/pareto_fronts/extreme_solutions_ci_only.csv", index=False)
 
 plt.figure()
-# plt.plot(extreme_df["period"], extreme_df["hit_std"], label="std(hit)")
-# plt.plot(extreme_df["period"], extreme_df["cost_std"], label="std(cost)")
+plt.plot(extreme_df["period"], extreme_df["hit_std"], label="std(hit)")
+plt.plot(extreme_df["period"], extreme_df["cost_std"], label="std(cost)")
 plt.plot(extreme_df["period"], extreme_df["carbon_std"], label="std(carbon)")
 plt.xlabel("Period")
 plt.ylabel("Std dev")

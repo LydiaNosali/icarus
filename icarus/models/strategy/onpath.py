@@ -456,7 +456,7 @@ class CacheLessToSaveMore(Strategy):
     @inheritdoc(Strategy)
     def __init__(self, view, controller, **kwargs):
         super().__init__(view, controller)
-        self.req_size = 150
+        self.req_size = 1500
         self.cache_size = view.cache_nodes(size=True)
 
         self.penalty_table = sorted(kwargs['penalty_table'], key=lambda e: e["delay"])

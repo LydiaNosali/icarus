@@ -4,7 +4,7 @@ import random
 from collections import Counter
 from typing import List, Tuple, Any
 
-Objectives = Tuple[float, float, float]   # (hit, cost, carbon)
+Objectives = Tuple[float, float, float]   # (carbon, hit, cost)
 Solution = Any
 
 def dominates(a: Objectives, b: Objectives) -> bool:
@@ -84,97 +84,162 @@ class PAES:
     def __init__(self, init_fn, mutate_fn, eval_fn,
                  archive_size=40, grid_divisions=12,
                  max_evaluations=120, seed: int | None = 0,
-                 init_fns_extra=None):
+                 batch_eval_fn=None, # NEW
+                 batch_size=4,
+                 batch_init_fn=None):
         if seed is not None:
             self.local_random = random.Random(seed)
-        self.init_fn = init_fn
-        self.init_fns_extra = init_fns_extra or []  # 👈 NEW
+        self.init_fns = list(init_fn) # 👈 NEW
         self.mutate_fn = mutate_fn
         self.eval_fn = eval_fn
+        self.batch_eval_fn = batch_eval_fn      # NEW
+        self.batch_size = batch_size
+        self.batch_init_fn = batch_init_fn
         self.archive = AdaptiveGridArchive(archive_size, grid_divisions)
         self.max_evaluations = max_evaluations
 
         # cache of evaluated solutions to avoid re-running Icarus
         # key must be hashable: use tuple(allocations) or any canonical form
-        self._evaluated: dict[tuple, Objectives] = {}
+        self.evaluated: dict[tuple, Objectives] = {}
 
-    def _key(self, sol: Solution) -> tuple:
-        """
-        Turn a solution into a hashable key.
-        Adapt this to your real solution structure.
-        """
-        allocs = sol["allocations"]
+    def key(self, sol):
+        """Turn a solution into a hashable key."""
+        allocs = sol['allocations']
         return tuple(allocs)
 
-    def _get_or_eval(self, sol: Solution) -> Objectives:
-        k = self._key(sol)
-        if k in self._evaluated:
-            return self._evaluated[k]
+    def _init_batch(self, init_fns):
+        for fn in init_fns:
+            if not callable(fn):
+                raise TypeError(
+                    f"_init_batch expects callables, got {type(fn)}"
+                )
+        return self.batch_init_fn(init_fns)
+    
+    def _eval_one(self, sol):
+        """Evaluate a single solution (sequential fallback)"""
+        k = self.key(sol)
+        if k in self.evaluated:
+            return self.evaluated[k]
         objs = self.eval_fn(sol)
-        self._evaluated[k] = objs
+        self.evaluated[k] = objs
         return objs
 
+    def _eval_batch(self, sols):
+        if self.batch_eval_fn is None:
+            return [self._eval_one(s) for s in sols]
+
+        to_eval = []
+        to_eval_idx = []
+        results = [None] * len(sols)
+
+        for i, sol in enumerate(sols):
+            k = self.key(sol)
+            if k in self.evaluated:
+                results[i] = self.evaluated[k]
+            else:
+                to_eval.append(sol)
+                to_eval_idx.append(i)
+
+        if to_eval:
+            batch_objs = self.batch_eval_fn(to_eval)
+            for j, objs in enumerate(batch_objs):  # FIXED: use enumerate
+                i = to_eval_idx[j]
+                k = self.key(to_eval[j])  # FIXED: use j for to_eval indexing
+                self.evaluated[k] = objs
+                results[i] = objs
+
+        return results
+
     def run(self):
-        # =====================================================
-        # 1) Explicit archive seeding (CRITICAL FIX)
-        # =====================================================
-        init_solutions = []
-
-        # baseline
-        init_solutions.append(self.init_fn())
-
-        # additional extremes
-        for fn in self.init_fns_extra:
-            init_solutions.append(fn())
-
         evaluations = 0
         parent = None
-        f_parent = None
+        fparent = None
+        init_solutions = []
+        init_objectives = []
+        # Initialize solutions (batch the INIT CALLABLES)
+        init_callables = list(self.init_fns)
 
-        for sol in init_solutions:
-            k = self._key(sol)
+        for i in range(0, len(init_callables), self.batch_size):
+            fn_batch = init_callables[i : i + self.batch_size]   # list[callable]
 
-            if k in self._evaluated:
-                f = self._evaluated[k]
-            else:
-                f = self.eval_fn(sol)
-                self._evaluated[k] = f
-                evaluations += 1
+            # Generate solutions (parallel)
+            sols = self._init_batch(fn_batch)                    # list[dict]
 
-            self.archive.consider(sol, f)
+            # Evaluate solutions (parallel)
+            f_sols = self._eval_batch(sols)
 
-            # pick first solution as parent
-            if parent is None:
-                parent, f_parent = sol, f
+            new_evals = 0
 
-        # =====================================================
-        # 2) Standard PAES loop (unchanged)
-        # =====================================================
+            for sol, f in zip(sols, f_sols):
+                if f is None:
+                    continue
+
+                k = self.key(sol)
+
+                # _eval_batch already cached, but keep safe:
+                if k not in self.evaluated:
+                    self.evaluated[k] = f
+                    new_evals += 1
+                else:
+                    f = self.evaluated[k]   # ensure consistency
+
+                # ALWAYS archive + ALWAYS record for parent selection
+                self.archive.consider(sol, f)
+                init_solutions.append(sol)
+                init_objectives.append(f)
+        
+        if not init_solutions:
+            raise RuntimeError("PAES init produced no valid solutions")
+
+        # Pick best init solution by archive density (PAES rule)
+        best_idx = None
+        best_dens = float("inf")
+
+        for i, f in enumerate(init_objectives):
+            dens = self.archive.cell_density(f)
+            if dens < best_dens:
+                best_dens = dens
+                best_idx = i
+
+        parent = init_solutions[best_idx]
+        fparent = init_objectives[best_idx]
+
+        # BATCHED MAIN LOOP
         while evaluations < self.max_evaluations:
-            child = self.mutate_fn(parent, self.local_random)
+            B = min(self.batch_size, self.max_evaluations - evaluations)
 
-            parent_key = self._key(parent)
-            child_key = self._key(child)
+            # Generate batch from current parent
+            batch = [self.mutate_fn(parent, self.local_random) for _ in range(B)]
 
-            if parent_key == child_key:
-                continue
+            # Evaluate batch in parallel
+            f_batch = self._eval_batch(batch)
+            evaluations += len([f for f in f_batch if f is not None])
 
-            if child_key in self._evaluated:
-                f_child = self._evaluated[child_key]
-            else:
-                f_child = self.eval_fn(child)
-                self._evaluated[child_key] = f_child
-                evaluations += 1
+            # Update archive with all children
+            for child, f_child in zip(batch, f_batch):
+                if f_child is not None:
+                    self.archive.consider(child, f_child)
 
-            # always consider for archive
-            self.archive.consider(child, f_child)
+            # Parent replacement: pick best child by density
+            parent_dens = self.archive.cell_density(fparent)
+            best_child = None
+            best_child_f = None
+            best_dens = float('inf')
 
-            dens_child = self.archive.cell_density(f_child)
-            dens_parent = self.archive.cell_density(f_parent)
+            for child, f_child in zip(batch, f_batch):
+                if f_child is None:
+                    continue
+                dens_child = self.archive.cell_density(f_child)
+                if dens_child < best_dens:
+                    best_dens = dens_child
+                    best_child = child
+                    best_child_f = f_child
 
-            if dens_child < dens_parent or self.local_random.random() < 0.10:
-                parent, f_parent = child, f_child
-            elif self.local_random.random() < 0.05:
-                parent, f_parent = child, f_child
+            # Apply PAES acceptance (same logic as original)
+            if best_child is not None:
+                dens_child = self.archive.cell_density(best_child_f)
+                dens_parent = self.archive.cell_density(fparent)
+                if dens_child < dens_parent or self.local_random.random() < 0.10:
+                    parent, fparent = best_child, best_child_f
 
         return self.archive.as_pareto_set()

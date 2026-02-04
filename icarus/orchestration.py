@@ -302,9 +302,8 @@ def run_scenario(settings, params, curr_exp, n_exp):
             return None
 
         netconf = tree["netconf"]
-        avg_content_size = getattr(workload, "avg_content_size", None)
-        if avg_content_size is not None:
-            netconf["avg_content_size"] = avg_content_size
+        avg_content_size = getattr(workload, "avg_content_size")
+        netconf["avg_content_size"] = avg_content_size
         
         scenario = tree["desc"] if "desc" in tree else "Description N/A"
         logger.info(

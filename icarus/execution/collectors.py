@@ -411,7 +411,7 @@ class CostCollector(DataCollector):
         params : cost model and tiers info
         """
         
-        self.request_size = 150 * 8
+        self.request_size = 1500 * 8
         self.sess_count = 0
         self.view = view
         
@@ -642,7 +642,7 @@ class CarbonFootprintCollector(DataCollector):
         """
         self.view = view
         self.start_time = time.time()
-        self.request_size = 150 * 8 # bytes -> bits
+        self.request_size = 1500 * 8 # bytes -> bits
         self.sess_count = 0
         
         self.cost_params = params['cost_params']
@@ -746,12 +746,10 @@ class CarbonFootprintCollector(DataCollector):
         
         ci = self._ci(node_hint=node, ci_kw=kwargs.get("carbon_intensity")) # Kg CO2 eq/KwH
         tier_max_capacity = tier['actual_size_bytes']
-        self.device_info[tier_name]["actual_size_bytes"] = tier_max_capacity
-        tier_idle_power_density = tier['idle_power_density_per_bit'] 
-        tier_active_power_density  = tier['active_caching_power_density'] 
+        self.device_info[tier_name]["actual_size_bytes"] = tier_max_capacity 
 
-        idle_opex = ci * tier_idle_power_density * idle_time * tier_max_capacity * 8 / 3.6e6
-        read_opex = ci * tier_active_power_density * read_time * content_size * 8 / 3.6e6
+        idle_opex = ci * tier['idle_power_density_per_bit']  * idle_time * tier_max_capacity * 8 / 3.6e6
+        read_opex = ci * tier['active_caching_power_density']  * read_time * content_size * 8 / 3.6e6
         
         self.tier_active_opex[tier_name] += read_opex 
         self.tier_idle_opex[tier_name] += idle_opex
@@ -798,11 +796,8 @@ class CarbonFootprintCollector(DataCollector):
             self.device_times[tier_name]["idle"] += idle_time
             self.device_times[tier_name]["active"] += write_time
 
-            tier_idle_power_density = tier['idle_power_density_per_bit']
-            tier_active_power_density  = tier['active_caching_power_density']
-
-            idle_opex = ci * tier_idle_power_density * idle_time * tier_max_capacity * 8 / (3.6e6)
-            write_opex = ci * tier_active_power_density * write_time * content_size * 8 / (3.6e6)
+            idle_opex = ci * tier['idle_power_density_per_bit'] * idle_time * tier_max_capacity * 8 / (3.6e6)
+            write_opex = ci * tier['active_caching_power_density'] * write_time * content_size * 8 / (3.6e6)
 
             self.tier_active_opex[tier_name] += write_opex 
             self.tier_idle_opex[tier_name] += idle_opex
@@ -823,7 +818,7 @@ class CarbonFootprintCollector(DataCollector):
     def results(self):
         """Aggregate per-tier and overall results at the end of the simulation."""
         per_tier_results = {}
-        total_opex = total_capex = 0
+        storage_opex = storage_capex = 0
         tiers_stats = self.view.get_tier_stats()
         # print(f"tiers_stats:{tiers_stats}")
         for tier, times in self.device_times.items():
@@ -834,38 +829,50 @@ class CarbonFootprintCollector(DataCollector):
             # Compute utilization density
             use_density = active_time / total_time if total_time > 0 else 0.0
 
-            TE = self.device_info[tier]["embodied_kgco2e_per_gb"] / 1024**3
+            # TE = self.device_info[tier]["embodied_kgco2e_per_gb"] / 1024**3
+            TE = self.device_info[tier]["embodied_kgco2e_per_gb"] * 1000 / 1e9 # -> gco2e_per_byte
             tier_max_capacity = self.device_info[tier]['actual_size_bytes']
             tier_lifespan = self.device_info[tier]['lifespan'] * 365 * 24 * 60 * 60
             
             capex = (TE * tier_max_capacity * active_time) / tier_lifespan
 
             per_tier_results[tier] = {
-                "OPEX": self.tier_active_opex[tier] * 1000 / tiers_stats[tier],
-                "IDLE_OPEX": self.tier_idle_opex[tier] * 1000 / tiers_stats[tier],
-                "CAPEX": capex * 1000 / tiers_stats[tier],
+                "OPEX": self.tier_active_opex[tier] + self.tier_idle_opex[tier],
+                "CAPEX": capex,
+
+                "OPEX_MEAN": (self.tier_active_opex[tier] + self.tier_idle_opex[tier]) / tiers_stats[tier],
+                "CAPEX_MEAN": capex / tiers_stats[tier],
+
+                "ACTVE_OPEX_MEAN": self.tier_active_opex[tier] / tiers_stats[tier],
+                "IDLE_OPEX_MEAN": self.tier_idle_opex[tier] / tiers_stats[tier],
+ 
+                "ACTVE_OPEX": self.tier_active_opex[tier],
+                "IDLE_OPEX": self.tier_idle_opex[tier],
+   
                 "ACTIVE_TIME": active_time,
                 "IDLE_TIME": idle_time,
                 "UTILIZATION": use_density,
             }
-            total_opex += self.tier_active_opex[tier]
-            total_capex += capex
+            storage_opex += (self.tier_active_opex[tier] + self.tier_idle_opex[tier])
+            storage_capex += capex
         # --------------- BUILD RESULTS TREE -----------------
-        total = total_opex + total_capex + self.server_opex +self.routers_opex + self.links_opex
+        total = storage_opex + storage_capex + self.server_opex +self.routers_opex + self.links_opex
         results = Tree(
             {
-                "TOTAL": total * 1000,
-                "MEAN": total * 1000 / self.sess_count,
-                "TOTAL_OPEX": total_opex * 1000,
-                "TOTAL_CAPEX": total_capex * 1000,
-                "SERVER_OPEX": self.server_opex * 1000,
-                "ROUTERS_OPEX": self.routers_opex * 1000,
-                "LINKS_OPEX": self.links_opex * 1000,
+                "TOTAL": total,
+                "MEAN": total / self.sess_count,
+                "STORAGE_TOTAL": storage_opex + storage_capex,
+                "STORAGE_OPEX": storage_opex,
+                "STORAGE_CAPEX": storage_capex,
+                "SERVER_OPEX": self.server_opex,
+                "ROUTING_TOTAL": self.routers_opex + self.links_opex,
+                "ROUTERS_OPEX": self.routers_opex,
+                "LINKS_OPEX": self.links_opex,
                 "PER_TIER": per_tier_results,
                 "TIER_STATS": self.view.get_tier_stats(),
             }
         )
-        cchrp["cf"] = total * 1000 / self.sess_count
+        cchrp["cf"] = total
         return results
 
 
@@ -890,7 +897,7 @@ class CCHRPCollector(DataCollector):
     def results(self):
         results = Tree(
             {
-            "MEAN": cchrp["cf"]/cchrp["chr"] if cchrp["chr"] != 0 else 0
+            "MEAN": cchrp["cf"]/cchrp["cache_hits"] if cchrp["cache_hits"] != 0 else 0
             })
         return results
 
@@ -965,7 +972,7 @@ class CacheHitRatioCollector(DataCollector):
         hit_ratio = self.cache_hits / n_sess
         results = Tree(**{"MEAN": hit_ratio})
         chrcp["chr"] = hit_ratio
-        cchrp["chr"] = hit_ratio
+        cchrp["cache_hits"] = self.cache_hits
         if self.off_path_hits:
             results["MEAN_OFF_PATH"] = self.off_path_hit_count / n_sess
             results["MEAN_ON_PATH"] = results["MEAN"] - results["MEAN_OFF_PATH"]

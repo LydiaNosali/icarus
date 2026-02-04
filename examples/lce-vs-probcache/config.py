@@ -6,7 +6,7 @@ from icarus.util import Tree
 LOG_LEVEL = "INFO"
 CACHING_GRANULARITY = "OBJECT"
 RESULTS_FORMAT = "PICKLE"
-PARALLEL_EXECUTION = True
+PARALLEL_EXECUTION = False
 N_REPLICATIONS = 1
 N_PERIODS = 24
 
@@ -58,11 +58,11 @@ PENALTY_TABLE = [
 strategy_params = {
     "CL2SM": {
         "cost_per_joule" : 0.020324,  # $/joule
-        "cost_per_bit" : 1.2 * 10**-6,  # $/bit
-        "router_energy_density" : 2 * 10**-8,  # j/bit
-        "link_energy_density" : 1.5 * 10**-9,  # j/bit
+        "cost_per_bit" : 1.2e-6,  # $/bit
+        "router_energy_density" : 2e-8,  # j/bit
+        "link_energy_density" : 1.5e-9,  # j/bit
         "penalty_table": PENALTY_TABLE,
-        "chunk_size" : 10 ** 5,
+        "chunk_size" : 10e5,
     }
 }
 
@@ -86,10 +86,10 @@ default = Tree()
 
 default["workload"] = {
     "name": "STATIONARY",
-    "n_contents": 200000,
-    "n_warmup": 100000,
-    "n_measured": 400000 / N_PERIODS,
-    "rate": 10,
+    "n_contents": 300000,
+    "n_warmup": 600000,
+    "n_measured": 600000 / N_PERIODS,
+    "rate": 12,
     "high_priority_rate" :0.2,
     "priority_values": ["low", "high"],
     "data_size_range" : [1000, 8000],
@@ -118,19 +118,22 @@ default["cache_policy"]["tiers"] = TIERS
 # CACHE_PLACEMENT = ["BETWEENNESS_CENTRALITY"]
 # CACHE_PLACEMENT = ["GREEN"]
 # CACHE_PLACEMENT = ["GREEN", "EIGENVECTOR_CENTRALITY", "CACHECRAFT", "BETWEENNESS_CENTRALITY", "UNIFORM", "DEGREE"]
-CACHE_PLACEMENT = ["GREEN", "CACHECRAFT", "BETWEENNESS_CENTRALITY", "UNIFORM", "DEGREE"]
-# CACHE_PLACEMENT = ["GREEN"]
+# CACHE_PLACEMENT = ["GREEN", "CACHECRAFT", "BETWEENNESS_CENTRALITY", "UNIFORM", "DEGREE"]
+# CACHE_PLACEMENT = ["CACHECRAFT", "BETWEENNESS_CENTRALITY", "UNIFORM", "DEGREE"]
+CACHE_PLACEMENT = ["GREEN"]
 
 # STRATEGIES = ["CL2SM", "LCE", "LCD", "PROB_CACHE", "CL4M", "CPCache"]
 STRATEGIES = ["CL2SM"]
 # ALPHA = [0.8, 1.2, 2.0]
-ALPHA = [0.6]
+# ALPHA = [0.6, 0.8, 1.2]
+ALPHA = [0.8]
 
-# NETWORK_CACHE = [0.01, 0.015, 0.02, 0.05] # which is 5% and 10%
-NETWORK_CACHE = [0.001, 0.005, 0.01, 0.015, 0.02] # which is 5% and 10%
-# NETWORK_CACHE = [0.015] # which is 5% and 10%
-# NETWORK_CACHE = [0.015, 0.02] # which is 5% and 10%
-# NETWORK_CACHE = [0.6] # which is 5% and 10%
+# NETWORK_CACHE = [0.01, 0.015, 0.02, 0.05] 
+# NETWORK_CACHE = [0.001, 0.005, 0.01, 0.015, 0.02]
+NETWORK_CACHE = [0.05]
+# NETWORK_CACHE = [0.03, 0.05, 0.1]
+# NETWORK_CACHE = [0.015, 0.02]
+# NETWORK_CACHE = [0.6] 
 print(NETWORK_CACHE)
 
 TOPOLOGIES = [
@@ -168,7 +171,7 @@ cache_placement_params = {
     "GREEN" :{
         "seed": 1.0,
         "RGN" : 1.0,
-        "MAX_EVALUATION" :20,
+        "MAX_EVALUATION" :200,
     },
     "HYBRID_GREEN_CENTRALITY":{
         "seed": 1.0,
