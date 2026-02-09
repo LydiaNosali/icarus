@@ -549,70 +549,26 @@ class NetworkModel:
             except Exception as e:
                 print(f"[⚠️] Failed to load saved network state: {e}")
 
-        # GREEN ROUTING - always use cleanest nodes
-        # logger.info("before shortest path")
-        # self.shortest_path = (
-        #     dict(shortest_path)
-        #     if shortest_path is not None
-        #     else self.compute_carbon_aware_paths(topology, self.node_carbon_intensity)
-        # )
-        # Shortest paths of the network
-        # print(f"USING LATENCIES")
         # self.shortest_path = (
         #         dict(shortest_path)
         #         if shortest_path is not None
         #         else symmetrify_paths(dict(nx.all_pairs_dijkstra_path(topology)))
         #     )
-        # logger.info(f"{self.shortest_path}")
-        # logger.info(f"{self.shortest_path2}")
-        node_greenness = topology.graph.get("node_greenness", {})
-        if node_greenness  == {}:
-            self.shortest_path = (
-            dict(shortest_path)
-            if shortest_path is not None
-            else symmetrify_paths(dict(nx.all_pairs_dijkstra_path(topology)))
-            )
-        else:
-            # print(f"USING TOPSIS SCORES")
-            self.shortest_path = (
-                dict(shortest_path)
-                if shortest_path is not None
-                else self.build_carbon_aware_paths(topology, node_greenness)
-            )
 
-    def build_carbon_aware_paths(self, topology, node_greenness):
-        def weight(u, v, data):
-            return node_greenness.get(v, 1.0)
-        return symmetrify_paths(
-            dict(nx.all_pairs_dijkstra_path(topology, weight=weight))
+        def carbon_edge_weight(u, v, data):
+            """Edge (u,v) cost = carbon intensity of DESTINATION node v"""
+            ci_v = self.node_carbon_intensity[v]
+            energy_density = 2e-8 + 1.5e-9 # router + link
+            return ci_v * energy_density
+
+        # Set graph edge attributes
+        for u, v in topology.edges():
+            topology[u][v]['carbon_weight'] = carbon_edge_weight(u, v, self.__dict__)
+
+        # Compute carbon-weighted shortest paths  
+        self.shortest_path = symmetrify_paths(
+            dict(nx.all_pairs_dijkstra_path(topology, weight='carbon_weight'))
         )
-
-    def compute_carbon_aware_paths(self, G, carbon_intensity):
-        """Single best path: shortest in hops + carbon cost."""
-        self.shortest_path = {}
-        nodes = list(G.nodes())
-        
-        # Create weighted graph for carbon-aware routing
-        G_weighted = G.copy()
-        for u, v, data in G.edges(data=True):
-            # Weight = hops (1.0) + carbon cost of target node
-            carbon_cost = carbon_intensity.get(v, 1.0)
-            G_weighted[u][v]['weight'] = 1.0 + 0.5 * carbon_cost  # Tune 0.5 factor
-        
-        for source in nodes:
-            self.shortest_path[source] = {}
-            for target in nodes:
-                if source == target:
-                    self.shortest_path[source][target] = [source]
-                    continue
-                try:
-                    # Single BEST path (lowest total weight = hops + carbon)
-                    path = nx.shortest_path(G_weighted, source, target, weight='weight')
-                    self.shortest_path[source][target] = list(path)
-                except nx.NetworkXNoPath:
-                    self.shortest_path[source][target] = []
-        
-        return self.shortest_path  # Same structure: {0: {30: [0, 30], ...}}
 
     def rebuild_tiers(self, old_cache_tiers_per_node, new_cache_sizes):
         new_per_node_tiers = {}

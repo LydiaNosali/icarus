@@ -330,6 +330,7 @@ def topology_geant(**kwargs):
     routers = [v for v in topology.nodes() if v not in sources + receivers]
     # add stacks to nodes
     topology.graph["icr_candidates"] = set(icr_candidates)
+    topology.graph["sources"] = set(sources)
     for v in sources:
         fnss.add_stack(topology, v, "source")
     for v in receivers:

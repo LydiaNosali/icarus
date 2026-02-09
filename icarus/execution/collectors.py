@@ -518,7 +518,7 @@ class CostCollector(DataCollector):
         content_size = kwargs["size"]
         server_latency = 1e-7
         server_read_throughput = 4e+10
-        server_active_power_density = 10**-9
+        server_active_power_density = 5e-8
         read_time = server_latency + content_size / server_read_throughput
         self.sess_read_cost +=  server_active_power_density * read_time * content_size * 8 * self.cost_per_joule
         
@@ -641,7 +641,7 @@ class CarbonFootprintCollector(DataCollector):
         params : carbon footprint model and tiers info
         """
         self.view = view
-        self.start_time = time.time()
+        self.start_time = 0.0
         self.request_size = 1500 * 8 # bytes -> bits
         self.sess_count = 0
         
@@ -652,29 +652,31 @@ class CarbonFootprintCollector(DataCollector):
         # Global totals
         self.routers_opex = self.links_opex = 0.0
         self.server_opex = 0.0
-        self.opex = 0.0
 
         # Per-tier totals
         self.tier_active_opex = defaultdict(float)
-        self.tier_idle_opex = defaultdict(float)
-        self.device_times = defaultdict(lambda: {"idle": 0.0, "active": 0.0})
-        # In CarbonFootprintCollector.__init__
+        self.device_times = defaultdict(lambda: {"active": 0.0})
         self.tiers_info = params["tiers"]
         self.device_info = defaultdict(dict) 
+        self.per_node_traffic = defaultdict(int)
 
         for item in self.tiers_info:
             name = item['name']
             lifespan = item['lifespan']
             embodied_kgco2e_per_gb = item['embodied_kgco2e_per_gb']
+            idle_power_density_per_bit = item['idle_power_density_per_bit']
             self.device_info[name]["embodied_kgco2e_per_gb"] = embodied_kgco2e_per_gb            
             self.device_info[name]["lifespan"] = lifespan
-
+            self.device_info[name]["idle_power_density_per_bit"] = idle_power_density_per_bit
+         
         self.end_time = 0.0
         
         self.log_file_path = 'carbonfootprint_log.csv'
     
     @inheritdoc(DataCollector)
     def start_session(self, timestamp, receiver, content, priority):
+        if self.start_time == 0.0:
+            self.start_time = timestamp
         self.sess_count += 1
         self.content = content
         self.receiver = receiver
@@ -683,7 +685,6 @@ class CarbonFootprintCollector(DataCollector):
 
         self.sess_routers_opex = self.sess_links_opex = 0.0
         self.sess_server_opex = 0.0
-        self.sess_opex = 0.0
 
     def _resolve_cache_tiers(self, node):
         try:
@@ -704,6 +705,7 @@ class CarbonFootprintCollector(DataCollector):
     @inheritdoc(DataCollector)
     def request_hop(self, u, v, **kwargs):
         main_path = kwargs.get("main_path", True)
+        self.per_node_traffic[v] += 1
         if main_path:
             ci = kwargs.get("carbon_intensity") 
             if ci is None: 
@@ -737,33 +739,27 @@ class CarbonFootprintCollector(DataCollector):
             
         tier  = tiers[tier_index]
         tier_name = tier["name"]
-        curr_time = time.time()
-        tiers_last_access = self.view.get_tiers_last_access(node)
-        last_end_time = tiers_last_access[tier_index]
 
-        idle_time = max(0.0, curr_time - last_end_time) if last_end_time != 0 else 0.0
         read_time = tier['latency'] + content_size / tier['read_throughput'] 
         
         ci = self._ci(node_hint=node, ci_kw=kwargs.get("carbon_intensity")) # Kg CO2 eq/KwH
         tier_max_capacity = tier['actual_size_bytes']
         self.device_info[tier_name]["actual_size_bytes"] = tier_max_capacity 
 
-        idle_opex = ci * tier['idle_power_density_per_bit']  * idle_time * tier_max_capacity * 8 / 3.6e6
         read_opex = ci * tier['active_caching_power_density']  * read_time * content_size * 8 / 3.6e6
         
         self.tier_active_opex[tier_name] += read_opex 
-        self.tier_idle_opex[tier_name] += idle_opex
-        self.sess_opex += read_opex + idle_opex 
-        
-        self.device_times[tier_name]["idle"] += idle_time
+
         self.device_times[tier_name]["active"] += read_time
 
     @inheritdoc(DataCollector)
     def server_hit(self, node, **kwargs):
         ci = self._ci(node_hint=node, ci_kw=kwargs.get("carbon_intensity"))
-        server_latency = 1e-7
+        # server_latency = 1e-7
+        server_active_power_density = 1e-5
+        server_latency = 5e-3
         server_read_throughput = 4e+10
-        server_active_power_density = 1e-9
+        # server_active_power_density = 5e-8
         content_size = kwargs["size"]
         read_time = server_latency + content_size / server_read_throughput
         self.sess_server_opex +=  ci * server_active_power_density * read_time * content_size * 8 / 3.6e6
@@ -785,23 +781,14 @@ class CarbonFootprintCollector(DataCollector):
             tier_name = tier["name"]
             tier_max_capacity = tier['actual_size_bytes']
             self.device_info[tier_name]["actual_size_bytes"] = tier_max_capacity
-
-            curr_time = time.time()
-            tiers_last_access = self.view.get_tiers_last_access(node)
-            last_end_time = tiers_last_access[i]
             
-            idle_time = max(0.0, curr_time - last_end_time) if last_end_time != 0 else 0.0
             write_time = tier['latency'] + content_size / tier['write_throughput']
 
-            self.device_times[tier_name]["idle"] += idle_time
             self.device_times[tier_name]["active"] += write_time
 
-            idle_opex = ci * tier['idle_power_density_per_bit'] * idle_time * tier_max_capacity * 8 / (3.6e6)
             write_opex = ci * tier['active_caching_power_density'] * write_time * content_size * 8 / (3.6e6)
 
             self.tier_active_opex[tier_name] += write_opex 
-            self.tier_idle_opex[tier_name] += idle_opex
-            self.sess_opex += write_opex + idle_opex
 
     @inheritdoc(DataCollector)
     def end_session(self, success=True):
@@ -811,7 +798,6 @@ class CarbonFootprintCollector(DataCollector):
         self.routers_opex += self.sess_routers_opex
         self.links_opex += self.sess_links_opex
         self.server_opex += self.sess_server_opex
-        self.opex += self.sess_opex
         self.end_time = self.timestamp
 
     @inheritdoc(DataCollector)
@@ -820,11 +806,10 @@ class CarbonFootprintCollector(DataCollector):
         per_tier_results = {}
         storage_opex = storage_capex = 0
         tiers_stats = self.view.get_tier_stats()
-        # print(f"tiers_stats:{tiers_stats}")
         for tier, times in self.device_times.items():
             active_time = times["active"]
-            idle_time = times["idle"]
-            total_time = active_time + idle_time
+            total_time = self.end_time - self.start_time
+            total_time = self.end_time - self.start_time
 
             # Compute utilization density
             use_density = active_time / total_time if total_time > 0 else 0.0
@@ -834,26 +819,36 @@ class CarbonFootprintCollector(DataCollector):
             tier_max_capacity = self.device_info[tier]['actual_size_bytes']
             tier_lifespan = self.device_info[tier]['lifespan'] * 365 * 24 * 60 * 60
             
-            capex = (TE * tier_max_capacity * active_time) / tier_lifespan
+            capex = (TE * tier_max_capacity * total_time) / tier_lifespan
+
+            ci_avg = 0.4
+            idle_opex = (
+                ci_avg
+                * self.device_info[tier]['idle_power_density_per_bit']
+                * tier_max_capacity
+                * 8
+                * (total_time - active_time)
+                / 3.6e6
+            )
 
             per_tier_results[tier] = {
-                "OPEX": self.tier_active_opex[tier] + self.tier_idle_opex[tier],
+                "OPEX": self.tier_active_opex[tier],
                 "CAPEX": capex,
 
-                "OPEX_MEAN": (self.tier_active_opex[tier] + self.tier_idle_opex[tier]) / tiers_stats[tier],
+                "OPEX_MEAN": self.tier_active_opex[tier] / tiers_stats[tier],
                 "CAPEX_MEAN": capex / tiers_stats[tier],
 
                 "ACTVE_OPEX_MEAN": self.tier_active_opex[tier] / tiers_stats[tier],
-                "IDLE_OPEX_MEAN": self.tier_idle_opex[tier] / tiers_stats[tier],
+                "IDLE_OPEX_MEAN": idle_opex / tiers_stats[tier],
  
                 "ACTVE_OPEX": self.tier_active_opex[tier],
-                "IDLE_OPEX": self.tier_idle_opex[tier],
+                "IDLE_OPEX": idle_opex,
    
-                "ACTIVE_TIME": active_time,
-                "IDLE_TIME": idle_time,
+                # "ACTIVE_TIME": active_time,
+                # "IDLE_TIME": idle_time,
                 "UTILIZATION": use_density,
             }
-            storage_opex += (self.tier_active_opex[tier] + self.tier_idle_opex[tier])
+            storage_opex += self.tier_active_opex[tier] + idle_opex
             storage_capex += capex
         # --------------- BUILD RESULTS TREE -----------------
         total = storage_opex + storage_capex + self.server_opex +self.routers_opex + self.links_opex
@@ -870,6 +865,7 @@ class CarbonFootprintCollector(DataCollector):
                 "LINKS_OPEX": self.links_opex,
                 "PER_TIER": per_tier_results,
                 "TIER_STATS": self.view.get_tier_stats(),
+                "PER_NODE_TRAFFIC": {key: value / self.sess_count for key, value in self.per_node_traffic.items()} ,
             }
         )
         cchrp["cf"] = total
@@ -995,6 +991,8 @@ class CacheHitRatioCollector(DataCollector):
                 self.per_node_server_hits[v] /= n_sess
             results["PER_NODE_CACHE_HIT_RATIO"] = self.per_node_cache_hits
             results["PER_NODE_SERVER_HIT_RATIO"] = self.per_node_server_hits
+            results["PER_NODE_TRAFFIC"] = self.per_node_server_hits
+            
         return results
 
 @register_data_collector("PATH_STRETCH")
